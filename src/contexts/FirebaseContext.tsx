@@ -23,6 +23,7 @@ import {
   auth,
   db,
   googleProvider,
+  facebookProvider,
   handleFirestoreError,
   OperationType,
   testFirestoreConnection,
@@ -76,6 +77,7 @@ interface FirebaseContextValue {
   savedPlaces: SavedPlaceItem[];
   aiThreads: CloudAiThread[];
   signInWithGooglePopup: (role: 'passenger' | 'partner', city?: string, lang?: Language) => Promise<{ idToken: string; user: FirebaseUser }>;
+  signInWithFacebookPopup: (role: 'passenger' | 'partner', city?: string, lang?: Language) => Promise<{ idToken: string; user: FirebaseUser }>;
   signOutFirebase: () => Promise<void>;
   savePlace: (place: Omit<SavedPlaceItem, 'id' | 'uid'>) => Promise<void>;
   removeSavedPlace: (placeId: string) => Promise<void>;
@@ -248,6 +250,16 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const signInWithGooglePopup = useCallback(
     async (role: 'passenger' | 'partner', city = 'Islamabad', lang: Language = 'en') => {
       const cred = await signInWithPopup(auth, googleProvider);
+      const idToken = await cred.user.getIdToken();
+      await ensureUserProfile(cred.user, role, city, lang);
+      return { idToken, user: cred.user };
+    },
+    [ensureUserProfile]
+  );
+
+  const signInWithFacebookPopup = useCallback(
+    async (role: 'passenger' | 'partner', city = 'Islamabad', lang: Language = 'en') => {
+      const cred = await signInWithPopup(auth, facebookProvider);
       const idToken = await cred.user.getIdToken();
       await ensureUserProfile(cred.user, role, city, lang);
       return { idToken, user: cred.user };
@@ -434,6 +446,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         savedPlaces,
         aiThreads,
         signInWithGooglePopup,
+        signInWithFacebookPopup,
         signOutFirebase,
         savePlace,
         removeSavedPlace,
