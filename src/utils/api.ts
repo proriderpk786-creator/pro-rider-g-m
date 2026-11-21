@@ -44,7 +44,10 @@ export async function apiRequest<T = any>(
       headers.Authorization = `Bearer ${token}`;
     }
   }
-  const res = await fetch(path, {
+  const baseUrl = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_BASE_URL) || '';
+  const fullUrl = path.startsWith('http') ? path : `${baseUrl}${path}`;
+
+  const res = await fetch(fullUrl, {
     method: options.method || 'GET',
     headers,
     body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
@@ -75,8 +78,19 @@ export function useRoleWebSocket(
 
     const connect = () => {
       if (!active) return;
-      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const url = `${proto}//${window.location.host}/ws?token=${encodeURIComponent(token)}`;
+      const customBase = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_BASE_URL) || '';
+      let wsHost = window.location.host;
+      let proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      if (customBase) {
+        try {
+          const parsedUrl = new URL(customBase);
+          wsHost = parsedUrl.host;
+          proto = parsedUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+        } catch {
+          // ignore
+        }
+      }
+      const url = `${proto}//${wsHost}/ws?token=${encodeURIComponent(token)}`;
       const ws = new WebSocket(url);
       wsRef.current = ws;
 
