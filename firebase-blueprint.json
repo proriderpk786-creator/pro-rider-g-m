@@ -1,0 +1,304 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Publicly minimal PRO RIDER AI user profile without PII fields.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "photoURL": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "role": {
+          "type": "string",
+          "enum": ["passenger", "partner"]
+        },
+        "city": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "preferredLang": {
+          "type": "string",
+          "enum": ["en", "ur"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "displayName", "role", "city", "preferredLang", "createdAt", "updatedAt"]
+    },
+    "UserPrivateInfo": {
+      "title": "UserPrivateInfo",
+      "description": "Strictly owner-only PII contact record isolated from public user documents.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 180
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "whatsapp": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "email", "createdAt", "updatedAt"]
+    },
+    "SavedPlace": {
+      "title": "SavedPlace",
+      "description": "User favorite pickup/drop-off destination saved in Firestore.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "address": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 300
+        },
+        "lat": {
+          "type": "number"
+        },
+        "lng": {
+          "type": "number"
+        },
+        "category": {
+          "type": "string",
+          "enum": ["home", "work", "university", "favorite"]
+        },
+        "placeId": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "label", "address", "lat", "lng", "category", "createdAt"]
+    },
+    "AiThread": {
+      "title": "AiThread",
+      "description": "Persistent PRO RIDER AI Copilot conversation thread.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 140
+        },
+        "persona": {
+          "type": "string",
+          "enum": ["passenger", "partner", "general"]
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["fast", "general", "deep"]
+        },
+        "lastMessagePreview": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "title", "persona", "mode", "createdAt", "updatedAt"]
+    },
+    "AiMessage": {
+      "title": "AiMessage",
+      "description": "Individual message inside an AI Copilot conversation thread.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "threadId": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "sender": {
+          "type": "string",
+          "enum": ["user", "assistant"]
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8000
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["fast", "general", "deep", "maps", "search", "voice"]
+        },
+        "sources": {
+          "type": "array"
+        },
+        "places": {
+          "type": "array"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "threadId", "sender", "text", "mode", "createdAt"]
+    },
+    "SyncedBooking": {
+      "title": "SyncedBooking",
+      "description": "Cloud-synced ride booking summary for cross-device trip history.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "bookingCode": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 64
+        },
+        "bookingMode": {
+          "type": "string",
+          "enum": ["go_now", "schedule"]
+        },
+        "serviceType": {
+          "type": "string",
+          "enum": ["pick_and_drop", "ride_sharing", "fuel_sharing"]
+        },
+        "pickupAddress": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "dropoffAddress": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "distanceKm": {
+          "type": "number"
+        },
+        "farePkr": {
+          "type": "number"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["searching", "negotiating", "confirmed", "on_the_way", "arrived", "started", "completed", "cancelled"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "bookingCode", "bookingMode", "serviceType", "pickupAddress", "dropoffAddress", "distanceKm", "farePkr", "status", "createdAt", "updatedAt"]
+    },
+    "AdminMember": {
+      "title": "AdminMember",
+      "description": "Verified Super Admin marker document.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 180
+        },
+        "grantedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "email", "grantedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User non-PII profile settings."
+    },
+    "/users/{userId}/private/info": {
+      "schema": { "$ref": "#/entities/UserPrivateInfo" },
+      "description": "Owner-only PII record storing email, phone, and WhatsApp."
+    },
+    "/users/{userId}/savedPlaces/{placeId}": {
+      "schema": { "$ref": "#/entities/SavedPlace" },
+      "description": "Passenger favorite locations synced across sessions."
+    },
+    "/users/{userId}/aiThreads/{threadId}": {
+      "schema": { "$ref": "#/entities/AiThread" },
+      "description": "AI Copilot conversation threads."
+    },
+    "/users/{userId}/aiThreads/{threadId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/AiMessage" },
+      "description": "Messages inside a user's AI Copilot thread."
+    },
+    "/users/{userId}/bookings/{bookingId}": {
+      "schema": { "$ref": "#/entities/SyncedBooking" },
+      "description": "Synced trip summaries for Passenger cross-device visibility."
+    },
+    "/admins/{adminUid}": {
+      "schema": { "$ref": "#/entities/AdminMember" },
+      "description": "Server-provisioned Super Admin role registry."
+    }
+  }
+}

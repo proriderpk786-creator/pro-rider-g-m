@@ -1,0 +1,39 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-display: 'Outfit', system-ui, sans-serif;
+    --font-sans: 'Plus Jakarta Sans', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+    --font-urdu: 'Noto Nastaliq Urdu', 'Plus Jakarta Sans', serif;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: #f8f8fa;
+    color: #0d0d10;
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: var(--font-display);
+  }
+
+  .font-mono {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  [dir="rtl"] body,
+  [dir="rtl"] .font-urdu {
+    font-family: var(--font-urdu);
+    line-height: 2;
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
