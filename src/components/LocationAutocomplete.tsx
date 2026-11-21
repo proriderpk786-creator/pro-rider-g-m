@@ -23,6 +23,18 @@ interface SearchOption {
   suggestion?: google.maps.places.AutocompleteSuggestion;
 }
 
+const PAKISTAN_LANDMARK_FALLBACK: SearchOption[] = [
+  { id: 'pk_f10', label: 'F-10 Markaz, Islamabad', lat: 33.6968, lng: 73.0125 },
+  { id: 'pk_blue', label: 'Blue Area, Jinnah Avenue, Islamabad', lat: 33.7077, lng: 73.0501 },
+  { id: 'pk_e11', label: 'Ameer-e-Millat Road, E-11, Islamabad', lat: 33.7025, lng: 72.9785 },
+  { id: 'pk_faizabad', label: 'Faizabad Interchange, Islamabad / Rawalpindi', lat: 33.664963, lng: 73.087013 },
+  { id: 'pk_saddar', label: 'Saddar Bazar, Rawalpindi', lat: 33.5973, lng: 73.0479 },
+  { id: 'pk_bahria', label: 'Bahria Town Phase 7, Rawalpindi', lat: 33.5245, lng: 73.0972 },
+  { id: 'pk_gulberg', label: 'Liberty Market, Gulberg III, Lahore', lat: 31.5102, lng: 74.3441 },
+  { id: 'pk_dha_lhr', label: 'DHA Phase 5, Lahore', lat: 31.4622, lng: 74.4092 },
+  { id: 'pk_clifton', label: 'Clifton Block 5, Karachi', lat: 24.8138, lng: 67.0299 },
+];
+
 function isQuotaError(err: unknown): boolean {
   const msg = String((err as any)?.message || err || '');
   const status = (err as any)?.status || (err as any)?.code;
@@ -35,7 +47,12 @@ function isQuotaError(err: unknown): boolean {
   );
 }
 
-export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
+const LocationAutocompleteInner: React.FC<
+  LocationAutocompleteProps & {
+    hasGoogleKey: boolean;
+    placesLib: ReturnType<typeof useMapsLibrary>;
+  }
+> = ({
   label,
   placeholder,
   value,
@@ -43,8 +60,9 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
   onRequestMapPick,
   pinColor = 'green',
   disabled = false,
+  hasGoogleKey,
+  placesLib,
 }) => {
-  const placesLib = useMapsLibrary('places');
   const sessionTokenRef = useRef<google.maps.places.AutocompleteSessionToken | null>(null);
 
   const [query, setQuery] = useState(value?.label || '');
@@ -78,7 +96,7 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
       setLoading(true);
       setErrorMsg(null);
       try {
-        if (placesLib?.AutocompleteSuggestion && placesLib?.AutocompleteSessionToken) {
+        if (hasGoogleKey && placesLib?.AutocompleteSuggestion && placesLib?.AutocompleteSessionToken) {
           if (!sessionTokenRef.current) {
             sessionTokenRef.current = new placesLib.AutocompleteSessionToken();
           }
@@ -108,22 +126,52 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
         }
       }
 
-      // Fallback to server geocoding search if Places API is unavailable or quota-limited
+      // Try Express backend geocoding search first
       try {
         const res = await apiRequest<{ results: Array<{ id: string; label: string; lat: number; lng: number }> }>(
           `/api/map/search?q=${encodeURIComponent(trimmed)}`
         );
-        setResults(res.results || []);
-      } catch (err: any) {
-        setErrorMsg(err.message || 'Address search unavailable');
-        setResults([]);
-      } finally {
-        setLoading(false);
+        if (Array.isArray(res.results)) {
+          setResults(res.results);
+          setLoading(false);
+          return;
+        }
+      } catch {
+        // Fallback cleanly to direct OpenStreetMap Nominatim in browser when backend is static
       }
+
+      try {
+        const nomRes = await fetch(
+          `https://nominatim.openstreetmap.org/search?format=jsonv2&countrycodes=pk&addressdetails=1&limit=6&q=${encodeURIComponent(trimmed)}`,
+          { signal: AbortSignal.timeout(6500) }
+        );
+        if (nomRes.ok) {
+          const data = (await nomRes.json()) as Array<{ place_id: number; display_name: string; lat: string; lon: string }>;
+          if (Array.isArray(data) && data.length > 0) {
+            setResults(
+              data.map((item) => ({
+                id: String(item.place_id),
+                label: item.display_name,
+                lat: Number(item.lat),
+                lng: Number(item.lon),
+              }))
+            );
+            setLoading(false);
+            return;
+          }
+        }
+      } catch {
+        // Fallback to local major Pakistan landmark directory
+      }
+
+      const lower = trimmed.toLowerCase();
+      const matched = PAKISTAN_LANDMARK_FALLBACK.filter((p) => p.label.toLowerCase().includes(lower));
+      setResults(matched);
+      setLoading(false);
     }, 340);
 
     return () => clearTimeout(timer);
-  }, [query, open, value, placesLib]);
+  }, [query, open, value, placesLib, hasGoogleKey]);
 
   const handleSelectOption = async (item: SearchOption) => {
     if (item.suggestion?.placePrediction) {
@@ -170,16 +218,32 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
     setErrorMsg(null);
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
         try {
           const rev = await apiRequest<{ label: string; lat: number; lng: number }>(
-            `/api/map/reverse?lat=${pos.coords.latitude}&lng=${pos.coords.longitude}`
+            `/api/map/reverse?lat=${lat}&lng=${lng}`
           );
           onSelect({ label: rev.label, lat: rev.lat, lng: rev.lng });
           setQuery(rev.label);
           setOpen(false);
         } catch {
-          const fallbackLabel = `${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}`;
-          onSelect({ label: fallbackLabel, lat: pos.coords.latitude, lng: pos.coords.longitude });
+          try {
+            const nomRev = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`);
+            if (nomRev.ok) {
+              const data = await nomRev.json();
+              const resolvedLabel = data?.display_name || `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+              onSelect({ label: resolvedLabel, lat, lng });
+              setQuery(resolvedLabel);
+              setOpen(false);
+              setGpsLoading(false);
+              return;
+            }
+          } catch {
+            // ignore
+          }
+          const fallbackLabel = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+          onSelect({ label: fallbackLabel, lat, lng });
           setQuery(fallbackLabel);
         } finally {
           setGpsLoading(false);
@@ -278,7 +342,7 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
         <div className="absolute left-0 right-0 mt-1.5 z-40 rounded-xl border border-zinc-200 bg-white shadow-xl max-h-56 overflow-y-auto divide-y divide-zinc-100">
           {results.length === 0 ? (
             <div className="px-3.5 py-3 text-xs text-zinc-500">
-              No matching places found in Pakistan. Try sector/landmark name or use Pick on Map.
+              No matching places found in Pakistan. Try sector/landmark name or tap Pick on Map.
             </div>
           ) : (
             results.map((item) => (
@@ -297,4 +361,17 @@ export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = ({
       )}
     </div>
   );
+};
+
+const GoogleLocationAutocomplete: React.FC<LocationAutocompleteProps> = (props) => {
+  const placesLib = useMapsLibrary('places');
+  return <LocationAutocompleteInner {...props} hasGoogleKey placesLib={placesLib} />;
+};
+
+export const LocationAutocomplete: React.FC<LocationAutocompleteProps> = (props) => {
+  const hasGoogleKey = Boolean((import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '').trim().length > 10);
+  if (hasGoogleKey) {
+    return <GoogleLocationAutocomplete {...props} />;
+  }
+  return <LocationAutocompleteInner {...props} hasGoogleKey={false} placesLib={null} />;
 };

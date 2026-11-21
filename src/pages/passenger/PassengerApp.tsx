@@ -23,7 +23,16 @@ import type {
   User,
   WalletTransaction,
 } from '../../types';
-import { apiRequest, getRoleToken, setRoleToken, useRoleWebSocket } from '../../utils/api';
+import {
+  ApiRequestError,
+  apiRequest,
+  getRoleToken,
+  getStoredRoleUser,
+  isBackendOfflineError,
+  setRoleToken,
+  setStoredRoleUser,
+  useRoleWebSocket,
+} from '../../utils/api';
 import { PassengerAuth } from './PassengerAuth';
 import { PassengerBookingFlow } from './PassengerBookingFlow';
 import {
@@ -35,6 +44,19 @@ import {
 } from './PassengerSecondaryViews';
 
 type PassengerTab = 'home' | 'bookings' | 'wallet' | 'notifications' | 'support' | 'profile';
+
+const LOCAL_PASSENGER_BOOKINGS_KEY = 'pr_local_bookings_passenger';
+
+function readLocalPassengerBookings(): Booking[] {
+  try {
+    const raw = localStorage.getItem(LOCAL_PASSENGER_BOOKINGS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
 
 interface PassengerAppProps {
   config: PublicConfig | null;
@@ -50,9 +72,9 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
   onNavigate,
 }) => {
   const [token, setToken] = useState<string | null>(() => getRoleToken('passenger'));
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<User | null>(() => getStoredRoleUser<User>('passenger'));
   const [tab, setTab] = useState<PassengerTab>('home');
-  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [bookings, setBookings] = useState<Booking[]>(() => readLocalPassengerBookings());
   const [wallet, setWallet] = useState<{
     balancePkr: number;
     totalPaymentsPkr: number;
@@ -68,9 +90,11 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
   const loadDemand = useCallback(async () => {
     try {
       const data = await apiRequest<DemandMapData>('/api/map/demand');
-      setDemandData(data);
+      if (data && Array.isArray(data.hotspots)) {
+        setDemandData(data);
+      }
     } catch {
-      // Preserve last valid demand state on transient fetch error
+      // Preserve last valid demand state on transient fetch error or static hosting
     }
   }, []);
 
@@ -84,16 +108,44 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
         apiRequest<{ notifications: AppNotification[] }>('/api/passenger/notifications', { role: 'passenger' }),
         apiRequest<{ tickets: SupportTicket[] }>('/api/passenger/support', { role: 'passenger' }),
       ]);
-      setUser(meRes.user);
-      setBookings(bkRes.bookings);
-      setWallet(wlRes);
-      setNotifications(ntRes.notifications);
-      setTickets(tkRes.tickets);
+      if (meRes?.user) {
+        setUser(meRes.user);
+        setStoredRoleUser('passenger', meRes.user);
+      }
+      if (Array.isArray(bkRes?.bookings)) {
+        setBookings(bkRes.bookings);
+      }
+      if (wlRes && typeof wlRes.balancePkr === 'number') {
+        setWallet({
+          balancePkr: wlRes.balancePkr || 0,
+          totalPaymentsPkr: wlRes.totalPaymentsPkr || 0,
+          outstandingPkr: wlRes.outstandingPkr || 0,
+          transactions: Array.isArray(wlRes.transactions) ? wlRes.transactions : [],
+        });
+      }
+      if (Array.isArray(ntRes?.notifications)) {
+        setNotifications(ntRes.notifications);
+      }
+      if (Array.isArray(tkRes?.tickets)) {
+        setTickets(tkRes.tickets);
+      }
       void loadDemand();
-    } catch {
-      setRoleToken('passenger', null);
-      setToken(null);
-      setUser(null);
+    } catch (err) {
+      if (isBackendOfflineError(err) || token.startsWith('pr_fb_')) {
+        // Static hosting (Vercel without Node backend) or transient backend outage:
+        // keep authenticated Firebase/local session intact and hydrate cached bookings.
+        setBookings((prev) => {
+          const local = readLocalPassengerBookings();
+          return local.length > 0 ? local : Array.isArray(prev) ? prev : [];
+        });
+        setUser((prev) => prev || getStoredRoleUser<User>('passenger'));
+        return;
+      }
+      if (err instanceof ApiRequestError && (err.status === 401 || err.status === 403)) {
+        setRoleToken('passenger', null);
+        setToken(null);
+        setUser(null);
+      }
     }
   }, [token, loadDemand]);
 
@@ -126,6 +178,7 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
 
   const handleLogout = () => {
     setRoleToken('passenger', null);
+    setStoredRoleUser('passenger', null);
     setToken(null);
     setUser(null);
     void signOutFirebase().catch(() => {});
@@ -137,6 +190,8 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
         lang={lang}
         onChangeLang={onChangeLang}
         onAuthenticated={(tk, u) => {
+          setRoleToken('passenger', tk);
+          setStoredRoleUser('passenger', u);
           setToken(tk);
           setUser(u);
         }}
@@ -145,7 +200,9 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
     );
   }
 
-  const unreadCount = notifications.filter((n) => n.is_read === 0).length;
+  const safeNotifications = Array.isArray(notifications) ? notifications : [];
+  const safeBookings = Array.isArray(bookings) ? bookings : [];
+  const unreadCount = safeNotifications.filter((n) => n.is_read === 0).length;
 
   const navItems: Array<{ id: PassengerTab; label: string; icon: any; badge?: number }> = [
     { id: 'home', label: t(lang, 'home'), icon: Home },
@@ -257,7 +314,7 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
             <PassengerBookingFlow
               lang={lang}
               config={config}
-              bookings={bookings}
+              bookings={safeBookings}
               demandData={demandData}
               passengerName={user.full_name}
               livePartnerLocations={livePartnerLocations}
@@ -267,7 +324,7 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
           )}
           {tab === 'bookings' && (
             <PassengerBookingsView
-              bookings={bookings}
+              bookings={safeBookings}
               passengerName={user.full_name}
               onRefresh={loadAll}
               onOpenSupport={(bkId) => {
@@ -279,24 +336,28 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
           {tab === 'wallet' && (
             <PassengerWalletView
               passengerName={user.full_name}
-              bookings={bookings}
+              bookings={safeBookings}
               wallet={wallet}
               onRefresh={loadAll}
             />
           )}
           {tab === 'notifications' && (
             <NotificationsView
-              notifications={notifications}
+              notifications={safeNotifications}
               onMarkAllRead={async () => {
-                await apiRequest('/api/passenger/notifications/read', { method: 'POST', role: 'passenger' });
-                await loadAll();
+                try {
+                  await apiRequest('/api/passenger/notifications/read', { method: 'POST', role: 'passenger' });
+                  await loadAll();
+                } catch {
+                  setNotifications((prev) => prev.map((n) => ({ ...n, is_read: 1 })));
+                }
               }}
             />
           )}
           {tab === 'support' && (
             <SupportView
               role="passenger"
-              tickets={tickets}
+              tickets={Array.isArray(tickets) ? tickets : []}
               defaultBookingId={supportBookingId}
               onRefresh={loadAll}
             />
@@ -304,7 +365,10 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
           {tab === 'profile' && (
             <PassengerProfileView
               user={user}
-              onUpdated={setUser}
+              onUpdated={(updated) => {
+                setUser(updated);
+                setStoredRoleUser('passenger', updated);
+              }}
               onLogout={handleLogout}
             />
           )}

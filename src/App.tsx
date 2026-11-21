@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { APIProvider } from '@vis.gl/react-google-maps';
 import { AlertTriangle, X } from 'lucide-react';
 import { OfflineIndicator } from './components/BrandMark';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { DEFAULT_PUBLIC_CONFIG } from './config/defaultConfig';
 import { FirebaseProvider } from './contexts/FirebaseContext';
 import { AdminPortal } from './pages/admin/AdminPortal';
 import { PartnerApp } from './pages/partner/PartnerApp';
@@ -31,7 +33,7 @@ export default function App() {
       return 'en';
     }
   });
-  const [config, setConfig] = useState<PublicConfig | null>(null);
+  const [config, setConfig] = useState<PublicConfig>(DEFAULT_PUBLIC_CONFIG);
   const [quotaExceeded, setQuotaExceeded] = useState(false);
 
   const navigate = (nextPath: string) => {
@@ -57,8 +59,14 @@ export default function App() {
 
   useEffect(() => {
     apiRequest<PublicConfig>('/api/public/config')
-      .then(setConfig)
-      .catch(() => {});
+      .then((res) => {
+        if (res && Array.isArray(res.fleet) && res.fleet.length > 0) {
+          setConfig(res);
+        }
+      })
+      .catch(() => {
+        // Keep DEFAULT_PUBLIC_CONFIG safely on static/offline hosting
+      });
   }, []);
 
   const handleLanguageChange = (nextLang: Language) => {
@@ -70,26 +78,18 @@ export default function App() {
     }
   };
 
-  const mapsApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
+  const mapsApiKey = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '').trim();
+  const hasMapsKey = mapsApiKey.length > 10;
 
-  return (
-    <APIProvider apiKey={mapsApiKey} language={lang === 'ur' ? 'ur' : 'en'} region="PK">
-      <FirebaseProvider>
-        {quotaExceeded && (
+  const content = (
+    <FirebaseProvider>
+      <ErrorBoundary>
+        {quotaExceeded && hasMapsKey && (
           <div className="sticky top-0 z-50 bg-amber-50 border-b border-amber-300 text-amber-950 px-4 py-2.5 flex items-center justify-between gap-3 text-xs">
             <div className="flex items-center gap-2 max-w-5xl mx-auto">
               <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0" />
               <span>
-                <strong>Google Maps Demo API Quota Reached:</strong> Live Google Maps requests exceeded the temporary demo allowance. Fallback street lookup remains active, or connect your own billing project via the{' '}
-                <a
-                  href="https://developers.google.com/maps/ai/ai-studio?utm_campaign=gmp_mcp_codeassist_v1_aistudio#quota_exceeded_errors"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline font-bold"
-                >
-                  Google Maps Platform AI Studio Guide
-                </a>
-                .
+                <strong>Google Maps Demo API Quota Reached:</strong> Fallback interactive OpenStreetMap view is active.
               </span>
             </div>
             <button
@@ -122,7 +122,15 @@ export default function App() {
           <PublicTripTrackingPage config={config} lang={lang} onChangeLang={handleLanguageChange} onNavigate={navigate} />
         )}
         <OfflineIndicator />
-      </FirebaseProvider>
+      </ErrorBoundary>
+    </FirebaseProvider>
+  );
+
+  return hasMapsKey ? (
+    <APIProvider apiKey={mapsApiKey} language={lang === 'ur' ? 'ur' : 'en'} region="PK">
+      {content}
     </APIProvider>
+  ) : (
+    content
   );
 }

@@ -28,11 +28,32 @@ import type {
   User,
   WalletTransaction,
 } from '../../types';
-import { apiRequest, getRoleToken, setRoleToken, useRoleWebSocket } from '../../utils/api';
+import {
+  ApiRequestError,
+  apiRequest,
+  getRoleToken,
+  getStoredRoleUser,
+  isBackendOfflineError,
+  setRoleToken,
+  setStoredRoleUser,
+  useRoleWebSocket,
+} from '../../utils/api';
 import { NotificationsView, SupportView } from '../passenger/PassengerSecondaryViews';
 import { PartnerAuth, PartnerVerificationAndVehicleView } from './PartnerAuthAndDocs';
 import { PartnerFinanceView, PartnerProfileView } from './PartnerFinanceAndProfile';
 import { PartnerRequestsView, PartnerTripsView } from './PartnerRequestsAndTrips';
+
+const PARTNER_PROFILE_STORAGE_KEY = 'pr_profile_partner';
+
+function readStoredPartnerProfile(): PartnerProfile | null {
+  try {
+    const raw = localStorage.getItem(PARTNER_PROFILE_STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as PartnerProfile;
+  } catch {
+    return null;
+  }
+}
 
 type PartnerTab =
   | 'requests'
@@ -59,8 +80,8 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
   onNavigate,
 }) => {
   const [token, setToken] = useState<string | null>(() => getRoleToken('partner'));
-  const [user, setUser] = useState<User | null>(null);
-  const [profile, setProfile] = useState<PartnerProfile | null>(null);
+  const [user, setUser] = useState<User | null>(() => getStoredRoleUser<User>('partner'));
+  const [profile, setProfile] = useState<PartnerProfile | null>(() => readStoredPartnerProfile());
   const [documents, setDocuments] = useState<PartnerDocument[]>([]);
   const [tab, setTab] = useState<PartnerTab>('requests');
 
@@ -96,9 +117,11 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
   const loadDemand = useCallback(async () => {
     try {
       const data = await apiRequest<DemandMapData>('/api/map/demand');
-      setDemandData(data);
+      if (data && Array.isArray(data.hotspots)) {
+        setDemandData(data);
+      }
     } catch {
-      // Keep previous demand snapshot if transient error occurs
+      // Keep previous demand snapshot if transient error or static hosting
     }
   }, []);
 
@@ -115,22 +138,51 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
         apiRequest<{ notifications: AppNotification[] }>('/api/partner/notifications', { role: 'partner' }),
         apiRequest<{ tickets: SupportTicket[] }>('/api/partner/support', { role: 'partner' }),
       ]);
-      setUser(profRes.user);
-      setProfile(profRes.partnerProfile);
-      setDocuments(profRes.documents);
-      setApproved(reqRes.approved);
-      setRequests(reqRes.requests);
-      setTrips(tripRes.trips);
-      setEarnings(earnRes);
-      setNotifications(ntRes.notifications);
-      setTickets(tkRes.tickets);
+      if (profRes?.user) {
+        setUser(profRes.user);
+        setStoredRoleUser('partner', profRes.user);
+      }
+      if (profRes?.partnerProfile) {
+        setProfile(profRes.partnerProfile);
+        try {
+          localStorage.setItem(PARTNER_PROFILE_STORAGE_KEY, JSON.stringify(profRes.partnerProfile));
+        } catch {
+          // ignore
+        }
+      }
+      setDocuments(Array.isArray(profRes?.documents) ? profRes.documents : []);
+      setApproved(Boolean(reqRes?.approved));
+      setRequests(Array.isArray(reqRes?.requests) ? reqRes.requests : []);
+      setTrips(Array.isArray(tripRes?.trips) ? tripRes.trips : []);
+      if (earnRes && typeof earnRes.netEarnings === 'number') {
+        setEarnings({
+          grossEarnings: earnRes.grossEarnings || 0,
+          totalCommission: earnRes.totalCommission || 0,
+          netEarnings: earnRes.netEarnings || 0,
+          availableBalancePkr: earnRes.availableBalancePkr || 0,
+          pendingSettlementsPkr: earnRes.pendingSettlementsPkr || 0,
+          paidWithdrawalsPkr: earnRes.paidWithdrawalsPkr || 0,
+          completedTrips: Array.isArray(earnRes.completedTrips) ? earnRes.completedTrips : [],
+          transactions: Array.isArray(earnRes.transactions) ? earnRes.transactions : [],
+        });
+      }
+      setNotifications(Array.isArray(ntRes?.notifications) ? ntRes.notifications : []);
+      setTickets(Array.isArray(tkRes?.tickets) ? tkRes.tickets : []);
       void loadDemand();
-    } catch {
-      setRoleToken('partner', null);
-      setToken(null);
-      setUser(null);
+    } catch (err) {
+      if (isBackendOfflineError(err) || token.startsWith('pr_fb_')) {
+        setUser((prev) => prev || getStoredRoleUser<User>('partner'));
+        setProfile((prev) => prev || readStoredPartnerProfile());
+        return;
+      }
+      if (err instanceof ApiRequestError && (err.status === 401 || err.status === 403)) {
+        setRoleToken('partner', null);
+        setToken(null);
+        setUser(null);
+        setProfile(null);
+      }
     }
-  }, [token]);
+  }, [token, loadDemand]);
 
   useEffect(() => {
     loadAll();
@@ -198,7 +250,11 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
       });
       await loadAll();
     } catch (err: any) {
-      setAvailabilityError(err.message);
+      setAvailabilityError(
+        isBackendOfflineError(err)
+          ? 'Document & online dispatch verification requires live backend API connection.'
+          : err.message
+      );
       setTab('documents');
     }
   };
@@ -208,6 +264,12 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
   const handleLogout = () => {
     setGpsSharing(false);
     setRoleToken('partner', null);
+    setStoredRoleUser('partner', null);
+    try {
+      localStorage.removeItem(PARTNER_PROFILE_STORAGE_KEY);
+    } catch {
+      // ignore
+    }
     setToken(null);
     setUser(null);
     setProfile(null);
@@ -220,6 +282,13 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
         lang={lang}
         onChangeLang={onChangeLang}
         onAuthenticated={(tk, u, p) => {
+          setRoleToken('partner', tk);
+          setStoredRoleUser('partner', u);
+          try {
+            localStorage.setItem(PARTNER_PROFILE_STORAGE_KEY, JSON.stringify(p));
+          } catch {
+            // ignore
+          }
           setToken(tk);
           setUser(u);
           setProfile(p);
@@ -229,7 +298,8 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
     );
   }
 
-  const unreadCount = notifications.filter((n) => n.is_read === 0).length;
+  const safeNotifications = Array.isArray(notifications) ? notifications : [];
+  const unreadCount = safeNotifications.filter((n) => n.is_read === 0).length;
 
   const navItems: Array<{ id: PartnerTab; label: string; icon: any; badge?: number }> = [
     { id: 'requests', label: t(lang, 'requests'), icon: ClipboardList, badge: requests.length || undefined },
@@ -365,7 +435,7 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
             <PartnerRequestsView
               approved={approved}
               profile={profile}
-              requests={requests}
+              requests={Array.isArray(requests) ? requests : []}
               demandData={demandData}
               zones={config?.zones || []}
               onRefresh={loadAll}
@@ -374,7 +444,7 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
           )}
           {tab === 'trips' && (
             <PartnerTripsView
-              trips={trips}
+              trips={Array.isArray(trips) ? trips : []}
               gpsSharing={gpsSharing}
               onToggleGpsSharing={() => setGpsSharing((v) => !v)}
               onRefresh={loadAll}
@@ -392,25 +462,36 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
             <PartnerVerificationAndVehicleView
               mode={tab}
               profile={profile}
-              documents={documents}
+              documents={Array.isArray(documents) ? documents : []}
               config={config}
               onRefresh={loadAll}
             />
           )}
           {tab === 'notifications' && (
             <NotificationsView
-              notifications={notifications}
+              notifications={safeNotifications}
               onMarkAllRead={async () => {
-                await apiRequest('/api/partner/notifications/read', { method: 'POST', role: 'partner' });
-                await loadAll();
+                try {
+                  await apiRequest('/api/partner/notifications/read', { method: 'POST', role: 'partner' });
+                  await loadAll();
+                } catch {
+                  setNotifications((prev) => prev.map((n) => ({ ...n, is_read: 1 })));
+                }
               }}
             />
           )}
           {tab === 'support' && (
-            <SupportView role="partner" tickets={tickets} onRefresh={loadAll} />
+            <SupportView role="partner" tickets={Array.isArray(tickets) ? tickets : []} onRefresh={loadAll} />
           )}
           {tab === 'profile' && (
-            <PartnerProfileView user={user} onUpdated={setUser} onLogout={handleLogout} />
+            <PartnerProfileView
+              user={user}
+              onUpdated={(updated) => {
+                setUser(updated);
+                setStoredRoleUser('partner', updated);
+              }}
+              onLogout={handleLogout}
+            />
           )}
         </main>
       </div>

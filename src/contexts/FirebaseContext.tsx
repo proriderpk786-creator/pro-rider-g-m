@@ -1,8 +1,19 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import {
+  createUserWithEmailAndPassword,
+  getRedirectResult,
   onAuthStateChanged,
+  RecaptchaVerifier,
+  reload,
+  sendEmailVerification,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
+  signInWithPhoneNumber,
   signInWithPopup,
+  signInWithRedirect,
   signOut,
+  updateProfile,
+  type ConfirmationResult,
   type User as FirebaseUser,
 } from 'firebase/auth';
 import {
@@ -22,8 +33,8 @@ import {
 import {
   auth,
   db,
-  googleProvider,
   facebookProvider,
+  googleProvider,
   handleFirestoreError,
   OperationType,
   testFirestoreConnection,
@@ -70,14 +81,103 @@ export interface CloudAiMessage {
   places?: GroundedPlace[];
 }
 
+export function normalizePakistanPhoneE164(raw: string): string {
+  const cleaned = raw.replace(/[\s\-()]+/g, '').trim();
+  if (!cleaned) return '';
+  if (cleaned.startsWith('+')) return cleaned;
+  if (cleaned.startsWith('92')) return `+${cleaned}`;
+  if (cleaned.startsWith('03')) return `+92${cleaned.slice(1)}`;
+  if (cleaned.startsWith('3') && cleaned.length === 10) return `+92${cleaned}`;
+  return `+92${cleaned.replace(/^0+/, '')}`;
+}
+
+export function formatFirebaseAuthError(err: unknown, providerName = 'Auth'): string {
+  const code = String((err as any)?.code || '');
+  const rawMessage = String((err as any)?.message || err || '');
+  const host = typeof window !== 'undefined' ? window.location.hostname : 'this domain';
+
+  if (code === 'auth/unauthorized-domain') {
+    return `Domain "${host}" is not authorized in Firebase Console → Authentication → Settings → Authorized domains. (اس ڈومین کو Firebase Authorized Domains میں شامل کریں)`;
+  }
+  if (code === 'auth/operation-not-allowed') {
+    return `${providerName} sign-in is not yet enabled in Firebase Console → Authentication → Sign-in method. (${providerName} کو Firebase Console میں Enable کریں)`;
+  }
+  if (code === 'auth/account-exists-with-different-credential') {
+    return 'An account already exists with the same email using Google or Email sign-in. Please sign in with Google or Email instead. (یہ ای میل پہلے سے Google یا Email سے رجسٹرڈ ہے)';
+  }
+  if (code === 'auth/popup-blocked') {
+    return 'Browser blocked the sign-in popup window. Please allow popups or tap again to redirect.';
+  }
+  if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+    return `${providerName} sign-in window was closed before completing login.`;
+  }
+  if (code === 'auth/billing-not-enabled') {
+    return 'Firebase Phone SMS requires Firebase Blaze plan or test phone numbers configured in Firebase Console → Authentication → Phone.';
+  }
+  if (code === 'auth/invalid-phone-number') {
+    return 'Please enter a valid Pakistan mobile number (e.g. 03125007782 or +923125007782).';
+  }
+  if (code === 'auth/invalid-verification-code') {
+    return 'Incorrect 6-digit SMS verification code. Please check and try again.';
+  }
+  if (code === 'auth/code-expired') {
+    return 'Verification code expired. Please request a new OTP code.';
+  }
+  if (code === 'auth/too-many-requests') {
+    return 'Too many attempts. Please wait a few minutes before requesting another code.';
+  }
+  if (code === 'auth/email-already-in-use') {
+    return 'This email address is already registered. Please switch to Sign In instead.';
+  }
+  if (code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/user-not-found') {
+    return 'Invalid email or password. Please check your credentials or use Forgot Password.';
+  }
+  if (code === 'auth/weak-password') {
+    return 'Password should be at least 6 characters long.';
+  }
+  if (code === 'auth/network-request-failed') {
+    return 'Network error while reaching authentication servers. Check internet connection.';
+  }
+  return rawMessage || `${providerName} sign-in failed.`;
+}
+
 interface FirebaseContextValue {
   firebaseUser: FirebaseUser | null;
   authReady: boolean;
   firestoreOnline: boolean;
+  redirectAuthUser: FirebaseUser | null;
+  redirectError: string | null;
+  clearRedirectState: () => void;
   savedPlaces: SavedPlaceItem[];
   aiThreads: CloudAiThread[];
   signInWithGooglePopup: (role: 'passenger' | 'partner', city?: string, lang?: Language) => Promise<{ idToken: string; user: FirebaseUser }>;
   signInWithFacebookPopup: (role: 'passenger' | 'partner', city?: string, lang?: Language) => Promise<{ idToken: string; user: FirebaseUser }>;
+  registerWithFirebaseEmail: (input: {
+    fullName: string;
+    email: string;
+    password: string;
+    role: 'passenger' | 'partner';
+    city?: string;
+    lang?: Language;
+  }) => Promise<{ idToken: string; user: FirebaseUser; emailVerified: boolean }>;
+  signInWithFirebaseEmail: (input: {
+    email: string;
+    password: string;
+    role: 'passenger' | 'partner';
+    city?: string;
+    lang?: Language;
+  }) => Promise<{ idToken: string; user: FirebaseUser; emailVerified: boolean }>;
+  resendFirebaseEmailVerification: () => Promise<void>;
+  reloadFirebaseUser: (role: 'passenger' | 'partner', city?: string, lang?: Language) => Promise<{ idToken: string; user: FirebaseUser; emailVerified: boolean } | null>;
+  sendFirebasePasswordReset: (email: string) => Promise<void>;
+  sendFirebasePhoneOtp: (rawPhone: string, recaptchaContainerId: string) => Promise<ConfirmationResult>;
+  confirmFirebasePhoneOtp: (
+    confirmation: ConfirmationResult,
+    otpCode: string,
+    role: 'passenger' | 'partner',
+    city?: string,
+    lang?: Language
+  ) => Promise<{ idToken: string; user: FirebaseUser }>;
   signOutFirebase: () => Promise<void>;
   savePlace: (place: Omit<SavedPlaceItem, 'id' | 'uid'>) => Promise<void>;
   removeSavedPlace: (placeId: string) => Promise<void>;
@@ -106,11 +206,27 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [firestoreOnline, setFirestoreOnline] = useState(true);
+  const [redirectAuthUser, setRedirectAuthUser] = useState<FirebaseUser | null>(null);
+  const [redirectError, setRedirectError] = useState<string | null>(null);
   const [savedPlaces, setSavedPlaces] = useState<SavedPlaceItem[]>([]);
   const [aiThreads, setAiThreads] = useState<CloudAiThread[]>([]);
 
+  const clearRedirectState = useCallback(() => {
+    setRedirectAuthUser(null);
+    setRedirectError(null);
+  }, []);
+
   useEffect(() => {
     testFirestoreConnection().then((ok) => setFirestoreOnline(ok));
+    getRedirectResult(auth)
+      .then((res) => {
+        if (res?.user) {
+          setRedirectAuthUser(res.user);
+        }
+      })
+      .catch((err) => {
+        setRedirectError(formatFirebaseAuthError(err, 'Social Login'));
+      });
     const unsub = onAuthStateChanged(auth, (user) => {
       setFirebaseUser(user);
       setAuthReady(true);
@@ -120,6 +236,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const ensureUserProfile = useCallback(
     async (user: FirebaseUser, role: 'passenger' | 'partner', city = 'Islamabad', preferredLang: Language = 'en') => {
+      // Security rules require email_verified == true for Firestore writes; skip cleanly for social/phone providers without verified email
       if (!user.emailVerified) return;
       const userPath = `users/${user.uid}`;
       const userRef = doc(db, 'users', user.uid);
@@ -164,6 +281,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           await setDoc(privateRef, {
             uid: user.uid,
             email,
+            ...(user.phoneNumber ? { phone: user.phoneNumber.slice(0, 32) } : {}),
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           });
@@ -172,6 +290,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             privateRef,
             {
               email,
+              ...(user.phoneNumber ? { phone: user.phoneNumber.slice(0, 32) } : {}),
               updatedAt: serverTimestamp(),
             },
             { merge: true }
@@ -210,7 +329,6 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         );
       },
       (err) => {
-        // Ignore initial missing parent error before profile finishes creating
         if (err instanceof Error && !err.message.includes('permission')) {
           handleFirestoreError(err, OperationType.LIST, placesPath);
         }
@@ -249,19 +367,164 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const signInWithGooglePopup = useCallback(
     async (role: 'passenger' | 'partner', city = 'Islamabad', lang: Language = 'en') => {
-      const cred = await signInWithPopup(auth, googleProvider);
-      const idToken = await cred.user.getIdToken();
-      await ensureUserProfile(cred.user, role, city, lang);
-      return { idToken, user: cred.user };
+      try {
+        const cred = await signInWithPopup(auth, googleProvider);
+        const idToken = await cred.user.getIdToken();
+        try {
+          await ensureUserProfile(cred.user, role, city, lang);
+        } catch {
+          // Do not block sign-in if Firestore profile write faces transient connectivity issue
+        }
+        return { idToken, user: cred.user };
+      } catch (err: any) {
+        if (err?.code === 'auth/popup-blocked') {
+          await signInWithRedirect(auth, googleProvider);
+        }
+        throw err;
+      }
     },
     [ensureUserProfile]
   );
 
   const signInWithFacebookPopup = useCallback(
     async (role: 'passenger' | 'partner', city = 'Islamabad', lang: Language = 'en') => {
-      const cred = await signInWithPopup(auth, facebookProvider);
+      try {
+        facebookProvider.addScope('email');
+        facebookProvider.addScope('public_profile');
+        const cred = await signInWithPopup(auth, facebookProvider);
+        const idToken = await cred.user.getIdToken();
+        try {
+          await ensureUserProfile(cred.user, role, city, lang);
+        } catch {
+          // Skip Firestore failure safely
+        }
+        return { idToken, user: cred.user };
+      } catch (err: any) {
+        if (err?.code === 'auth/popup-blocked') {
+          await signInWithRedirect(auth, facebookProvider);
+        }
+        throw err;
+      }
+    },
+    [ensureUserProfile]
+  );
+
+  const registerWithFirebaseEmail = useCallback(
+    async (input: {
+      fullName: string;
+      email: string;
+      password: string;
+      role: 'passenger' | 'partner';
+      city?: string;
+      lang?: Language;
+    }) => {
+      const cred = await createUserWithEmailAndPassword(auth, input.email.trim(), input.password);
+      if (input.fullName.trim()) {
+        await updateProfile(cred.user, { displayName: input.fullName.trim().slice(0, 120) });
+      }
+      await sendEmailVerification(cred.user).catch(() => {});
       const idToken = await cred.user.getIdToken();
-      await ensureUserProfile(cred.user, role, city, lang);
+      if (cred.user.emailVerified) {
+        try {
+          await ensureUserProfile(cred.user, input.role, input.city || 'Islamabad', input.lang || 'en');
+        } catch {
+          // non-fatal
+        }
+      }
+      return { idToken, user: cred.user, emailVerified: cred.user.emailVerified };
+    },
+    [ensureUserProfile]
+  );
+
+  const signInWithFirebaseEmail = useCallback(
+    async (input: {
+      email: string;
+      password: string;
+      role: 'passenger' | 'partner';
+      city?: string;
+      lang?: Language;
+    }) => {
+      const cred = await signInWithEmailAndPassword(auth, input.email.trim(), input.password);
+      const idToken = await cred.user.getIdToken();
+      if (cred.user.emailVerified) {
+        try {
+          await ensureUserProfile(cred.user, input.role, input.city || 'Islamabad', input.lang || 'en');
+        } catch {
+          // non-fatal
+        }
+      }
+      return { idToken, user: cred.user, emailVerified: cred.user.emailVerified };
+    },
+    [ensureUserProfile]
+  );
+
+  const resendFirebaseEmailVerification = useCallback(async () => {
+    if (!auth.currentUser) throw new Error('No active email session to verify.');
+    await sendEmailVerification(auth.currentUser);
+  }, []);
+
+  const reloadFirebaseUser = useCallback(
+    async (role: 'passenger' | 'partner', city = 'Islamabad', lang: Language = 'en') => {
+      if (!auth.currentUser) return null;
+      await reload(auth.currentUser);
+      const updated = auth.currentUser;
+      const idToken = await updated.getIdToken(true);
+      if (updated.emailVerified) {
+        try {
+          await ensureUserProfile(updated, role, city, lang);
+        } catch {
+          // non-fatal
+        }
+      }
+      return { idToken, user: updated, emailVerified: updated.emailVerified };
+    },
+    [ensureUserProfile]
+  );
+
+  const sendFirebasePasswordReset = useCallback(async (email: string) => {
+    await sendPasswordResetEmail(auth, email.trim());
+  }, []);
+
+  const sendFirebasePhoneOtp = useCallback(async (rawPhone: string, recaptchaContainerId: string) => {
+    const e164 = normalizePakistanPhoneE164(rawPhone);
+    if (!e164 || e164.length < 11) {
+      throw new Error('Please enter a valid mobile number (e.g. 03125007782).');
+    }
+    const existingVerifier = (window as any).__prRecaptchaVerifier as RecaptchaVerifier | undefined;
+    if (existingVerifier) {
+      try {
+        existingVerifier.clear();
+      } catch {
+        // ignore
+      }
+    }
+    const containerEl = document.getElementById(recaptchaContainerId);
+    if (containerEl) containerEl.innerHTML = '';
+
+    const verifier = new RecaptchaVerifier(auth, recaptchaContainerId, {
+      size: 'invisible',
+    });
+    (window as any).__prRecaptchaVerifier = verifier;
+    return await signInWithPhoneNumber(auth, e164, verifier);
+  }, []);
+
+  const confirmFirebasePhoneOtp = useCallback(
+    async (
+      confirmation: ConfirmationResult,
+      otpCode: string,
+      role: 'passenger' | 'partner',
+      city = 'Islamabad',
+      lang: Language = 'en'
+    ) => {
+      const cred = await confirmation.confirm(otpCode.trim());
+      const idToken = await cred.user.getIdToken();
+      if (cred.user.emailVerified) {
+        try {
+          await ensureUserProfile(cred.user, role, city, lang);
+        } catch {
+          // non-fatal
+        }
+      }
       return { idToken, user: cred.user };
     },
     [ensureUserProfile]
@@ -273,7 +536,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const savePlace = useCallback(
     async (place: Omit<SavedPlaceItem, 'id' | 'uid'>) => {
-      if (!firebaseUser) return;
+      if (!firebaseUser || !firebaseUser.emailVerified) return;
       const placeId = sanitizeId(`plc_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`);
       const path = `users/${firebaseUser.uid}/savedPlaces/${placeId}`;
       try {
@@ -296,7 +559,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const removeSavedPlace = useCallback(
     async (placeId: string) => {
-      if (!firebaseUser) return;
+      if (!firebaseUser || !firebaseUser.emailVerified) return;
       const cleanId = sanitizeId(placeId);
       const path = `users/${firebaseUser.uid}/savedPlaces/${cleanId}`;
       try {
@@ -443,10 +706,20 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         firebaseUser,
         authReady,
         firestoreOnline,
+        redirectAuthUser,
+        redirectError,
+        clearRedirectState,
         savedPlaces,
         aiThreads,
         signInWithGooglePopup,
         signInWithFacebookPopup,
+        registerWithFirebaseEmail,
+        signInWithFirebaseEmail,
+        resendFirebaseEmailVerification,
+        reloadFirebaseUser,
+        sendFirebasePasswordReset,
+        sendFirebasePhoneOtp,
+        confirmFirebasePhoneOtp,
         signOutFirebase,
         savePlace,
         removeSavedPlace,

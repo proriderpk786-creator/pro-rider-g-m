@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ArrowLeft,
   CarFront,
@@ -11,8 +11,8 @@ import {
   User as UserIcon,
 } from 'lucide-react';
 import { BrandLogo, LanguageToggle } from '../../components/BrandMark';
-import { useFirebase } from '../../contexts/FirebaseContext';
-import { apiRequest, setRoleToken } from '../../utils/api';
+import { formatFirebaseAuthError, useFirebase } from '../../contexts/FirebaseContext';
+import { apiRequest, isBackendOfflineError, setRoleToken, setStoredRoleUser } from '../../utils/api';
 import type {
   Language,
   PartnerDocument,
@@ -22,14 +22,29 @@ import type {
   User,
 } from '../../types';
 
-// Screen 17: Pro Partner Login / Registration
+// Screen 17: Pro Partner Login / Registration (Google, Facebook, Email, Phone SMS OTP)
 export const PartnerAuth: React.FC<{
   lang: Language;
   onChangeLang: (l: Language) => void;
   onAuthenticated: (token: string, user: User, profile: PartnerProfile) => void;
   onBackWelcome: () => void;
 }> = ({ lang, onChangeLang, onAuthenticated, onBackWelcome }) => {
-  const { signInWithGooglePopup } = useFirebase();
+  const {
+    signInWithGooglePopup,
+    signInWithFacebookPopup,
+    registerWithFirebaseEmail,
+    signInWithFirebaseEmail,
+    resendFirebaseEmailVerification,
+    reloadFirebaseUser,
+    sendFirebasePasswordReset,
+    sendFirebasePhoneOtp,
+    confirmFirebasePhoneOtp,
+    redirectAuthUser,
+    redirectError,
+    clearRedirectState,
+  } = useFirebase();
+
+  const [authMethod, setAuthMethod] = useState<'email' | 'phone'>('email');
   const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
@@ -38,24 +53,213 @@ export const PartnerAuth: React.FC<{
   const [city, setCity] = useState('Islamabad');
   const [operatingArea, setOperatingArea] = useState('');
   const [password, setPassword] = useState('');
+  const [otpCode, setOtpCode] = useState('');
+  const [phoneStep, setPhoneStep] = useState<'input' | 'verify'>('input');
+  const [confirmationResult, setConfirmationResult] = useState<any>(null);
+  const [serverOtpDevCode, setServerOtpDevCode] = useState<string | null>(null);
+  const [phoneAuthSource, setPhoneAuthSource] = useState<'firebase' | 'server'>('firebase');
+  const [emailVerificationPending, setEmailVerificationPending] = useState(false);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+
+  const buildLocalPartnerSession = (
+    fbUser: { uid: string; displayName: string | null; email: string | null; phoneNumber: string | null },
+    fallbackName?: string
+  ): { user: User; profile: PartnerProfile } => {
+    const user: User = {
+      id: fbUser.uid,
+      role: 'partner',
+      full_name: fbUser.displayName || fallbackName || fbUser.email?.split('@')[0] || 'Pro Partner',
+      phone: fbUser.phoneNumber || phone || '03001234567',
+      whatsapp: whatsapp || fbUser.phoneNumber || phone || '03001234567',
+      email: fbUser.email || email || `${fbUser.uid}@prorider.pk`,
+      city,
+      operating_area: operatingArea || 'City Center',
+      phone_verified: 1,
+      status: 'active',
+      created_at: new Date().toISOString(),
+    };
+    const profile: PartnerProfile = {
+      user_id: fbUser.uid,
+      verification_status: 'incomplete',
+      cnic_number: '',
+      cnic_expiry: '',
+      licence_number: '',
+      licence_expiry: '',
+      vehicle_category_id: 'fleet-sedan',
+      vehicle_name: '',
+      vehicle_number: '',
+      seating_capacity: 4,
+      fuel_type: 'Petrol',
+      operating_city: city,
+      service_eligibility: ['pick_and_drop'],
+      is_online: 0,
+      current_lat: null,
+      current_lng: null,
+      last_location_at: null,
+      admin_notes: '',
+    };
+    return { user, profile };
+  };
+
+  const finalizePartnerSession = async (
+    idToken: string,
+    fbUser: { uid: string; displayName: string | null; email: string | null; phoneNumber: string | null },
+    fallbackName?: string
+  ) => {
+    try {
+      const res = await apiRequest<{ token: string; user: User; partnerProfile: PartnerProfile }>(
+        '/api/auth/google/firebase',
+        { method: 'POST', body: { idToken, role: 'partner', city } }
+      );
+      setRoleToken('partner', res.token);
+      setStoredRoleUser('partner', res.user);
+      try {
+        localStorage.setItem('pr_profile_partner', JSON.stringify(res.partnerProfile));
+      } catch {
+        // ignore
+      }
+      onAuthenticated(res.token, res.user, res.partnerProfile);
+      return;
+    } catch (err) {
+      if (!isBackendOfflineError(err)) throw err;
+      const firebaseToken = `pr_fb_${idToken.slice(0, 32)}`;
+      const local = buildLocalPartnerSession(fbUser, fallbackName);
+      setRoleToken('partner', firebaseToken);
+      setStoredRoleUser('partner', local.user);
+      try {
+        localStorage.setItem('pr_profile_partner', JSON.stringify(local.profile));
+      } catch {
+        // ignore
+      }
+      onAuthenticated(firebaseToken, local.user, local.profile);
+    }
+  };
+
+  useEffect(() => {
+    if (redirectError) {
+      setError(redirectError);
+      clearRedirectState();
+    }
+  }, [redirectError, clearRedirectState]);
+
+  useEffect(() => {
+    if (!redirectAuthUser) return;
+    let active = true;
+    setLoading(true);
+    redirectAuthUser
+      .getIdToken()
+      .then((tk) => (active ? finalizePartnerSession(tk, redirectAuthUser) : undefined))
+      .catch((err) => {
+        if (active) setError(formatFirebaseAuthError(err, 'Social Login'));
+      })
+      .finally(() => {
+        clearRedirectState();
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [redirectAuthUser]);
 
   const handleGoogleSignIn = async () => {
     setError(null);
     setInfo(null);
     setLoading(true);
     try {
-      const { idToken } = await signInWithGooglePopup('partner', city, lang);
-      const res = await apiRequest<{ token: string; user: User; partnerProfile: PartnerProfile }>(
-        '/api/auth/google/firebase',
-        { method: 'POST', body: { idToken, role: 'partner', city } }
-      );
-      setRoleToken('partner', res.token);
-      onAuthenticated(res.token, res.user, res.partnerProfile);
+      const { idToken, user: fbUser } = await signInWithGooglePopup('partner', city, lang);
+      await finalizePartnerSession(idToken, fbUser);
     } catch (err: any) {
-      setError(err?.message || 'Google sign-in failed or was cancelled.');
+      setError(formatFirebaseAuthError(err, 'Google'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleFacebookSignIn = async () => {
+    setError(null);
+    setInfo(null);
+    setLoading(true);
+    try {
+      const { idToken, user: fbUser } = await signInWithFacebookPopup('partner', city, lang);
+      await finalizePartnerSession(idToken, fbUser);
+    } catch (err: any) {
+      setError(formatFirebaseAuthError(err, 'Facebook'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSendPhoneOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setInfo(null);
+    if (!phone || phone.replace(/\D+/g, '').length < 10) {
+      setError('Please enter a valid mobile number (e.g. 03001234567).');
+      return;
+    }
+    setLoading(true);
+    try {
+      const confirmation = await sendFirebasePhoneOtp(phone, 'recaptcha-partner-phone');
+      setConfirmationResult(confirmation);
+      setPhoneAuthSource('firebase');
+      setServerOtpDevCode(null);
+      setPhoneStep('verify');
+      setInfo(`6-digit SMS OTP code sent to ${phone}.`);
+    } catch (fbErr: any) {
+      try {
+        const res = await apiRequest<{ message: string; devOtpCode?: string }>('/api/auth/otp/send', {
+          method: 'POST',
+          body: { phone, role: 'partner', purpose: 'login' },
+        });
+        setPhoneAuthSource('server');
+        setServerOtpDevCode(res.devOtpCode || null);
+        setPhoneStep('verify');
+        setInfo(res.message || `Verification OTP sent to ${phone}.`);
+      } catch {
+        setError(formatFirebaseAuthError(fbErr, 'Phone SMS'));
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerifyPhoneOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setInfo(null);
+    if (!otpCode || otpCode.trim().length !== 6) {
+      setError('Please enter the 6-digit SMS verification code.');
+      return;
+    }
+    setLoading(true);
+    try {
+      if (phoneAuthSource === 'firebase' && confirmationResult) {
+        const { idToken, user: fbUser } = await confirmFirebasePhoneOtp(
+          confirmationResult,
+          otpCode,
+          'partner',
+          city,
+          lang
+        );
+        await finalizePartnerSession(idToken, fbUser, fullName || `Partner ${phone.slice(-4)}`);
+      } else {
+        await apiRequest('/api/auth/otp/verify', {
+          method: 'POST',
+          body: { phone, role: 'partner', code: otpCode.trim() },
+        });
+        const res = await apiRequest<{ token: string; user: User; partnerProfile: PartnerProfile }>(
+          '/api/auth/partner/login',
+          { method: 'POST', body: { identifier: phone, password: password || 'PhoneVerifiedLogin123!' } }
+        );
+        setRoleToken('partner', res.token);
+        setStoredRoleUser('partner', res.user);
+        onAuthenticated(res.token, res.user, res.partnerProfile);
+      }
+    } catch (err: any) {
+      setError(formatFirebaseAuthError(err, 'Phone OTP'));
     } finally {
       setLoading(false);
     }
@@ -65,31 +269,80 @@ export const PartnerAuth: React.FC<{
     e.preventDefault();
     setError(null);
     setInfo(null);
+
+    if (mode === 'forgot') {
+      if (!email || !email.includes('@')) {
+        setError('Please enter the email address associated with your Pro Partner account.');
+        return;
+      }
+      setLoading(true);
+      try {
+        await sendFirebasePasswordReset(email);
+        setInfo(`Password reset link sent to ${email}.`);
+      } catch (err: any) {
+        setError(formatFirebaseAuthError(err, 'Password Reset'));
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
     setLoading(true);
     try {
       if (mode === 'login') {
-        const res = await apiRequest<{ token: string; user: User; partnerProfile: PartnerProfile }>(
-          '/api/auth/partner/login',
-          { method: 'POST', body: { identifier: phone, password } }
-        );
-        setRoleToken('partner', res.token);
-        onAuthenticated(res.token, res.user, res.partnerProfile);
-      } else if (mode === 'register') {
-        const res = await apiRequest<{ token: string; user: User; partnerProfile: PartnerProfile }>(
-          '/api/auth/partner/register',
-          { method: 'POST', body: { fullName, phone, whatsapp, email, city, operatingArea, password } }
-        );
-        setRoleToken('partner', res.token);
-        onAuthenticated(res.token, res.user, res.partnerProfile);
+        try {
+          const fbRes = await signInWithFirebaseEmail({
+            email,
+            password,
+            role: 'partner',
+            city,
+            lang,
+          });
+          if (!fbRes.emailVerified) {
+            setEmailVerificationPending(true);
+            setInfo(`Verification email sent to ${email}. Please click the link and tap "I've Verified — Continue".`);
+            setLoading(false);
+            return;
+          }
+          await finalizePartnerSession(fbRes.idToken, fbRes.user);
+        } catch (fbErr: any) {
+          try {
+            const res = await apiRequest<{ token: string; user: User; partnerProfile: PartnerProfile }>(
+              '/api/auth/partner/login',
+              { method: 'POST', body: { identifier: email || phone, password } }
+            );
+            setRoleToken('partner', res.token);
+            setStoredRoleUser('partner', res.user);
+            onAuthenticated(res.token, res.user, res.partnerProfile);
+            return;
+          } catch (apiErr) {
+            if (!isBackendOfflineError(apiErr)) throw apiErr;
+            throw fbErr;
+          }
+        }
       } else {
-        const res = await apiRequest<{ message: string }>('/api/auth/forgot-password', {
-          method: 'POST',
-          body: { phone, role: 'partner' },
+        const fbRes = await registerWithFirebaseEmail({
+          fullName,
+          email,
+          password,
+          role: 'partner',
+          city,
+          lang,
         });
-        setInfo(res.message);
+        void apiRequest('/api/auth/partner/register', {
+          method: 'POST',
+          body: { fullName, phone, whatsapp, email, city, operatingArea, password },
+        }).catch(() => {});
+
+        if (fbRes.emailVerified) {
+          await finalizePartnerSession(fbRes.idToken, fbRes.user, fullName);
+        } else {
+          setEmailVerificationPending(true);
+          setInfo(`Verification email sent to ${email}. Open your inbox and verify before continuing.`);
+        }
       }
     } catch (err: any) {
-      setError(err.message || 'Authentication failed');
+      setError(formatFirebaseAuthError(err, 'Pro Partner Auth'));
     } finally {
       setLoading(false);
     }
@@ -115,159 +368,275 @@ export const PartnerAuth: React.FC<{
               {mode === 'login' ? 'Pro Partner Sign In' : mode === 'register' ? 'Become a Pro Partner' : 'Reset Password'}
             </h1>
             <p className="text-xs text-zinc-400 mt-1">
-              Receive verified Passenger ride requests, manage trips, and track PKR earnings.
+              Sign in with Google, Facebook, Email Verification, or Phone SMS OTP.
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-zinc-900 text-xs font-semibold">
-            <button
-              type="button"
-              onClick={() => { setMode('login'); setError(null); }}
-              className={`py-2 rounded-lg ${mode === 'login' ? 'bg-[#D4A017] text-[#0D0D10] font-bold' : 'text-zinc-400'}`}
-            >
-              Login
-            </button>
-            <button
-              type="button"
-              onClick={() => { setMode('register'); setError(null); }}
-              className={`py-2 rounded-lg ${mode === 'register' ? 'bg-[#D4A017] text-[#0D0D10] font-bold' : 'text-zinc-400'}`}
-            >
-              Register
-            </button>
-          </div>
+          <div id="recaptcha-partner-phone" />
+
+          {!emailVerificationPending && (
+            <>
+              <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-zinc-900 text-xs font-semibold">
+                <button
+                  type="button"
+                  onClick={() => { setMode('login'); setPhoneStep('input'); setError(null); setInfo(null); }}
+                  className={`py-2 rounded-lg ${mode === 'login' ? 'bg-[#D4A017] text-[#0D0D10] font-bold' : 'text-zinc-400'}`}
+                >
+                  Login
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setMode('register'); setPhoneStep('input'); setError(null); setInfo(null); }}
+                  className={`py-2 rounded-lg ${mode === 'register' ? 'bg-[#D4A017] text-[#0D0D10] font-bold' : 'text-zinc-400'}`}
+                >
+                  Register
+                </button>
+              </div>
+
+              {mode !== 'forgot' && (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      disabled={loading}
+                      onClick={handleGoogleSignIn}
+                      className="flex items-center justify-center gap-2 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-white text-xs font-bold hover:bg-zinc-800 disabled:opacity-60"
+                    >
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" aria-hidden="true">
+                        <path fill="#EA4335" d="M12 10.2v3.9h5.5c-.2 1.3-1.5 3.9-5.5 3.9-3.3 0-6-2.7-6-6s2.7-6 6-6c1.9 0 3.1.8 3.9 1.5l2.7-2.6C16.9 3.3 14.7 2.4 12 2.4 6.7 2.4 2.4 6.7 2.4 12s4.3 9.6 9.6 9.6c5.5 0 9.2-3.9 9.2-9.4 0-.6-.1-1.1-.2-1.6H12z" />
+                      </svg>
+                      Google
+                    </button>
+                    <button
+                      type="button"
+                      disabled={loading}
+                      onClick={handleFacebookSignIn}
+                      className="flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#1877F2] hover:bg-[#1565C0] text-white text-xs font-bold disabled:opacity-60"
+                    >
+                      <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
+                        <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" />
+                      </svg>
+                      Facebook
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-zinc-900 text-xs font-semibold">
+                    <button
+                      type="button"
+                      onClick={() => { setAuthMethod('email'); setPhoneStep('input'); setError(null); }}
+                      className={`py-2 rounded-lg ${authMethod === 'email' ? 'bg-zinc-800 text-white' : 'text-zinc-400'}`}
+                    >
+                      Email Verification
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setAuthMethod('phone'); setPhoneStep('input'); setError(null); }}
+                      className={`py-2 rounded-lg ${authMethod === 'phone' ? 'bg-zinc-800 text-white' : 'text-zinc-400'}`}
+                    >
+                      Phone SMS OTP
+                    </button>
+                  </div>
+                </>
+              )}
+            </>
+          )}
 
           {error && <div className="rounded-xl bg-red-950/60 border border-red-800 px-3.5 py-2.5 text-xs text-red-200">{error}</div>}
           {info && <div className="rounded-xl bg-amber-950/60 border border-amber-800 px-3.5 py-2.5 text-xs text-amber-200">{info}</div>}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {mode === 'register' && (
-              <div>
-                <label className="block text-xs font-semibold text-zinc-300 mb-1">Full Name (as per CNIC)</label>
-                <div className="relative">
-                  <UserIcon className="w-4 h-4 text-zinc-500 absolute left-3 top-3" />
-                  <input
-                    required
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    placeholder="e.g. Asif Ali"
-                    className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
-                  />
-                </div>
-              </div>
-            )}
-
-            <div>
-              <label className="block text-xs font-semibold text-zinc-300 mb-1">
-                {mode === 'login' ? 'Mobile Number or Email' : 'Mobile Number'}
-              </label>
-              <div className="relative">
-                <Phone className="w-4 h-4 text-zinc-500 absolute left-3 top-3" />
-                <input
-                  required
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  placeholder="03XXXXXXXXX"
-                  className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
-                />
-              </div>
-            </div>
-
-            {mode === 'register' && (
-              <>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-zinc-300 mb-1">WhatsApp</label>
-                    <input
-                      value={whatsapp}
-                      onChange={(e) => setWhatsapp(e.target.value)}
-                      placeholder="03XXXXXXXXX"
-                      className="w-full px-3 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-zinc-300 mb-1">City</label>
-                    <select
-                      value={city}
-                      onChange={(e) => setCity(e.target.value)}
-                      className="w-full px-3 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
-                    >
-                      <option value="Islamabad">Islamabad</option>
-                      <option value="Rawalpindi">Rawalpindi</option>
-                      <option value="Lahore">Lahore</option>
-                      <option value="Karachi">Karachi</option>
-                    </select>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-zinc-300 mb-1">Operating Area</label>
-                    <input
-                      value={operatingArea}
-                      onChange={(e) => setOperatingArea(e.target.value)}
-                      placeholder="e.g. F-10 / Blue Area"
-                      className="w-full px-3 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-zinc-300 mb-1">Email (Optional)</label>
-                    <input
-                      type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="driver@email.com"
-                      className="w-full px-3 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
-                    />
-                  </div>
-                </div>
-              </>
-            )}
-
-            {mode !== 'forgot' && (
-              <div>
-                <label className="block text-xs font-semibold text-zinc-300 mb-1">Password</label>
-                <div className="relative">
-                  <Lock className="w-4 h-4 text-zinc-500 absolute left-3 top-3" />
-                  <input
-                    required
-                    type="password"
-                    minLength={6}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Minimum 6 characters"
-                    className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
-                  />
-                </div>
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-3 rounded-xl bg-[#D4A017] text-[#0D0D10] text-sm font-bold hover:bg-[#EAB308]"
-            >
-              {loading ? 'Processing...' : mode === 'login' ? 'Sign In as Pro Partner' : mode === 'register' ? 'Register as Pro Partner' : 'Request Reset'}
-            </button>
-          </form>
-
-          {mode !== 'forgot' && (
-            <div className="space-y-2.5">
-              <div className="relative flex items-center justify-center text-[11px] text-zinc-500">
-                <span className="h-px bg-zinc-800 flex-1" />
-                <span className="px-2">or continue with Google</span>
-                <span className="h-px bg-zinc-800 flex-1" />
+          {emailVerificationPending ? (
+            <div className="space-y-4 text-xs text-center">
+              <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-700 space-y-2">
+                <p className="font-bold text-sm text-[#D4A017]">Verify Partner Email</p>
+                <p className="text-zinc-300">Open the verification link sent to <strong className="font-mono">{email}</strong>.</p>
               </div>
               <button
                 type="button"
                 disabled={loading}
-                onClick={handleGoogleSignIn}
-                className="w-full py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-white text-xs font-bold hover:bg-zinc-800 flex items-center justify-center gap-2 transition-colors disabled:opacity-60"
+                onClick={async () => {
+                  setLoading(true);
+                  try {
+                    const reloaded = await reloadFirebaseUser('partner', city, lang);
+                    if (!reloaded || !reloaded.emailVerified) {
+                      setError('Email is not verified yet. Check your inbox and click the link first.');
+                      return;
+                    }
+                    await finalizePartnerSession(reloaded.idToken, reloaded.user, fullName);
+                  } catch (err: any) {
+                    setError(formatFirebaseAuthError(err, 'Email Verification'));
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+                className="w-full py-3 rounded-xl bg-[#D4A017] text-[#0D0D10] text-sm font-bold"
               >
-                <svg className="w-4 h-4" viewBox="0 0 24 24" aria-hidden="true">
-                  <path fill="#EA4335" d="M12 10.2v3.9h5.5c-.2 1.3-1.5 3.9-5.5 3.9-3.3 0-6-2.7-6-6s2.7-6 6-6c1.9 0 3.1.8 3.9 1.5l2.7-2.6C16.9 3.3 14.7 2.4 12 2.4 6.7 2.4 2.4 6.7 2.4 12s4.3 9.6 9.6 9.6c5.5 0 9.2-3.9 9.2-9.4 0-.6-.1-1.1-.2-1.6H12z" />
-                </svg>
-                Continue as Pro Partner with Google
+                {loading ? 'Checking...' : "I've Verified — Continue"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void resendFirebaseEmailVerification().then(() => setInfo('Verification email resent!'))}
+                className="text-[#D4A017] hover:underline font-semibold"
+              >
+                Resend Verification Email
               </button>
             </div>
+          ) : authMethod === 'phone' && mode !== 'forgot' ? (
+            phoneStep === 'input' ? (
+              <form onSubmit={handleSendPhoneOtp} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-300 mb-1">Mobile Number</label>
+                  <div className="relative">
+                    <Phone className="w-4 h-4 text-zinc-500 absolute left-3 top-3" />
+                    <input
+                      required
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      placeholder="03001234567"
+                      className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white font-mono"
+                    />
+                  </div>
+                </div>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full py-3 rounded-xl bg-[#D4A017] text-[#0D0D10] text-sm font-bold hover:bg-[#EAB308]"
+                >
+                  {loading ? 'Sending SMS OTP...' : 'Send 6-Digit SMS OTP'}
+                </button>
+              </form>
+            ) : (
+              <form onSubmit={handleVerifyPhoneOtp} className="space-y-4">
+                {serverOtpDevCode && (
+                  <p className="text-xs text-amber-300 font-mono text-center">Local Dev OTP: {serverOtpDevCode}</p>
+                )}
+                <input
+                  required
+                  maxLength={6}
+                  value={otpCode}
+                  onChange={(e) => setOtpCode(e.target.value)}
+                  placeholder="Enter 6-digit OTP"
+                  className="w-full text-center tracking-[0.6em] py-3 rounded-xl border border-[#D4A017] bg-zinc-900 text-lg text-white font-mono"
+                />
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full py-3 rounded-xl bg-[#D4A017] text-[#0D0D10] text-sm font-bold"
+                >
+                  {loading ? 'Verifying...' : 'Verify SMS OTP & Sign In'}
+                </button>
+              </form>
+            )
+          ) : (
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {mode === 'register' && (
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-300 mb-1">Full Name (as per CNIC)</label>
+                  <div className="relative">
+                    <UserIcon className="w-4 h-4 text-zinc-500 absolute left-3 top-3" />
+                    <input
+                      required
+                      value={fullName}
+                      onChange={(e) => setFullName(e.target.value)}
+                      placeholder="e.g. Asif Ali"
+                      className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-semibold text-zinc-300 mb-1">Email Address</label>
+                <input
+                  required
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="driver@email.com"
+                  className="w-full px-3 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
+                />
+              </div>
+
+              {mode === 'register' && (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-300 mb-1">Mobile Number</label>
+                      <input
+                        value={phone}
+                        onChange={(e) => setPhone(e.target.value)}
+                        placeholder="03XXXXXXXXX"
+                        className="w-full px-3 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-300 mb-1">City</label>
+                      <select
+                        value={city}
+                        onChange={(e) => setCity(e.target.value)}
+                        className="w-full px-3 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
+                      >
+                        <option value="Islamabad">Islamabad</option>
+                        <option value="Rawalpindi">Rawalpindi</option>
+                        <option value="Lahore">Lahore</option>
+                        <option value="Karachi">Karachi</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-300 mb-1">WhatsApp</label>
+                      <input
+                        value={whatsapp}
+                        onChange={(e) => setWhatsapp(e.target.value)}
+                        placeholder="03XXXXXXXXX"
+                        className="w-full px-3 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-300 mb-1">Operating Area</label>
+                      <input
+                        value={operatingArea}
+                        onChange={(e) => setOperatingArea(e.target.value)}
+                        placeholder="e.g. F-10 / Blue Area"
+                        className="w-full px-3 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {mode !== 'forgot' && (
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-300 mb-1">Password</label>
+                  <div className="relative">
+                    <Lock className="w-4 h-4 text-zinc-500 absolute left-3 top-3" />
+                    <input
+                      required
+                      type="password"
+                      minLength={6}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Minimum 6 characters"
+                      className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-3 rounded-xl bg-[#D4A017] text-[#0D0D10] text-sm font-bold hover:bg-[#EAB308]"
+              >
+                {loading
+                  ? 'Processing...'
+                  : mode === 'login'
+                  ? 'Sign In as Pro Partner'
+                  : mode === 'register'
+                  ? 'Register & Verify Email'
+                  : 'Send Password Reset Email'}
+              </button>
+            </form>
           )}
 
           <div className="flex justify-between text-xs text-zinc-400 pt-2 border-t border-zinc-800">

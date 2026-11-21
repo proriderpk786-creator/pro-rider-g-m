@@ -33,6 +33,7 @@ import { VehicleImage } from '../../components/BrandMark';
 import { LocationAutocomplete } from '../../components/LocationAutocomplete';
 import { ShareTripStatusModal } from '../../components/ShareTripStatusModal';
 import { StreetMap, type MapFocusTarget } from '../../components/StreetMap';
+import { DEFAULT_PUBLIC_CONFIG } from '../../config/defaultConfig';
 import { useFirebase } from '../../contexts/FirebaseContext';
 import { t } from '../../i18n/translations';
 import type {
@@ -46,8 +47,20 @@ import type {
   RouteResult,
   ServiceType,
 } from '../../types';
-import { apiRequest } from '../../utils/api';
+import { apiRequest, isBackendOfflineError } from '../../utils/api';
 import { downloadBookingPdf, shareBookingPdf } from '../../utils/pdfGenerator';
+
+const LOCAL_PASSENGER_BOOKINGS_KEY = 'pr_local_bookings_passenger';
+
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
 
 interface PassengerBookingFlowProps {
   lang: Language;
@@ -153,13 +166,13 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
   // Active ongoing booking if any
   const activeBooking = useMemo(
     () =>
-      bookings.find((b) =>
+      (Array.isArray(bookings) ? bookings : []).find((b) =>
         ['searching', 'negotiating', 'confirmed', 'on_the_way', 'arrived', 'started'].includes(b.status)
       ) || null,
     [bookings]
   );
 
-  // Compute road route when pickup & dropoff change
+  // Compute road route when pickup & dropoff change (with direct OSRM + Haversine fallback on static hosting)
   useEffect(() => {
     if (!pickup || !dropoff) {
       return;
@@ -174,15 +187,51 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
         );
         if (!cancelled && res?.distanceKm) {
           setRoute(res);
+          return;
         }
-      } catch (err: any) {
-        if (!cancelled) {
-          setRouteError(err.message || 'Route calculation fallback active');
-        }
-      } finally {
-        if (!cancelled) setRouteLoading(false);
+      } catch {
+        // Fallback to direct OSRM browser query on static Vercel hosting
       }
-    })();
+
+      try {
+        const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${pickup.lng},${pickup.lat};${dropoff.lng},${dropoff.lat}?overview=full&geometries=geojson`;
+        const osrmRes = await fetch(osrmUrl);
+        if (osrmRes.ok) {
+          const osrmData = await osrmRes.json();
+          const firstRoute = osrmData?.routes?.[0];
+          if (!cancelled && firstRoute) {
+            const coords = Array.isArray(firstRoute.geometry?.coordinates)
+              ? firstRoute.geometry.coordinates.map(([lng, lat]: [number, number]) => [lat, lng] as [number, number])
+              : [[pickup.lat, pickup.lng] as [number, number], [dropoff.lat, dropoff.lng] as [number, number]];
+            setRoute({
+              distanceKm: Math.max(1, Math.round((firstRoute.distance / 1000) * 10) / 10),
+              durationMin: Math.max(3, Math.round(firstRoute.duration / 60)),
+              coordinates: coords,
+            });
+            return;
+          }
+        }
+      } catch {
+        // Fallback to Haversine geodesic distance with 1.25x road factor
+      }
+
+      if (!cancelled) {
+        const straight = haversineKm(pickup.lat, pickup.lng, dropoff.lat, dropoff.lng);
+        const roadKm = Math.max(1, Math.round(straight * 1.25 * 10) / 10);
+        const estMin = Math.max(4, Math.round(roadKm * 1.8));
+        setRoute({
+          distanceKm: roadKm,
+          durationMin: estMin,
+          coordinates: [
+            [pickup.lat, pickup.lng],
+            [dropoff.lat, dropoff.lng],
+          ],
+        });
+      }
+      if (!cancelled) setRouteLoading(false);
+    })().finally(() => {
+      if (!cancelled) setRouteLoading(false);
+    });
     return () => {
       cancelled = true;
     };
@@ -234,9 +283,10 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
     };
   };
 
-  // Eligible vehicles from config or standard fallback
+  // Eligible vehicles from config or static DEFAULT_PUBLIC_CONFIG fallback
   const vehiclesList = useMemo<FleetCategory[]>(() => {
-    return (config?.fleet || []).filter((f) => f.is_active === 1);
+    const sourceFleet = config?.fleet?.length ? config.fleet : DEFAULT_PUBLIC_CONFIG.fleet;
+    return sourceFleet.filter((f) => f.is_active === 1);
   }, [config?.fleet]);
 
   const selectedVehicle = useMemo(() => {
@@ -269,7 +319,7 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
     { step: 8, label: 'Confirm...' },
   ];
 
-  // Submit Booking to Backend
+  // Submit Booking to Backend (or local+Firestore when static Vercel hosting is active)
   const handleConfirmBooking = async () => {
     if (!pickup || !dropoff || !selectedVehicle) {
       setSubmitError('Please complete all booking steps.');
@@ -277,6 +327,7 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
     }
     setSubmitting(true);
     setSubmitError(null);
+    const calc = calculateVehiclePrice(selectedVehicle);
     try {
       const res = await apiRequest<{ booking: Booking }>('/api/passenger/bookings', {
         method: 'POST',
@@ -323,6 +374,74 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
         await onRefreshBookings();
       }
     } catch (err: any) {
+      if (isBackendOfflineError(err)) {
+        const nowIso = new Date().toISOString();
+        const codeSuffix = String(Date.now()).slice(-6);
+        const localBooking: Booking = {
+          id: `BK-${codeSuffix}`,
+          invoice_number: `INV-PR-${codeSuffix}`,
+          passenger_id: firebaseUser?.uid || 'local-passenger',
+          partner_id: null,
+          booking_mode: bookingMode,
+          service_type: serviceType,
+          status: 'searching',
+          pickup_address: pickup.label,
+          pickup_lat: pickup.lat,
+          pickup_lng: pickup.lng,
+          dropoff_address: dropoff.label,
+          dropoff_lat: dropoff.lat,
+          dropoff_lng: dropoff.lng,
+          distance_km: route?.distanceKm || 30.4,
+          duration_min: route?.durationMin || 31,
+          vehicle_category_id: selectedVehicle.id,
+          vehicle_category_name: selectedVehicle.name,
+          seats_requested: passengersCount,
+          pickup_date: startDate,
+          pickup_time: pickupTime,
+          expected_dropoff_date: startDate,
+          expected_dropoff_time: dropoffTime,
+          actual_dropoff_time: null,
+          return_journey: returnJourney ? 1 : 0,
+          package_id: null,
+          schedule_days: travelDays,
+          notes,
+          proposed_fare_pkr: offeredFare,
+          agreed_fare_pkr: offeredFare,
+          total_bill_pkr: offeredFare,
+          amount_paid_pkr: paymentMethod === 'wallet' ? offeredFare : 0,
+          commission_pkr: Math.round(offeredFare * 0.15),
+          commission_pct: 15,
+          driver_payout_pkr: Math.round(offeredFare * 0.85),
+          base_fare_pkr: 0,
+          rate_per_km_pkr: calc.ratePerKm,
+          payment_status: paymentMethod === 'wallet' ? 'PAID' : 'UNPAID',
+          created_at: nowIso,
+        };
+        try {
+          const existingRaw = localStorage.getItem(LOCAL_PASSENGER_BOOKINGS_KEY);
+          const existing = existingRaw ? (JSON.parse(existingRaw) as Booking[]) : [];
+          const next = [localBooking, ...(Array.isArray(existing) ? existing : [])];
+          localStorage.setItem(LOCAL_PASSENGER_BOOKINGS_KEY, JSON.stringify(next));
+        } catch {
+          // ignore storage quota errors
+        }
+        if (firebaseUser?.emailVerified) {
+          void syncBookingSummary({
+            bookingCode: localBooking.id,
+            bookingMode,
+            serviceType,
+            pickupAddress: pickup.label,
+            dropoffAddress: dropoff.label,
+            distanceKm: localBooking.distance_km,
+            farePkr: offeredFare,
+            status: 'searching',
+          }).catch(() => {});
+        }
+        setConfirmedBooking(localBooking);
+        setCurrentStep(9);
+        await onRefreshBookings();
+        return;
+      }
       setSubmitError(err.message || 'Unable to confirm booking. Please try again.');
     } finally {
       setSubmitting(false);
