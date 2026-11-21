@@ -343,25 +343,25 @@ export const BookingsManagementTab: React.FC<BookingsManagementTabProps> = ({
               <div className="space-y-2 border-t border-zinc-100 pt-3">
                 <div className="flex justify-between text-zinc-600">
                   <span>Base Booking Fare</span>
-                  <span className="font-mono font-bold">Rs. {selectedBooking.base_fare_pkr}</span>
+                  <span className="font-mono font-bold">Rs. {selectedBooking.base_fare_pkr ?? 200}</span>
                 </div>
                 <div className="flex justify-between text-zinc-600">
-                  <span>Road Distance ({selectedBooking.distance_km} km @ Rs. {selectedBooking.rate_per_km_pkr}/km)</span>
+                  <span>Road Distance ({selectedBooking.distance_km} km @ Rs. {selectedBooking.rate_per_km_pkr ?? 38}/km)</span>
                   <span className="font-mono font-bold">
-                    Rs. {Math.round(selectedBooking.distance_km * selectedBooking.rate_per_km_pkr)}
+                    Rs. {Math.round(selectedBooking.distance_km * (selectedBooking.rate_per_km_pkr ?? 38))}
                   </span>
                 </div>
-                {selectedBooking.waiting_charge_pkr > 0 && (
+                {Boolean(selectedBooking.waiting_charge_pkr && selectedBooking.waiting_charge_pkr > 0) && (
                   <div className="flex justify-between text-zinc-600">
-                    <span>Waiting Charges ({selectedBooking.waiting_minutes} mins)</span>
+                    <span>Waiting Charges ({selectedBooking.waiting_minutes ?? 0} mins)</span>
                     <span className="font-mono font-bold">Rs. {selectedBooking.waiting_charge_pkr}</span>
                   </div>
                 )}
-                {selectedBooking.extra_stops_count > 0 && (
+                {Boolean(selectedBooking.extra_stops_count && selectedBooking.extra_stops_count > 0) && (
                   <div className="flex justify-between text-zinc-600">
                     <span>Extra Stops ({selectedBooking.extra_stops_count})</span>
                     <span className="font-mono font-bold">
-                      Rs. {selectedBooking.extra_stops_charge_pkr}
+                      Rs. {selectedBooking.extra_stops_charge_pkr ?? 0}
                     </span>
                   </div>
                 )}
@@ -372,7 +372,7 @@ export const BookingsManagementTab: React.FC<BookingsManagementTabProps> = ({
                   </span>
                 </div>
                 <div className="flex justify-between text-zinc-600 text-[11px]">
-                  <span>Platform Commission ({selectedBooking.commission_pct}%)</span>
+                  <span>Platform Commission ({selectedBooking.commission_pct ?? 15}%)</span>
                   <span className="font-mono font-bold text-emerald-700">
                     Rs. {Number(selectedBooking.commission_pkr).toLocaleString()}
                   </span>
@@ -380,7 +380,7 @@ export const BookingsManagementTab: React.FC<BookingsManagementTabProps> = ({
                 <div className="flex justify-between text-zinc-600 text-[11px]">
                   <span>Pro Partner Payout</span>
                   <span className="font-mono font-bold text-zinc-800">
-                    Rs. {Number(selectedBooking.driver_payout_pkr).toLocaleString()}
+                    Rs. {Number(selectedBooking.driver_payout_pkr ?? (selectedBooking.total_bill_pkr - selectedBooking.commission_pkr)).toLocaleString()}
                   </span>
                 </div>
               </div>

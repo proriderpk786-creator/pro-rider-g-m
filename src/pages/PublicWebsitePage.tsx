@@ -84,7 +84,7 @@ export const PublicWebsitePage: React.FC<PublicWebsitePageProps> = ({
 
       {/* Hero Section */}
       <section className="border-b border-zinc-200 bg-[#F8F8FA]">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 lg:py-16 grid grid-cols-1 lg:grid-cols-12 gap-10 items-stretch">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 lg:py-16 grid grid-cols-1 lg:grid-cols-12 gap-10 items-center">
           <div className="lg:col-span-6 flex flex-col justify-center space-y-6">
             <p className="text-xs font-semibold uppercase tracking-widest text-[#B8860B]">
               Travel with Trust · Pakistan Mobility Platform
@@ -120,13 +120,15 @@ export const PublicWebsitePage: React.FC<PublicWebsitePageProps> = ({
             </div>
           </div>
 
-          <div className="lg:col-span-6">
-            <div className="h-full min-h-[300px] rounded-3xl overflow-hidden border border-zinc-200 bg-[#0D0D10]">
+          <div className="lg:col-span-6 flex items-center justify-center">
+            <div className="hero-image-container relative w-full aspect-[16/10] sm:aspect-[16/9] lg:aspect-[16/10] min-h-[280px] max-h-[500px] rounded-3xl overflow-hidden border border-zinc-200 bg-[#0D0D10] shadow-xl flex items-center justify-center">
               <img
                 src="/src/assets/images/hero_mobility_pakistan_1794584048013.jpg"
                 alt="PRO RIDER AI Fleet"
                 referrerPolicy="no-referrer"
-                className="w-full h-full object-cover"
+                className="hero-image-cover w-full h-full object-cover object-center"
+                style={{ objectFit: 'cover', objectPosition: 'center' }}
+                loading="eager"
               />
             </div>
           </div>

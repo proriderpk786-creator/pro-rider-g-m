@@ -264,7 +264,17 @@ export interface Booking {
   partner_lat?: number | null;
   partner_lng?: number | null;
   passenger_name?: string;
+  passenger_phone?: string;
+  partner_phone?: string;
   passenger_display?: string;
+  base_fare_pkr?: number;
+  rate_per_km_pkr?: number;
+  waiting_charge_pkr?: number;
+  waiting_minutes?: number;
+  extra_stops_count?: number;
+  extra_stops_charge_pkr?: number;
+  commission_pct?: number;
+  driver_payout_pkr?: number;
   my_rating?: number | null;
   offers?: BookingOffer[];
   my_offers?: BookingOffer[];

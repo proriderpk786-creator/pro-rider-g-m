@@ -10,6 +10,7 @@ import {
   Save,
   Sliders,
   TrendingUp,
+  Users,
   X,
 } from 'lucide-react';
 import { apiRequest } from '../../utils/api';
@@ -41,12 +42,28 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
     ride_sharing_seat_discount_pct: settings.ride_sharing_seat_discount_pct || '20',
     fuel_sharing_rate_factor: settings.fuel_sharing_rate_factor || '0.75',
     schedule_rate_per_km: settings.schedule_rate_per_km || '38',
-    schedule_default_pickup: settings.schedule_default_pickup || '08:00 AM',
-    schedule_default_drop: settings.schedule_default_drop || '05:30 PM',
+    schedule_default_pickup: settings.schedule_default_pickup || '09:15 AM',
+    schedule_default_drop: settings.schedule_default_drop || '06:00 PM',
     surge_multiplier_low: settings.surge_multiplier_low || '1.0',
     surge_multiplier_medium: settings.surge_multiplier_medium || '1.25',
     surge_multiplier_high: settings.surge_multiplier_high || '1.50',
     min_cancellation_fee_pkr: settings.min_cancellation_fee_pkr || '100',
+    // Exact user-specified cross-calculation tariff rules
+    rate_economy_pick_drop_min: settings.rate_economy_pick_drop_min || '35',
+    rate_economy_pick_drop_max: settings.rate_economy_pick_drop_max || '45',
+    rate_economy_ride_share_min: settings.rate_economy_ride_share_min || '30',
+    rate_economy_ride_share_max: settings.rate_economy_ride_share_max || '40',
+    rate_economy_fuel_share_min: settings.rate_economy_fuel_share_min || '20',
+    rate_economy_fuel_share_max: settings.rate_economy_fuel_share_max || '30',
+    rate_comfort_addon_per_km: settings.rate_comfort_addon_per_km || '5',
+    rate_sedan_addon_per_km: settings.rate_sedan_addon_per_km || '20',
+    rate_luxury_multiplier_pct: settings.rate_luxury_multiplier_pct || '10',
+    rate_van_7_min: settings.rate_van_7_min || '20',
+    rate_van_7_max: settings.rate_van_7_max || '30',
+    rate_van_15_min: settings.rate_van_15_min || '15',
+    rate_van_15_max: settings.rate_van_15_max || '25',
+    rate_coaster_min: settings.rate_coaster_min || '12',
+    rate_coaster_max: settings.rate_coaster_max || '25',
   }));
   const [savingSettings, setSavingSettings] = useState(false);
 
@@ -372,6 +389,253 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                   }
                   className="w-full px-2.5 py-1.5 rounded-xl border border-zinc-200 text-xs font-mono"
                 />
+              </div>
+            </div>
+          </div>
+
+          {/* CROSS-CALCULATION RULES: ECONOMY BASE MODES (USER FORMULA) */}
+          <div className="p-4 rounded-2xl bg-amber-50/60 border border-[#D4A017]/40 space-y-3">
+            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#8F6400]">
+              <Car className="w-4 h-4 text-[#D4A017]" />
+              چھوٹی اکانومی گاڑی — سروس ریٹس
+            </div>
+            <p className="text-[11px] text-zinc-600">
+              Economy Car (Alto / Mira) per-km rate ranges across all 3 mobility modes:
+            </p>
+            <div className="space-y-2">
+              <div>
+                <label className="block text-zinc-700 font-semibold mb-1">
+                  Pick & Drop (پک اینڈ ڈراپ): PKR / km
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="number"
+                    value={localSettings.rate_economy_pick_drop_min}
+                    onChange={(e) =>
+                      setLocalSettings((s) => ({ ...s, rate_economy_pick_drop_min: e.target.value }))
+                    }
+                    placeholder="Min 35"
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-200 font-mono text-xs"
+                  />
+                  <input
+                    type="number"
+                    value={localSettings.rate_economy_pick_drop_max}
+                    onChange={(e) =>
+                      setLocalSettings((s) => ({ ...s, rate_economy_pick_drop_max: e.target.value }))
+                    }
+                    placeholder="Max 45"
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-200 font-mono text-xs"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-zinc-700 font-semibold mb-1">
+                  Ride Sharing (رائڈ شیئرنگ): PKR / km
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="number"
+                    value={localSettings.rate_economy_ride_share_min}
+                    onChange={(e) =>
+                      setLocalSettings((s) => ({ ...s, rate_economy_ride_share_min: e.target.value }))
+                    }
+                    placeholder="Min 30"
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-200 font-mono text-xs"
+                  />
+                  <input
+                    type="number"
+                    value={localSettings.rate_economy_ride_share_max}
+                    onChange={(e) =>
+                      setLocalSettings((s) => ({ ...s, rate_economy_ride_share_max: e.target.value }))
+                    }
+                    placeholder="Max 40"
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-200 font-mono text-xs"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-zinc-700 font-semibold mb-1">
+                  Fuel Sharing (فیول شیئرنگ): PKR / km
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="number"
+                    value={localSettings.rate_economy_fuel_share_min}
+                    onChange={(e) =>
+                      setLocalSettings((s) => ({ ...s, rate_economy_fuel_share_min: e.target.value }))
+                    }
+                    placeholder="Min 20"
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-200 font-mono text-xs"
+                  />
+                  <input
+                    type="number"
+                    value={localSettings.rate_economy_fuel_share_max}
+                    onChange={(e) =>
+                      setLocalSettings((s) => ({ ...s, rate_economy_fuel_share_max: e.target.value }))
+                    }
+                    placeholder="Max 30"
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-200 font-mono text-xs"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* CROSS-CALCULATION RULES: CATEGORY UPGRADES */}
+          <div className="p-4 rounded-2xl bg-amber-50/60 border border-[#D4A017]/40 space-y-3">
+            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#8F6400]">
+              <TrendingUp className="w-4 h-4 text-[#D4A017]" />
+              کیٹیگری اضافہ — Comfort / Sedan / Luxury
+            </div>
+            <p className="text-[11px] text-zinc-600">
+              Cross-calculation tier markups added on top of the base rate:
+            </p>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-zinc-700 font-semibold mb-1">
+                  کمفرٹ کیٹیگری اضافہ (Comfort Add-on PKR/km)
+                </label>
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-zinc-500">+</span>
+                  <input
+                    type="number"
+                    value={localSettings.rate_comfort_addon_per_km}
+                    onChange={(e) =>
+                      setLocalSettings((s) => ({ ...s, rate_comfort_addon_per_km: e.target.value }))
+                    }
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-200 font-mono text-xs font-bold"
+                  />
+                  <span className="text-zinc-500 font-mono text-xs">PKR</span>
+                </div>
+                <span className="text-[10px] text-zinc-400 mt-0.5 block">Standard: +5 Rs/km</span>
+              </div>
+
+              <div>
+                <label className="block text-zinc-700 font-semibold mb-1">
+                  سیڈان کیٹیگری اضافہ (Sedan Add-on PKR/km)
+                </label>
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-zinc-500">+</span>
+                  <input
+                    type="number"
+                    value={localSettings.rate_sedan_addon_per_km}
+                    onChange={(e) =>
+                      setLocalSettings((s) => ({ ...s, rate_sedan_addon_per_km: e.target.value }))
+                    }
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-200 font-mono text-xs font-bold"
+                  />
+                  <span className="text-zinc-500 font-mono text-xs">PKR</span>
+                </div>
+                <span className="text-[10px] text-zinc-400 mt-0.5 block">Standard: +20 Rs/km</span>
+              </div>
+
+              <div>
+                <label className="block text-zinc-700 font-semibold mb-1">
+                  لگژری گاڑیوں پر فیصد اضافہ (Luxury Multiplier %)
+                </label>
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-zinc-500">+</span>
+                  <input
+                    type="number"
+                    value={localSettings.rate_luxury_multiplier_pct}
+                    onChange={(e) =>
+                      setLocalSettings((s) => ({ ...s, rate_luxury_multiplier_pct: e.target.value }))
+                    }
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-200 font-mono text-xs font-bold"
+                  />
+                  <span className="text-zinc-500 font-mono text-xs">%</span>
+                </div>
+                <span className="text-[10px] text-zinc-400 mt-0.5 block">Standard: +10% over rate</span>
+              </div>
+            </div>
+          </div>
+
+          {/* CROSS-CALCULATION RULES: VANS & COASTERS */}
+          <div className="p-4 rounded-2xl bg-amber-50/60 border border-[#D4A017]/40 space-y-3">
+            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#8F6400]">
+              <Users className="w-4 h-4 text-[#D4A017]" />
+              وین اور کوسٹر — وین ریٹس
+            </div>
+            <p className="text-[11px] text-zinc-600">
+              Vans and Group Transport per-km calculations:
+            </p>
+            <div className="space-y-2">
+              <div>
+                <label className="block text-zinc-700 font-semibold mb-1">
+                  7-Seater Van (7 سیٹر وین): PKR / km
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="number"
+                    value={localSettings.rate_van_7_min}
+                    onChange={(e) =>
+                      setLocalSettings((s) => ({ ...s, rate_van_7_min: e.target.value }))
+                    }
+                    placeholder="Min 20"
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-200 font-mono text-xs"
+                  />
+                  <input
+                    type="number"
+                    value={localSettings.rate_van_7_max}
+                    onChange={(e) =>
+                      setLocalSettings((s) => ({ ...s, rate_van_7_max: e.target.value }))
+                    }
+                    placeholder="Max 30"
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-200 font-mono text-xs"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-zinc-700 font-semibold mb-1">
+                  15-Seater Van (15 سیٹر وین): PKR / km
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="number"
+                    value={localSettings.rate_van_15_min}
+                    onChange={(e) =>
+                      setLocalSettings((s) => ({ ...s, rate_van_15_min: e.target.value }))
+                    }
+                    placeholder="Min 15"
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-200 font-mono text-xs"
+                  />
+                  <input
+                    type="number"
+                    value={localSettings.rate_van_15_max}
+                    onChange={(e) =>
+                      setLocalSettings((s) => ({ ...s, rate_van_15_max: e.target.value }))
+                    }
+                    placeholder="Max 25"
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-200 font-mono text-xs"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-zinc-700 font-semibold mb-1">
+                  Coaster (کوسٹر 28 سیٹر): PKR / km
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="number"
+                    value={localSettings.rate_coaster_min}
+                    onChange={(e) =>
+                      setLocalSettings((s) => ({ ...s, rate_coaster_min: e.target.value }))
+                    }
+                    placeholder="Min 12"
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-200 font-mono text-xs"
+                  />
+                  <input
+                    type="number"
+                    value={localSettings.rate_coaster_max}
+                    onChange={(e) =>
+                      setLocalSettings((s) => ({ ...s, rate_coaster_max: e.target.value }))
+                    }
+                    placeholder="Max 25"
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-200 font-mono text-xs"
+                  />
+                </div>
               </div>
             </div>
           </div>

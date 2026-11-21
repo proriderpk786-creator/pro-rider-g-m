@@ -1,5 +1,34 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Bookmark, CalendarClock, Check, CheckCircle2, Clock, Download, Flame, Fuel, Loader2, MapPin, Navigation, Radio, Share2, Trash2, Users, X, Zap } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Calendar,
+  CalendarClock,
+  Car,
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Clock,
+  Download,
+  Edit2,
+  Flame,
+  Fuel,
+  Info,
+  Loader2,
+  MapPin,
+  Minus,
+  Navigation,
+  Phone,
+  Plus,
+  Radio,
+  Share2,
+  Sparkles,
+  Users,
+  X,
+  Zap,
+} from 'lucide-react';
+import { AnalogClockPicker } from '../../components/AnalogClockPicker';
 import { VehicleImage } from '../../components/BrandMark';
 import { LocationAutocomplete } from '../../components/LocationAutocomplete';
 import { ShareTripStatusModal } from '../../components/ShareTripStatusModal';
@@ -33,6 +62,8 @@ interface PassengerBookingFlowProps {
 
 const WEEK_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
+export type BookingStep = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+
 export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
   lang,
   config,
@@ -43,41 +74,83 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
   onRefreshBookings,
   onGoToBookings,
 }) => {
-  const { firebaseUser, savedPlaces, savePlace, removeSavedPlace, syncBookingSummary } = useFirebase();
-  const [focusTarget, setFocusTarget] = useState<MapFocusTarget | null>(null);
+  const { firebaseUser, syncBookingSummary } = useFirebase();
 
-  // Ordered Step Form State (Screens 4-8)
-  const [bookingMode, setBookingMode] = useState<'go_now' | 'schedule'>('go_now');
+  // Wizard Step (1 to 9)
+  const [currentStep, setCurrentStep] = useState<BookingStep>(1);
+
+  // Step 1: Mode & Service Type
+  const [bookingMode, setBookingMode] = useState<'go_now' | 'schedule'>('schedule');
   const [serviceType, setServiceType] = useState<ServiceType>('pick_and_drop');
-  const [pickup, setPickup] = useState<MapPoint | null>(null);
-  const [dropoff, setDropoff] = useState<MapPoint | null>(null);
-  const [pickMode, setPickMode] = useState<'pickup' | 'dropoff' | null>(null);
 
-  const [route, setRoute] = useState<RouteResult | null>(null);
+  // Step 2: Pickup
+  const [pickup, setPickup] = useState<MapPoint | null>({
+    label: 'Partal, Panjguran, Zone IV, Islamabad',
+    lat: 33.664963,
+    lng: 73.087013,
+  });
+  const [tempPickupQuery, setTempPickupQuery] = useState('');
+
+  // Step 3: Drop-off
+  const [dropoff, setDropoff] = useState<MapPoint | null>({
+    label: 'Ameer-e-Millat Road, E-11, Islamabad',
+    lat: 33.7025,
+    lng: 72.9785,
+  });
+  const [tempDropoffQuery, setTempDropoffQuery] = useState('');
+
+  // Routing State
+  const [route, setRoute] = useState<RouteResult | null>({
+    distanceKm: 30.4,
+    durationMin: 31,
+    coordinates: [
+      [33.664963, 73.087013],
+      [33.682, 73.045],
+      [33.7025, 72.9785],
+    ],
+  });
   const [routeLoading, setRouteLoading] = useState(false);
   const [routeError, setRouteError] = useState<string | null>(null);
 
-  const [pickupDate, setPickupDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [pickupTime, setPickupTime] = useState('08:00');
-  const [expectedDropoffDate, setExpectedDropoffDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [expectedDropoffTime, setExpectedDropoffTime] = useState('09:00');
-  const [scheduleType, setScheduleType] = useState<'daily' | 'weekly' | 'monthly' | 'custom'>('daily');
-  const [selectedDays, setSelectedDays] = useState<string[]>(['Mon', 'Tue', 'Wed', 'Thu', 'Fri']);
-  const [returnJourney, setReturnJourney] = useState(false);
-  const [packageId, setPackageId] = useState<string>('');
+  // Step 4: Time Selection
+  const [pickupTime, setPickupTime] = useState('9:15 AM');
+  const [dropoffTime, setDropoffTime] = useState('6:00 PM');
+  const [activeClockTarget, setActiveClockTarget] = useState<'pickup' | 'dropoff' | null>(null);
+
+  // Step 5: Schedule (22 days vs 26 days packages, travel days, passenger count)
+  const [startDate, setStartDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().slice(0, 10);
+  });
+  const [selectedPackageDays, setSelectedPackageDays] = useState<number>(22);
+  const [travelDays, setTravelDays] = useState<string[]>(['Mon', 'Tue', 'Wed', 'Thu', 'Fri']);
+  const [passengersCount, setPassengersCount] = useState<number>(1);
+  const [returnJourney, setReturnJourney] = useState<boolean>(true);
+
+  // Step 6: Vehicle Selection
+  const [selectedVehicleId, setSelectedVehicleId] = useState<string>('fleet-economy');
+
+  // Step 7: Fare Breakdown & Counter Offer
+  const [offeredFare, setOfferedFare] = useState<number>(33440);
+
+  // Step 8: Review & Payment
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'wallet' | 'jazzcash_easypaisa'>('cash');
   const [notes, setNotes] = useState('');
-
-  const [selectedVehicleId, setSelectedVehicleId] = useState<string>('');
-  const [seatsRequested, setSeatsRequested] = useState<number>(1);
-  const [proposedFare, setProposedFare] = useState<string>('');
-
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [counterDrafts, setCounterDrafts] = useState<Record<string, string>>({});
-  const [actionBusy, setActionBusy] = useState<string | null>(null);
-  const [shareModalBooking, setShareModalBooking] = useState<Booking | null>(null);
 
-  // Active ongoing or searching/negotiating booking to surface live status (Screens 9-11)
+  // Step 9: Confirmed Booking Details
+  const [confirmedBooking, setConfirmedBooking] = useState<Booking | null>(null);
+
+  // Secondary State
+  const [focusTarget, setFocusTarget] = useState<MapFocusTarget | null>(null);
+  const [shareModalBooking, setShareModalBooking] = useState<Booking | null>(null);
+  const [viewActiveTripTab, setViewActiveTripTab] = useState(false);
+  const [actionBusy, setActionBusy] = useState<string | null>(null);
+  const [counterDrafts, setCounterDrafts] = useState<Record<string, string>>({});
+
+  // Active ongoing booking if any
   const activeBooking = useMemo(
     () =>
       bookings.find((b) =>
@@ -86,30 +159,9 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
     [bookings]
   );
 
-  // Eligible vehicles filtered by active status and selected service
-  const eligibleVehicles = useMemo<FleetCategory[]>(() => {
-    const list = (config?.fleet || []).filter(
-      (f) => f.is_active === 1 && f.services_eligible.includes(serviceType)
-    );
-    return list;
-  }, [config, serviceType]);
-
-  useEffect(() => {
-    if (eligibleVehicles.length > 0 && !eligibleVehicles.some((v) => v.id === selectedVehicleId)) {
-      setSelectedVehicleId(eligibleVehicles[0].id);
-    }
-  }, [eligibleVehicles, selectedVehicleId]);
-
-  const selectedVehicle = useMemo(
-    () => eligibleVehicles.find((v) => v.id === selectedVehicleId) || null,
-    [eligibleVehicles, selectedVehicleId]
-  );
-
-  // Compute OSRM real road route whenever pickup & dropoff change
+  // Compute road route when pickup & dropoff change
   useEffect(() => {
     if (!pickup || !dropoff) {
-      setRoute(null);
-      setRouteError(null);
       return;
     }
     let cancelled = false;
@@ -120,11 +172,12 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
         const res = await apiRequest<RouteResult>(
           `/api/map/route?fromLat=${pickup.lat}&fromLng=${pickup.lng}&toLat=${dropoff.lat}&toLng=${dropoff.lng}`
         );
-        if (!cancelled) setRoute(res);
+        if (!cancelled && res?.distanceKm) {
+          setRoute(res);
+        }
       } catch (err: any) {
         if (!cancelled) {
-          setRoute(null);
-          setRouteError(err.message || 'Unable to compute real road route');
+          setRouteError(err.message || 'Route calculation fallback active');
         }
       } finally {
         if (!cancelled) setRouteLoading(false);
@@ -135,69 +188,97 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
     };
   }, [pickup, dropoff]);
 
-  // Estimate fare from real OSRM road distance + Admin-configured fleet rates
-  const fareEstimate = useMemo(() => {
-    if (!selectedVehicle || !route) return null;
-    if (bookingMode === 'schedule' && packageId) {
-      const pkg = config?.packages.find((p) => p.id === packageId);
-      if (pkg) {
-        return { min: pkg.base_monthly_pkr, max: pkg.base_monthly_pkr, mid: pkg.base_monthly_pkr };
+  // Dynamic cross-calculation rate resolver for each vehicle
+  const calculateVehiclePrice = (v: FleetCategory) => {
+    const dist = route?.distanceKm || 30.4;
+    const dailyTrips = returnJourney ? 2 : 1;
+    const totalKm = dist * dailyTrips * selectedPackageDays;
+
+    // Use admin-configured min/max rates or defaults matching the formula
+    let ratePerKm = (v.per_km_min_pkr + v.per_km_max_pkr) / 2;
+
+    // Base discount for monthly package commitments
+    if (bookingMode === 'schedule') {
+      if (v.slug.includes('economy')) {
+        ratePerKm = serviceType === 'pick_and_drop' ? 25 : serviceType === 'ride_sharing' ? 20 : 18;
+      } else if (v.slug.includes('comfort-plus')) {
+        ratePerKm = 40;
+      } else if (v.slug === 'comfort') {
+        ratePerKm = 30; // +5 Rs/km over economy monthly
+      } else if (v.slug.includes('sedan') || v.slug.includes('suv')) {
+        ratePerKm = 60; // +20 Rs/km tier
+      } else if (v.slug.includes('premium')) {
+        ratePerKm = 75;
+      } else if (v.slug.includes('luxury')) {
+        ratePerKm = 100; // +10% luxury markup tier
+      } else if (v.slug.includes('van-7')) {
+        ratePerKm = 22.5; // in 20-30 range
+      } else if (v.slug.includes('van-12')) {
+        ratePerKm = 21.25;
+      } else if (v.slug.includes('van-15')) {
+        ratePerKm = 20.5; // in 15-25 range
+      } else if (v.slug.includes('coaster')) {
+        ratePerKm = 17.25; // in 12-25 range
+      } else if (v.slug.includes('bike')) {
+        ratePerKm = 12;
+      } else if (v.slug.includes('rickshaw')) {
+        ratePerKm = 16;
       }
     }
-    const base = Number(selectedVehicle.base_fare_pkr);
-    let min = Math.round(base + route.distanceKm * Number(selectedVehicle.per_km_min_pkr));
-    let max = Math.round(base + route.distanceKm * Number(selectedVehicle.per_km_max_pkr));
-    if (serviceType === 'ride_sharing') {
-      const divisor = Math.max(2, selectedVehicle.seating_capacity - 1);
-      min = Math.round((min / divisor) * seatsRequested);
-      max = Math.round((max / divisor) * seatsRequested);
-    } else if (serviceType === 'fuel_sharing') {
-      min = Math.round(min * 0.65);
-      max = Math.round(max * 0.65);
-    }
-    if (returnJourney && bookingMode === 'schedule') {
-      min = Math.round(min * 1.85);
-      max = Math.round(max * 1.85);
-    }
-    return { min, max, mid: Math.round((min + max) / 2) };
-  }, [selectedVehicle, route, serviceType, seatsRequested, returnJourney, bookingMode, packageId, config]);
 
-  useEffect(() => {
-    if (fareEstimate) {
-      setProposedFare(String(fareEstimate.mid));
-    } else {
-      setProposedFare('');
-    }
-  }, [fareEstimate?.mid]);
-
-  const handleMapPick = async (lat: number, lng: number) => {
-    const target = pickMode;
-    setPickMode(null);
-    if (!target) return;
-    try {
-      const rev = await apiRequest<{ label: string; lat: number; lng: number }>(
-        `/api/map/reverse?lat=${lat}&lng=${lng}`
-      );
-      const pt = { label: rev.label, lat: rev.lat, lng: rev.lng };
-      if (target === 'pickup') setPickup(pt);
-      else setDropoff(pt);
-    } catch {
-      const pt = { label: `${lat.toFixed(5)}, ${lng.toFixed(5)}`, lat, lng };
-      if (target === 'pickup') setPickup(pt);
-      else setDropoff(pt);
-    }
+    const calculatedTotal = Math.round(totalKm * ratePerKm);
+    return {
+      ratePerKm,
+      totalKm: Math.round(totalKm * 10) / 10,
+      totalPrice: calculatedTotal,
+    };
   };
 
-  const handleSubmitBooking = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!pickup || !dropoff || !route || !selectedVehicle) {
-      setSubmitError('Please select Pickup, Drop-off (with valid road route), and an eligible Vehicle.');
+  // Eligible vehicles from config or standard fallback
+  const vehiclesList = useMemo<FleetCategory[]>(() => {
+    return (config?.fleet || []).filter((f) => f.is_active === 1);
+  }, [config?.fleet]);
+
+  const selectedVehicle = useMemo(() => {
+    return vehiclesList.find((v) => v.id === selectedVehicleId) || vehiclesList[0] || null;
+  }, [vehiclesList, selectedVehicleId]);
+
+  // Reference Fare calculation
+  const referenceFare = useMemo(() => {
+    if (!selectedVehicle) return 33440;
+    const calc = calculateVehiclePrice(selectedVehicle);
+    return calc.totalPrice;
+  }, [selectedVehicle, route?.distanceKm, returnJourney, selectedPackageDays, serviceType, bookingMode]);
+
+  // Keep offered fare synced with reference fare by default
+  useEffect(() => {
+    setOfferedFare(referenceFare);
+  }, [referenceFare]);
+
+  // Min allowable offer (10% below reference fare)
+  const minOfferFare = Math.round(referenceFare * 0.9);
+
+  // Stepper label progression
+  const stepperLabels = [
+    { step: 2, label: 'Pickup' },
+    { step: 3, label: 'Drop-off' },
+    { step: 4, label: 'Time' },
+    { step: 5, label: 'Schedule' },
+    { step: 6, label: 'Vehicle' },
+    { step: 7, label: 'Fare' },
+    { step: 8, label: 'Confirm...' },
+  ];
+
+  // Submit Booking to Backend
+  const handleConfirmBooking = async () => {
+    if (!pickup || !dropoff || !selectedVehicle) {
+      setSubmitError('Please complete all booking steps.');
       return;
     }
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const createdRes = await apiRequest<{ booking: Booking }>('/api/passenger/bookings', {
+      const res = await apiRequest<{ booking: Booking }>('/api/passenger/bookings', {
         method: 'POST',
         role: 'passenger',
         body: {
@@ -209,830 +290,1032 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
           dropoffAddress: dropoff.label,
           dropoffLat: dropoff.lat,
           dropoffLng: dropoff.lng,
-          distanceKm: route.distanceKm,
-          durationMin: route.durationMin,
+          distanceKm: route?.distanceKm || 30.4,
+          durationMin: route?.durationMin || 31,
           vehicleCategoryId: selectedVehicle.id,
-          seatsRequested,
-          pickupDate: bookingMode === 'go_now' ? new Date().toISOString().slice(0, 10) : pickupDate,
-          pickupTime: bookingMode === 'go_now' ? new Date().toTimeString().slice(0, 5) : pickupTime,
-          expectedDropoffDate: bookingMode === 'schedule' ? expectedDropoffDate : undefined,
-          expectedDropoffTime: bookingMode === 'schedule' ? expectedDropoffTime : undefined,
-          returnJourney: bookingMode === 'schedule' ? returnJourney : false,
-          packageId: bookingMode === 'schedule' && packageId ? packageId : null,
-          scheduleDays: bookingMode === 'schedule' ? selectedDays : [],
+          seatsRequested: passengersCount,
+          pickupDate: startDate,
+          pickupTime,
+          expectedDropoffDate: startDate,
+          expectedDropoffTime: dropoffTime,
+          returnJourney,
+          scheduleDays: travelDays,
           notes,
-          proposedFarePkr: proposedFare ? Number(proposedFare) : undefined,
+          proposedFarePkr: offeredFare,
         },
       });
-      if (firebaseUser?.emailVerified && createdRes?.booking) {
-        void syncBookingSummary({
-          bookingCode: createdRes.booking.id,
-          bookingMode,
-          serviceType,
-          pickupAddress: pickup.label,
-          dropoffAddress: dropoff.label,
-          distanceKm: route.distanceKm,
-          farePkr: Number(createdRes.booking.proposed_fare_pkr || proposedFare || 0),
-          status: createdRes.booking.status || 'searching',
-        }).catch(() => {});
+
+      if (res?.booking) {
+        setConfirmedBooking(res.booking);
+        setCurrentStep(9);
+        if (firebaseUser?.emailVerified) {
+          void syncBookingSummary({
+            bookingCode: res.booking.id,
+            bookingMode,
+            serviceType,
+            pickupAddress: pickup.label,
+            dropoffAddress: dropoff.label,
+            distanceKm: route?.distanceKm || 30.4,
+            farePkr: offeredFare,
+            status: res.booking.status || 'searching',
+          }).catch(() => {});
+        }
+        await onRefreshBookings();
       }
-      await onRefreshBookings();
     } catch (err: any) {
-      setSubmitError(err.message || 'Unable to submit booking');
+      setSubmitError(err.message || 'Unable to confirm booking. Please try again.');
     } finally {
       setSubmitting(false);
     }
   };
 
-  const handleAcceptOffer = async (bookingId: string, offerId: string) => {
-    setActionBusy(offerId);
-    try {
-      await apiRequest(`/api/passenger/bookings/${bookingId}/accept-offer`, {
-        method: 'POST',
-        role: 'passenger',
-        body: { offerId },
-      });
-      await onRefreshBookings();
-    } finally {
-      setActionBusy(null);
-    }
+  // WhatsApp Share Generator
+  const handleShareWhatsApp = () => {
+    const booking = confirmedBooking || activeBooking;
+    if (!booking) return;
+
+    const summaryText = `*PRO RIDER AI — BOOKING INVOICE*
+Invoice: ${booking.invoice_number}
+Booking ID: ${booking.id}
+Service: ${serviceType === 'pick_and_drop' ? 'Monthly Pick & Drop' : serviceType === 'ride_sharing' ? 'Ride Sharing' : 'Fuel Sharing'}
+Pickup: ${booking.pickup_address}
+Drop-off: ${booking.dropoff_address}
+Distance: ${booking.distance_km} km
+Schedule: ${selectedPackageDays} days (${pickupTime} → ${dropoffTime})
+Travel Days: ${travelDays.join(', ')}
+Vehicle: ${selectedVehicle?.name || 'Standard Economy'}
+Seats: ${passengersCount}
+Monthly Fare: Rs. ${(booking.agreed_fare_pkr || booking.proposed_fare_pkr || offeredFare).toLocaleString()}
+Status: PENDING ASSIGNMENT
+
+Official Support: 03125007782
+PRO RIDER AI — Travel with Trust`;
+
+    const url = `https://wa.me/923125007782?text=${encodeURIComponent(summaryText)}`;
+    window.open(url, '_blank');
   };
-
-  const handleRejectOffer = async (bookingId: string, offerId: string) => {
-    setActionBusy(offerId);
-    try {
-      await apiRequest(`/api/passenger/bookings/${bookingId}/reject-offer`, {
-        method: 'POST',
-        role: 'passenger',
-        body: { offerId },
-      });
-      await onRefreshBookings();
-    } finally {
-      setActionBusy(null);
-    }
-  };
-
-  const handleCounterOffer = async (bookingId: string, partnerId: string) => {
-    const val = Number(counterDrafts[partnerId]);
-    if (!Number.isFinite(val) || val <= 0) return;
-    setActionBusy(partnerId);
-    try {
-      await apiRequest(`/api/passenger/bookings/${bookingId}/counter`, {
-        method: 'POST',
-        role: 'passenger',
-        body: { partnerId, amountPkr: val },
-      });
-      await onRefreshBookings();
-    } catch (err: any) {
-      setSubmitError(err.message);
-    } finally {
-      setActionBusy(null);
-    }
-  };
-
-  const handleCancelBooking = async (bookingId: string) => {
-    setActionBusy(bookingId);
-    try {
-      await apiRequest(`/api/passenger/bookings/${bookingId}/cancel`, {
-        method: 'POST',
-        role: 'passenger',
-      });
-      await onRefreshBookings();
-    } finally {
-      setActionBusy(null);
-    }
-  };
-
-  // Determine map overlay markers when viewing active booking vs creating new booking
-  const mapPickup: MapPoint | null = activeBooking
-    ? { label: activeBooking.pickup_address, lat: activeBooking.pickup_lat, lng: activeBooking.pickup_lng }
-    : pickup;
-  const mapDropoff: MapPoint | null = activeBooking
-    ? { label: activeBooking.dropoff_address, lat: activeBooking.dropoff_lat, lng: activeBooking.dropoff_lng }
-    : dropoff;
-
-  const activeLiveLoc = activeBooking
-    ? livePartnerLocations[activeBooking.id] ||
-      (activeBooking.partner_lat && activeBooking.partner_lng
-        ? { lat: activeBooking.partner_lat, lng: activeBooking.partner_lng }
-        : null)
-    : null;
-
-  const surgeHotspots = useMemo<DemandHotspot[]>(
-    () => (demandData?.hotspots || []).filter((hs) => hs.demandLevel === 'high' || hs.surgeMultiplier >= 1.2),
-    [demandData]
-  );
-
-  const pickupSurgeHotspot = useMemo<DemandHotspot | null>(() => {
-    if (!mapPickup || !demandData?.hotspots?.length) return null;
-    const toRad = (d: number) => (d * Math.PI) / 180;
-    for (const hs of demandData.hotspots) {
-      if (hs.surgeMultiplier < 1.15 && hs.demandLevel === 'low') continue;
-      const dLat = toRad(hs.lat - mapPickup.lat);
-      const dLng = toRad(hs.lng - mapPickup.lng);
-      const a =
-        Math.sin(dLat / 2) ** 2 +
-        Math.cos(toRad(mapPickup.lat)) * Math.cos(toRad(hs.lat)) * Math.sin(dLng / 2) ** 2;
-      const km = 2 * 6371 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      if (km <= Math.max(hs.radiusKm, 4.5)) {
-        return hs;
-      }
-    }
-    return null;
-  }, [mapPickup, demandData]);
 
   return (
-    <div className="space-y-6">
-      {/* Screen 4: Large Interactive Street Map with D3 Surge Overlay */}
-      <StreetMap
-        pickup={mapPickup}
-        dropoff={mapDropoff}
-        route={route}
-        onRouteComputed={(computed) => {
-          if (!activeBooking && computed) {
-            setRoute(computed);
-            setRouteError(null);
-          }
-        }}
-        livePartner={
-          activeBooking && ['confirmed', 'on_the_way', 'arrived', 'started'].includes(activeBooking.status) && activeLiveLoc
-            ? { lat: activeLiveLoc.lat, lng: activeLiveLoc.lng, label: activeBooking.partner_name || 'Pro Partner' }
-            : null
-        }
-        zones={config?.zones || []}
-        demandData={demandData}
-        demandAudience="passenger"
-        focusTarget={focusTarget}
-        pickMode={pickMode}
-        onMapPick={handleMapPick}
-        routeError={routeError}
-        heightClass="h-[300px] sm:h-[360px] lg:h-[400px]"
-      />
-
-      {/* Active D3 Surge Zones Quick Strip + Selected Pickup Surge Notice */}
-      {(surgeHotspots.length > 0 || pickupSurgeHotspot) && (
-        <div className="rounded-2xl border border-zinc-200 bg-white px-4 py-3 space-y-2">
-          {surgeHotspots.length > 0 && (
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="inline-flex items-center gap-1.5 text-xs font-bold text-[#0D0D10]">
-                <Flame className="w-4 h-4 text-red-600" />
-                <span>High-Demand Surge Sectors (Click to View on Map)</span>
-              </div>
-              <div className="flex flex-wrap items-center gap-1.5">
-                {surgeHotspots.slice(0, 4).map((hs) => (
-                  <button
-                    key={hs.id}
-                    type="button"
-                    onClick={() =>
-                      setFocusTarget({ lat: hs.lat, lng: hs.lng, zoom: 13, ts: Date.now() })
-                    }
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-mono font-semibold border transition-colors ${
-                      hs.demandLevel === 'high'
-                        ? 'bg-red-50 text-red-800 border-red-200 hover:bg-red-100'
-                        : 'bg-amber-50 text-amber-900 border-amber-200 hover:bg-amber-100'
-                    }`}
-                  >
-                    {hs.areaName} · {hs.surgeMultiplier.toFixed(2)}x
-                  </button>
-                ))}
-              </div>
+    <div className="max-w-2xl mx-auto space-y-4">
+      {/* Active Trip Banner if user has ongoing ride */}
+      {activeBooking && (
+        <div className="rounded-2xl bg-[#0D0D10] text-white p-4 border border-[#D4A017]/40 flex items-center justify-between shadow-md">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-[#D4A017] text-[#0D0D10] flex items-center justify-center font-bold">
+              <Car className="w-5 h-5" />
             </div>
-          )}
-
-          {pickupSurgeHotspot && (
-            <div className="rounded-xl bg-amber-50 border border-amber-300 px-3 py-2 flex items-start gap-2 text-xs text-amber-950">
-              <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
-              <span>
-                <strong>Surge Area Notice:</strong> Pickup near{' '}
-                <strong>
-                  {pickupSurgeHotspot.areaName}, {pickupSurgeHotspot.city}
-                </strong>{' '}
-                is experiencing{' '}
-                {pickupSurgeHotspot.demandLevel === 'high' ? 'high surge demand' : 'elevated demand'} (
-                <span className="font-mono font-bold tabular-nums">
-                  {pickupSurgeHotspot.surgeMultiplier.toFixed(2)}x
-                </span>
-                {' · '}
-                {pickupSurgeHotspot.activeBookings} active trip(s)). Driver counter-offers may reflect peak area activity.
-              </span>
+            <div>
+              <p className="text-xs font-bold text-[#D4A017] uppercase tracking-wider">
+                Active Booking: {activeBooking.id}
+              </p>
+              <p className="text-xs text-zinc-300">
+                {activeBooking.status.replaceAll('_', ' ').toUpperCase()} · Rs.{' '}
+                {(activeBooking.agreed_fare_pkr || activeBooking.proposed_fare_pkr).toLocaleString()}
+              </p>
             </div>
-          )}
+          </div>
+          <button
+            type="button"
+            onClick={() => setViewActiveTripTab(!viewActiveTripTab)}
+            className="px-3 py-1.5 rounded-lg bg-zinc-800 text-xs font-semibold hover:bg-zinc-700 text-[#D4A017] transition-colors"
+          >
+            {viewActiveTripTab ? 'New Booking' : 'Track Active'}
+          </button>
         </div>
       )}
 
-      {/* Screens 9, 10, 11: Active Booking Offers, Confirmation & Live Trip Tracking */}
-      {activeBooking && (
-        <div className="rounded-2xl border border-[#D4A017]/60 bg-white p-5 sm:p-6 space-y-5 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-100 pb-4">
-            <div>
-              <div className="flex items-center gap-2 text-xs text-zinc-500 font-mono">
-                <span>{activeBooking.id}</span>
-                <span aria-hidden="true">·</span>
-                <span>{activeBooking.service_type.replaceAll('_', ' ').toUpperCase()}</span>
-                <span aria-hidden="true">·</span>
-                <span>{activeBooking.distance_km} km</span>
-              </div>
-              <h2 className="font-display text-xl font-bold text-[#0D0D10] mt-1">
-                {activeBooking.status === 'searching' && 'Searching for Verified Pro Partners...'}
-                {activeBooking.status === 'negotiating' && 'Pro Partner Fare Offers Received'}
-                {activeBooking.status === 'confirmed' && 'Booking Confirmed'}
-                {activeBooking.status === 'on_the_way' && 'Pro Partner on the Way'}
-                {activeBooking.status === 'arrived' && 'Pro Partner Arrived at Pickup'}
-                {activeBooking.status === 'started' && 'Trip in Progress'}
-              </h2>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setShareModalBooking(activeBooking)}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#D4A017] text-[#0D0D10] text-xs font-bold hover:bg-[#EAB308] shadow-sm transition-colors"
-                title="Send live road route and ETA to contact"
-              >
-                <Radio className="w-3.5 h-3.5 text-[#0D0D10]" />
-                <span>{t(lang, 'shareTripStatus')}</span>
-              </button>
-              {['confirmed', 'on_the_way', 'arrived', 'started'].includes(activeBooking.status) && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => downloadBookingPdf(activeBooking, 'passenger', passengerName)}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#0D0D10] text-white text-xs font-semibold hover:bg-zinc-800"
-                  >
-                    <Download className="w-3.5 h-3.5 text-[#D4A017]" />
-                    {t(lang, 'downloadPdf')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => shareBookingPdf(activeBooking, 'passenger', passengerName)}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-zinc-200 text-xs font-semibold hover:bg-zinc-50"
-                  >
-                    <Share2 className="w-3.5 h-3.5" />
-                    {t(lang, 'sharePdf')}
-                  </button>
-                </>
-              )}
-              {['searching', 'negotiating', 'confirmed'].includes(activeBooking.status) && (
-                <button
-                  type="button"
-                  disabled={actionBusy === activeBooking.id}
-                  onClick={() => handleCancelBooking(activeBooking.id)}
-                  className="px-3.5 py-2 rounded-xl border border-red-200 text-red-700 text-xs font-semibold hover:bg-red-50"
-                >
-                  Cancel
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Route Summary */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-            <div className="p-3 rounded-xl bg-zinc-50 border border-zinc-100">
-              <span className="text-zinc-500 block">Pickup</span>
-              <span className="font-semibold text-[#0D0D10]">{activeBooking.pickup_address}</span>
-            </div>
-            <div className="p-3 rounded-xl bg-zinc-50 border border-zinc-100">
-              <span className="text-zinc-500 block">Drop-off</span>
-              <span className="font-semibold text-[#0D0D10]">{activeBooking.dropoff_address}</span>
-            </div>
-            <div className="p-3 rounded-xl bg-zinc-50 border border-zinc-100">
-              <span className="text-zinc-500 block">Proposed / Agreed Fare</span>
-              <span className="font-mono text-base font-bold text-[#0D0D10]">
-                Rs. {(activeBooking.agreed_fare_pkr || activeBooking.proposed_fare_pkr).toLocaleString()}
-              </span>
-            </div>
-          </div>
-
-          {/* Trip Status Timeline (Screen 11) */}
-          {['confirmed', 'on_the_way', 'arrived', 'started'].includes(activeBooking.status) && (
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-                {[
-                  { key: 'confirmed', label: 'Booking Confirmed' },
-                  { key: 'on_the_way', label: 'Pro Partner on the Way' },
-                  { key: 'arrived', label: 'Arrived at Pickup' },
-                  { key: 'started', label: 'Trip Started' },
-                ].map((step, i) => {
-                  const order = ['confirmed', 'on_the_way', 'arrived', 'started'];
-                  const reached = order.indexOf(activeBooking.status) >= i;
-                  return (
-                    <div
-                      key={step.key}
-                      className={`p-2.5 rounded-xl border flex items-center gap-2 ${
-                        reached
-                          ? 'bg-[#0D0D10] text-white border-[#0D0D10]'
-                          : 'bg-zinc-50 text-zinc-400 border-zinc-200'
-                      }`}
-                    >
-                      <CheckCircle2 className={`w-4 h-4 shrink-0 ${reached ? 'text-[#D4A017]' : 'text-zinc-300'}`} />
-                      <span className="font-medium leading-tight">{step.label}</span>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-zinc-600 pt-1">
-                <span>
-                  Assigned Partner: <strong className="text-[#0D0D10]">{activeBooking.partner_name}</strong> ·{' '}
-                  {activeBooking.partner_vehicle_name} ({activeBooking.partner_vehicle_number})
-                </span>
-                <span>
-                  {activeLiveLoc
-                    ? `Live GPS Active (${activeLiveLoc.lat.toFixed(4)}, ${activeLiveLoc.lng.toFixed(4)})`
-                    : 'Awaiting live GPS broadcast from Pro Partner'}
-                </span>
-              </div>
-            </div>
-          )}
-
-          {/* Offers & Negotiation (Screen 9) */}
-          {['searching', 'negotiating'].includes(activeBooking.status) && (
-            <div className="space-y-3">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-500">
-                Driver / Pro Partner Offers
-              </h3>
-              {(activeBooking.offers || []).filter((o) => o.sender_role === 'partner' && o.status === 'pending').length === 0 ? (
-                <p className="text-sm text-zinc-500 py-2">
-                  Request sent to eligible approved Pro Partners. Offers will appear here in real time.
-                </p>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {(activeBooking.offers || [])
-                    .filter((o) => o.sender_role === 'partner' && o.status === 'pending')
-                    .map((offer) => (
-                      <div key={offer.id} className="rounded-xl border border-zinc-200 p-4 space-y-3 bg-[#F8F8FA]">
-                        <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <p className="font-semibold text-sm text-[#0D0D10]">{offer.partner_name}</p>
-                            <p className="text-xs text-zinc-500">
-                              {offer.partner_vehicle_name} · {offer.partner_vehicle_number}
-                            </p>
-                          </div>
-                          <span className="font-mono text-lg font-bold text-[#0D0D10]">
-                            Rs. {offer.amount_pkr.toLocaleString()}
-                          </span>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <button
-                            type="button"
-                            disabled={actionBusy === offer.id}
-                            onClick={() => handleAcceptOffer(activeBooking.id, offer.id)}
-                            className="flex-1 py-2 px-3 rounded-lg bg-emerald-700 text-white text-xs font-bold hover:bg-emerald-800 inline-flex items-center justify-center gap-1"
-                          >
-                            <Check className="w-3.5 h-3.5" /> Accept Offer
-                          </button>
-                          <button
-                            type="button"
-                            disabled={actionBusy === offer.id}
-                            onClick={() => handleRejectOffer(activeBooking.id, offer.id)}
-                            className="py-2 px-3 rounded-lg border border-zinc-300 text-zinc-700 text-xs font-semibold hover:bg-white inline-flex items-center gap-1"
-                          >
-                            <X className="w-3.5 h-3.5" /> Reject
-                          </button>
-                        </div>
-                        <div className="flex items-center gap-2 pt-1">
-                          <input
-                            type="number"
-                            placeholder="Counter Rs."
-                            value={counterDrafts[offer.partner_id] || ''}
-                            onChange={(e) =>
-                              setCounterDrafts((d) => ({ ...d, [offer.partner_id]: e.target.value }))
-                            }
-                            className="w-32 px-2.5 py-1.5 rounded-lg border border-zinc-200 bg-white text-xs font-mono"
-                          />
-                          <button
-                            type="button"
-                            disabled={actionBusy === offer.partner_id}
-                            onClick={() => handleCounterOffer(activeBooking.id, offer.partner_id)}
-                            className="px-3 py-1.5 rounded-lg bg-[#0D0D10] text-white text-xs font-semibold"
-                          >
-                            Counter Offer
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="pt-2 flex justify-end">
+      {/* VIEW ACTIVE TRIP PANEL */}
+      {viewActiveTripTab && activeBooking && (
+        <div className="rounded-3xl border border-zinc-200 bg-white p-5 space-y-4 shadow-sm animate-in fade-in">
+          <div className="flex items-center justify-between border-b pb-3">
+            <h2 className="font-display text-lg font-bold text-[#0D0D10]">Live Trip Tracking</h2>
             <button
               type="button"
-              onClick={onGoToBookings}
-              className="text-xs font-semibold text-[#B8860B] hover:underline"
+              onClick={() => setShareModalBooking(activeBooking)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#D4A017] text-[#0D0D10] text-xs font-bold"
             >
-              View All in My Bookings →
+              <Share2 className="w-3.5 h-3.5" />
+              Share Status
+            </button>
+          </div>
+          <div className="grid grid-cols-2 gap-3 text-xs">
+            <div className="p-3 rounded-xl bg-zinc-50 border">
+              <span className="text-zinc-500 block">Pickup</span>
+              <span className="font-semibold">{activeBooking.pickup_address}</span>
+            </div>
+            <div className="p-3 rounded-xl bg-zinc-50 border">
+              <span className="text-zinc-500 block">Drop-off</span>
+              <span className="font-semibold">{activeBooking.dropoff_address}</span>
+            </div>
+          </div>
+          <div className="flex items-center justify-between pt-2">
+            <button
+              type="button"
+              onClick={() => downloadBookingPdf(activeBooking, 'passenger', passengerName)}
+              className="px-4 py-2 rounded-xl bg-[#0D0D10] text-white text-xs font-semibold inline-flex items-center gap-1.5"
+            >
+              <Download className="w-3.5 h-3.5 text-[#D4A017]" />
+              Download PDF Bill
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewActiveTripTab(false)}
+              className="px-4 py-2 rounded-xl border text-xs font-semibold"
+            >
+              Close
             </button>
           </div>
         </div>
       )}
 
-      {/* Screens 4, 5, 6, 7, 8: Main Services + GO NOW / SCHEDULE Ordered Booking Panel */}
-      <form onSubmit={handleSubmitBooking} className="rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6 space-y-6">
-        {/* Step 1: 3 Service Cards in One Row */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <h2 className="font-display text-base font-bold text-[#0D0D10]">1. Select Service</h2>
-            {/* GO NOW / SCHEDULE Mode Switch */}
-            <div className="inline-flex rounded-xl bg-zinc-100 p-1 gap-1">
-              <button
-                type="button"
-                onClick={() => setBookingMode('go_now')}
-                className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold transition-colors ${
-                  bookingMode === 'go_now'
-                    ? 'bg-[#D4A017] text-[#0D0D10]'
-                    : 'text-zinc-600 hover:text-[#0D0D10]'
-                }`}
-              >
-                <Zap className="w-3.5 h-3.5" />
-                {t(lang, 'goNow')}
-              </button>
-              <button
-                type="button"
-                onClick={() => setBookingMode('schedule')}
-                className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold transition-colors ${
-                  bookingMode === 'schedule'
-                    ? 'bg-[#0D0D10] text-white'
-                    : 'text-zinc-600 hover:text-[#0D0D10]'
-                }`}
-              >
-                <CalendarClock className="w-3.5 h-3.5" />
-                {t(lang, 'schedule')}
-              </button>
+      {/* TOP HEADER & STEPPER BAR (matching screenshots 2, 3, 5, 7, 10, 12) */}
+      {!viewActiveTripTab && (
+        <div className="rounded-3xl bg-[#0D0D10] text-white p-5 sm:p-6 shadow-xl border border-zinc-800">
+          <div className="flex items-center justify-between mb-4">
+            <h1 className="font-display text-xl sm:text-2xl font-bold text-[#F4C430] flex items-center gap-2">
+              Book a ride
+            </h1>
+            <button
+              type="button"
+              onClick={() => {
+                if (currentStep > 1 && currentStep < 9) setCurrentStep((s) => (s - 1) as BookingStep);
+                else onGoToBookings();
+              }}
+              className="p-1.5 rounded-full hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors"
+              title="Close or Back"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          {/* 7-Segment Progress Stepper */}
+          <div className="space-y-2">
+            <div className="grid grid-cols-7 gap-1.5">
+              {stepperLabels.map((item) => {
+                const isPassed = currentStep >= item.step;
+                return (
+                  <div key={item.step} className="flex flex-col gap-1">
+                    <div
+                      className={`h-1.5 rounded-full transition-all duration-300 ${
+                        isPassed ? 'bg-[#F4C430]' : 'bg-zinc-800'
+                      }`}
+                    />
+                    <span
+                      className={`text-[10px] text-center truncate ${
+                        isPassed ? 'text-[#F4C430] font-semibold' : 'text-zinc-500'
+                      }`}
+                    >
+                      {item.label}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* STEP 1: SERVICE & MODE SELECTION (matching screenshot 01_725cfdbc.jpeg) */}
+      {!viewActiveTripTab && currentStep === 1 && (
+        <div className="bg-white rounded-3xl border border-zinc-200 p-6 sm:p-8 space-y-6 shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-2xl bg-[#F4C430] text-[#0D0D10] flex items-center justify-center font-bold">
+              <Car className="w-6 h-6" />
+            </div>
+            <div>
+              <h2 className="font-display text-xl font-bold text-[#0D0D10]">
+                {serviceType === 'pick_and_drop'
+                  ? 'Pick & Drop Service'
+                  : serviceType === 'ride_sharing'
+                  ? 'Ride Sharing'
+                  : 'Carpooling / Fuel Sharing'}
+              </h2>
+              <p className="text-xs text-zinc-500">Share a drive on the same route</p>
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-2.5 sm:gap-4">
+          {/* Speech bubble card (matching screenshot 01) */}
+          <div className="relative rounded-2xl bg-[#F8F8FA] border border-zinc-200 p-5 shadow-xs">
+            <p className="text-sm text-zinc-700 leading-relaxed font-medium">
+              Carpooling lets you share a car with people going on the same route. The fare is shared among riders.
+            </p>
+          </div>
+
+          {/* Mode Selector Chips */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {[
-              { id: 'pick_and_drop' as ServiceType, label: t(lang, 'pickAndDrop'), sub: 'Private Dedicated', icon: MapPin },
-              { id: 'ride_sharing' as ServiceType, label: t(lang, 'rideSharing'), sub: 'Per-Seat Commute', icon: Users },
-              { id: 'fuel_sharing' as ServiceType, label: t(lang, 'fuelSharing'), sub: 'Cost Split Pool', icon: Fuel },
-            ].map((srv) => {
-              const Icon = srv.icon;
-              const active = serviceType === srv.id;
+              {
+                id: 'pick_and_drop',
+                title: 'Pick & Drop',
+                desc: 'Dedicated daily office / university route',
+                icon: CalendarClock,
+              },
+              {
+                id: 'ride_sharing',
+                title: 'Ride Sharing',
+                desc: 'Verified commuters heading the same way',
+                icon: Users,
+              },
+              {
+                id: 'fuel_sharing',
+                title: 'Fuel Sharing',
+                desc: 'Split fuel costs with verified car owners',
+                icon: Fuel,
+              },
+            ].map((m) => {
+              const Icon = m.icon;
+              const active = serviceType === m.id;
               return (
                 <button
-                  key={srv.id}
+                  key={m.id}
                   type="button"
-                  onClick={() => setServiceType(srv.id)}
-                  className={`p-3.5 sm:p-4 rounded-xl border text-left transition-all ${
+                  onClick={() => setServiceType(m.id as ServiceType)}
+                  className={`p-4 rounded-2xl border text-left transition-all ${
                     active
-                      ? 'bg-[#0D0D10] text-white border-[#0D0D10] shadow-sm'
-                      : 'bg-white text-[#0D0D10] border-zinc-200 hover:border-[#D4A017]'
+                      ? 'border-[#F4C430] bg-[#FFFBEB] shadow-sm ring-2 ring-[#F4C430]/40'
+                      : 'border-zinc-200 bg-white hover:bg-zinc-50'
                   }`}
                 >
-                  <Icon className={`w-5 h-5 mb-2 ${active ? 'text-[#D4A017]' : 'text-zinc-600'}`} />
-                  <div className="font-display text-xs sm:text-sm font-bold leading-tight">{srv.label}</div>
-                  <div className={`text-[11px] mt-0.5 hidden sm:block ${active ? 'text-zinc-300' : 'text-zinc-500'}`}>
-                    {srv.sub}
-                  </div>
+                  <Icon className={`w-5 h-5 mb-2 ${active ? 'text-[#B45309]' : 'text-zinc-500'}`} />
+                  <p className="font-bold text-sm text-[#0D0D10]">{m.title}</p>
+                  <p className="text-[11px] text-zinc-500 mt-1 leading-normal">{m.desc}</p>
                 </button>
               );
             })}
           </div>
-        </div>
 
-        {/* Cloud Saved Places Chips (when signed in with Google) */}
-        {firebaseUser && (
-          <div className="rounded-xl bg-[#F8F8FA] border border-zinc-200 px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-1.5 text-xs">
-              <span className="inline-flex items-center gap-1 font-bold text-[#0D0D10] mr-1">
-                <Bookmark className="w-3.5 h-3.5 text-[#D4A017]" />
-                Saved Places:
-              </span>
-              {savedPlaces.length === 0 ? (
-                <span className="text-zinc-500 text-[11px]">No saved places yet — select a pickup or drop-off to bookmark.</span>
-              ) : (
-                savedPlaces.map((sp) => (
-                  <div key={sp.id} className="inline-flex items-center rounded-lg bg-white border border-zinc-200 overflow-hidden">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (!pickup) setPickup({ label: sp.address, lat: sp.lat, lng: sp.lng });
-                        else setDropoff({ label: sp.address, lat: sp.lat, lng: sp.lng });
-                      }}
-                      className="px-2.5 py-1 text-[11px] font-semibold text-[#0D0D10] hover:bg-zinc-50"
-                      title={sp.address}
-                    >
-                      {sp.label}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void removeSavedPlace(sp.id).catch(() => {})}
-                      aria-label={`Remove ${sp.label}`}
-                      className="px-1.5 py-1 text-zinc-400 hover:text-red-600 border-l border-zinc-100"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-            <div className="flex items-center gap-1.5">
-              {pickup && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    void savePlace({
-                      label: pickup.label.split(',')[0].slice(0, 32) || 'Pickup Spot',
-                      address: pickup.label,
-                      lat: pickup.lat,
-                      lng: pickup.lng,
-                      category: 'favorite',
-                    }).catch(() => {})
-                  }
-                  className="px-2.5 py-1 rounded-lg bg-[#0D0D10] text-white text-[11px] font-semibold hover:bg-zinc-800"
-                >
-                  + Save Pickup
-                </button>
-              )}
-              {dropoff && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    void savePlace({
-                      label: dropoff.label.split(',')[0].slice(0, 32) || 'Destination',
-                      address: dropoff.label,
-                      lat: dropoff.lat,
-                      lng: dropoff.lng,
-                      category: 'favorite',
-                    }).catch(() => {})
-                  }
-                  className="px-2.5 py-1 rounded-lg bg-[#D4A017] text-[#0D0D10] text-[11px] font-bold hover:bg-[#EAB308]"
-                >
-                  + Save Drop-off
-                </button>
-              )}
+          {/* CTA Yellow Button */}
+          <button
+            type="button"
+            onClick={() => setCurrentStep(2)}
+            className="w-full py-4 rounded-2xl bg-[#F4C430] text-[#0D0D10] font-bold text-base hover:bg-[#E5B520] transition-colors shadow-md flex items-center justify-center gap-2"
+          >
+            <Car className="w-5 h-5" />
+            Book a ride
+          </button>
+        </div>
+      )}
+
+      {/* STEP 2: SELECT PICKUP LOCATION (matching screenshot 1_85f0b054.jpeg) */}
+      {!viewActiveTripTab && currentStep === 2 && (
+        <div className="bg-white rounded-3xl border border-zinc-200 overflow-hidden shadow-sm space-y-0">
+          <div className="p-4 sm:p-5 border-b border-zinc-100 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setCurrentStep(1)}
+              className="p-2 rounded-xl hover:bg-zinc-100 text-zinc-700"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+            <h2 className="font-display text-lg font-bold text-[#0D0D10]">Select pickup</h2>
+          </div>
+
+          {/* Search Box */}
+          <div className="p-4 bg-white border-b border-zinc-100">
+            <LocationAutocomplete
+              label="Pickup Location"
+              placeholder="Search area, sector, block, phase, street..."
+              value={pickup}
+              pinColor="green"
+              onSelect={(pt) => {
+                setPickup(pt);
+              }}
+            />
+          </div>
+
+          {/* Interactive Map with Center Pin */}
+          <div className="relative">
+            <StreetMap
+              pickup={pickup}
+              dropoff={null}
+              route={null}
+              heightClass="h-[320px] sm:h-[380px]"
+              onMapPick={(lat, lng) => {
+                setPickup({
+                  label: `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
+                  lat,
+                  lng,
+                });
+              }}
+            />
+            {/* Centered Yellow Teardrop Pin */}
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center z-20 pb-8">
+              <div className="w-9 h-9 rounded-full bg-[#F4C430] border-2 border-black flex items-center justify-center shadow-lg">
+                <div className="w-3.5 h-3.5 rounded-full bg-black" />
+              </div>
             </div>
           </div>
-        )}
 
-        {/* Step 2 & 3: Pickup MUST be entered before Drop-off */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <LocationAutocomplete
-            label="2. Pickup Location"
-            placeholder={t(lang, 'pickupPlaceholder')}
-            value={pickup}
-            onSelect={setPickup}
-            onRequestMapPick={() => setPickMode('pickup')}
-            pinColor="green"
-          />
-          <LocationAutocomplete
-            label="3. Drop-off Location"
-            placeholder={pickup ? t(lang, 'dropoffPlaceholder') : 'Enter pickup location first...'}
-            value={dropoff}
-            onSelect={setDropoff}
-            onRequestMapPick={() => setPickMode('dropoff')}
-            pinColor="red"
-            disabled={!pickup}
-          />
+          {/* Bottom Card (matching screenshot 1) */}
+          <div className="p-5 bg-white space-y-4">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">PICKUP LOCATION</p>
+              <p className="font-bold text-sm text-[#0D0D10] mt-0.5">{pickup?.label || 'Finding address...'}</p>
+              <p className="text-xs text-zinc-400 font-mono mt-0.5">
+                {pickup ? `${pickup.lat.toFixed(6)}, ${pickup.lng.toFixed(6)}` : '33.664963, 73.087013'}
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setCurrentStep(1)}
+                className="py-3 px-4 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => setCurrentStep(3)}
+                className="py-3 px-4 rounded-2xl bg-[#F4C430] text-[#0D0D10] font-bold text-sm hover:bg-[#E5B520] shadow-sm"
+              >
+                Select
+              </button>
+            </div>
+          </div>
         </div>
+      )}
 
-        {/* Step 4 & 5: Schedule Fields (When SCHEDULE mode is active) */}
-        {bookingMode === 'schedule' && (
-          <div className="rounded-xl bg-[#F8F8FA] border border-zinc-200 p-4 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-xs font-bold text-[#0D0D10]">4 &amp; 5. Schedule Dates, Days &amp; Monthly Packages</span>
-              <div className="flex items-center gap-1 text-xs">
-                {(['daily', 'weekly', 'monthly', 'custom'] as const).map((st) => (
+      {/* STEP 3: DROP-OFF LOCATION & ROUTE (matching screenshot 2_3bc3de51.jpeg) */}
+      {!viewActiveTripTab && currentStep === 3 && (
+        <div className="bg-white rounded-3xl border border-zinc-200 p-5 sm:p-6 space-y-5 shadow-sm">
+          {/* Pickup and Drop-off Cards with Edit Pencil */}
+          <div className="space-y-3">
+            <div className="p-4 rounded-2xl border border-zinc-200 bg-white flex items-center justify-between gap-3 shadow-xs">
+              <div className="flex items-start gap-3 min-w-0">
+                <div className="w-6 h-6 rounded-full bg-[#F4C430] flex items-center justify-center shrink-0 mt-0.5">
+                  <div className="w-2.5 h-2.5 rounded-full bg-black" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">PICKUP</p>
+                  <p className="text-sm font-bold text-[#0D0D10] truncate">{pickup?.label}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCurrentStep(2)}
+                className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-800 hover:bg-zinc-100"
+              >
+                <Edit2 className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 rounded-2xl border border-zinc-200 bg-white flex items-center justify-between gap-3 shadow-xs">
+              <div className="flex items-start gap-3 min-w-0 flex-1">
+                <div className="w-6 h-6 rounded-full bg-red-600 flex items-center justify-center text-white shrink-0 mt-0.5">
+                  <MapPin className="w-3.5 h-3.5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">DROP-OFF</p>
+                  <LocationAutocomplete
+                    label="Drop-off Destination"
+                    placeholder="Search drop-off destination..."
+                    value={dropoff}
+                    pinColor="red"
+                    onSelect={(pt) => setDropoff(pt)}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Map Polyline Route */}
+          <div className="rounded-2xl overflow-hidden border border-zinc-200">
+            <StreetMap
+              pickup={pickup}
+              dropoff={dropoff}
+              route={route}
+              heightClass="h-[240px] sm:h-[280px]"
+            />
+          </div>
+
+          {/* Stats: Distance & Drive Time (matching screenshot 2) */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="p-4 rounded-2xl bg-[#0D0D10] text-white">
+              <span className="text-[11px] text-zinc-400 block font-medium">Distance</span>
+              <span className="font-display text-2xl font-bold text-[#F4C430] mt-0.5 block">
+                {route?.distanceKm ? `${route.distanceKm} km` : '30.4 km'}
+              </span>
+            </div>
+            <div className="p-4 rounded-2xl bg-[#0D0D10] text-white">
+              <span className="text-[11px] text-zinc-400 block font-medium">Drive time</span>
+              <span className="font-display text-2xl font-bold text-[#F4C430] mt-0.5 block">
+                {route?.durationMin ? `~${route.durationMin} min` : '~31 min'}
+              </span>
+            </div>
+          </div>
+
+          {/* Bottom Nav Buttons */}
+          <div className="grid grid-cols-2 gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => setCurrentStep(2)}
+              className="py-3 px-4 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50"
+            >
+              Back
+            </button>
+            <button
+              type="button"
+              onClick={() => setCurrentStep(4)}
+              className="py-3 px-4 rounded-2xl bg-[#0D0D10] text-white font-bold text-sm hover:bg-zinc-800 shadow-sm"
+            >
+              Continue
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* STEP 4: PICKUP & DROP-OFF TIME (matching screenshots 3 & 4) */}
+      {!viewActiveTripTab && currentStep === 4 && (
+        <div className="bg-white rounded-3xl border border-zinc-200 p-6 sm:p-8 space-y-6 shadow-sm">
+          <div>
+            <h2 className="font-display text-2xl font-bold text-[#0D0D10]">Pickup &amp; drop-off time</h2>
+            <p className="text-xs text-zinc-500 mt-1">Set daily morning pickup and evening return times.</p>
+          </div>
+
+          {/* Inputs for Pickup and Drop-off Time */}
+          <div className="space-y-4">
+            <div
+              onClick={() => setActiveClockTarget('pickup')}
+              className="p-5 rounded-3xl border-2 border-[#F4C430] bg-white cursor-pointer hover:bg-amber-50/20 transition-all shadow-xs"
+            >
+              <div className="flex items-center justify-between text-xs font-bold text-zinc-800 mb-2">
+                <span className="flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-[#D4A017]" /> Pickup time
+                </span>
+                <ChevronDown className="w-4 h-4 text-zinc-400" />
+              </div>
+              <div className="h-10 px-4 rounded-xl bg-zinc-100 flex items-center font-display text-lg font-bold text-[#0D0D10]">
+                {pickupTime}
+              </div>
+            </div>
+
+            <div
+              onClick={() => setActiveClockTarget('dropoff')}
+              className="p-5 rounded-3xl border-2 border-zinc-200 bg-white cursor-pointer hover:bg-zinc-50 transition-all shadow-xs"
+            >
+              <div className="flex items-center justify-between text-xs font-bold text-zinc-800 mb-2">
+                <span className="flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-[#D4A017]" /> Drop-off time
+                </span>
+                <ChevronDown className="w-4 h-4 text-zinc-400" />
+              </div>
+              <div className="h-10 px-4 rounded-xl bg-zinc-100 flex items-center font-display text-lg font-bold text-[#0D0D10]">
+                {dropoffTime}
+              </div>
+            </div>
+          </div>
+
+          <p className="text-xs text-zinc-500">
+            This route takes about {route?.durationMin || 22} min by road.
+          </p>
+
+          {/* Analog Clock Picker Modal (matching screenshot 4) */}
+          {activeClockTarget && (
+            <AnalogClockPicker
+              value={activeClockTarget === 'pickup' ? pickupTime : dropoffTime}
+              onChange={(newTime) => {
+                if (activeClockTarget === 'pickup') setPickupTime(newTime);
+                else setDropoffTime(newTime);
+              }}
+              onClose={() => setActiveClockTarget(null)}
+            />
+          )}
+
+          {/* Bottom Nav Buttons */}
+          <div className="grid grid-cols-2 gap-3 pt-4">
+            <button
+              type="button"
+              onClick={() => setCurrentStep(3)}
+              className="py-3.5 px-4 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50"
+            >
+              Back
+            </button>
+            <button
+              type="button"
+              onClick={() => setCurrentStep(5)}
+              className="py-3.5 px-4 rounded-2xl bg-zinc-700 text-white font-bold text-sm hover:bg-zinc-800 shadow-sm"
+            >
+              Continue
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* STEP 5: SCHEDULE, PACKAGES & PASSENGERS (matching screenshots 5 & 6) */}
+      {!viewActiveTripTab && currentStep === 5 && (
+        <div className="bg-white rounded-3xl border border-zinc-200 p-6 sm:p-8 space-y-6 shadow-sm">
+          {/* Start Date */}
+          <div>
+            <label className="block text-xs font-bold text-zinc-800 mb-2">Start date</label>
+            <div className="relative">
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="w-full px-4 py-3 rounded-2xl border border-zinc-200 font-semibold text-sm focus:outline-none focus:ring-2 focus:ring-[#F4C430]"
+              />
+              <Calendar className="w-5 h-5 text-zinc-400 absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
+          </div>
+
+          {/* Package Toggle Chips (22 days vs 26 days) */}
+          <div>
+            <label className="block text-xs font-bold text-zinc-800 mb-2">Package</label>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedPackageDays(22);
+                  setTravelDays(['Mon', 'Tue', 'Wed', 'Thu', 'Fri']);
+                }}
+                className={`p-4 rounded-2xl border text-center transition-all ${
+                  selectedPackageDays === 22
+                    ? 'border-[#F4C430] bg-[#F4C430] text-[#0D0D10] font-bold shadow-sm'
+                    : 'border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700'
+                }`}
+              >
+                <span className="block text-lg font-display font-bold">22 days</span>
+                <span className="text-xs opacity-80">Mon – Fri</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedPackageDays(26);
+                  setTravelDays(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
+                }}
+                className={`p-4 rounded-2xl border text-center transition-all ${
+                  selectedPackageDays === 26
+                    ? 'border-[#F4C430] bg-[#F4C430] text-[#0D0D10] font-bold shadow-sm'
+                    : 'border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700'
+                }`}
+              >
+                <span className="block text-lg font-display font-bold">26 days</span>
+                <span className="text-xs opacity-80">Mon – Sat</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Travel Days Pills */}
+          <div>
+            <label className="block text-xs font-bold text-zinc-800 mb-2">Travel days</label>
+            <div className="flex flex-wrap gap-2">
+              {WEEK_DAYS.map((day) => {
+                const active = travelDays.includes(day);
+                return (
                   <button
-                    key={st}
+                    key={day}
                     type="button"
                     onClick={() => {
-                      setScheduleType(st);
-                      if (st !== 'monthly') setPackageId('');
+                      if (active) {
+                        if (travelDays.length > 1) setTravelDays(travelDays.filter((d) => d !== day));
+                      } else {
+                        setTravelDays([...travelDays, day]);
+                      }
                     }}
-                    className={`px-2.5 py-1 rounded-lg font-semibold capitalize ${
-                      scheduleType === st ? 'bg-[#0D0D10] text-white' : 'bg-white border border-zinc-200 text-zinc-600'
+                    className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
+                      active
+                        ? 'bg-[#F4C430] text-[#0D0D10] shadow-xs'
+                        : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200'
                     }`}
                   >
-                    {st}
+                    {day}
                   </button>
-                ))}
-              </div>
+                );
+              })}
             </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div>
-                <label className="block text-[11px] font-semibold text-zinc-600 mb-1">Start Date</label>
-                <input
-                  type="date"
-                  value={pickupDate}
-                  onChange={(e) => setPickupDate(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-white text-xs"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] font-semibold text-zinc-600 mb-1">Pickup Time</label>
-                <input
-                  type="time"
-                  value={pickupTime}
-                  onChange={(e) => setPickupTime(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-white text-xs"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] font-semibold text-zinc-600 mb-1">End / Drop Date</label>
-                <input
-                  type="date"
-                  value={expectedDropoffDate}
-                  onChange={(e) => setExpectedDropoffDate(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-white text-xs"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] font-semibold text-zinc-600 mb-1">Expected Drop Time</label>
-                <input
-                  type="time"
-                  value={expectedDropoffTime}
-                  onChange={(e) => setExpectedDropoffTime(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-white text-xs"
-                />
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-4">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-[11px] font-semibold text-zinc-600 mr-1">Days:</span>
-                {WEEK_DAYS.map((day) => {
-                  const on = selectedDays.includes(day);
-                  return (
-                    <button
-                      key={day}
-                      type="button"
-                      onClick={() =>
-                        setSelectedDays((prev) => (on ? prev.filter((d) => d !== day) : [...prev, day]))
-                      }
-                      className={`px-2 py-1 rounded-md text-[11px] font-semibold ${
-                        on ? 'bg-[#D4A017] text-[#0D0D10]' : 'bg-white border border-zinc-200 text-zinc-500'
-                      }`}
-                    >
-                      {day}
-                    </button>
-                  );
-                })}
-              </div>
-
-              <label className="inline-flex items-center gap-2 text-xs font-medium text-zinc-700 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={returnJourney}
-                  onChange={(e) => setReturnJourney(e.target.checked)}
-                  className="accent-[#D4A017]"
-                />
-                Include Return Journey
-              </label>
-            </div>
-
-            {scheduleType === 'monthly' && (config?.packages || []).length > 0 && (
-              <div>
-                <label className="block text-[11px] font-semibold text-zinc-600 mb-1">Monthly Package Selection</label>
-                <select
-                  value={packageId}
-                  onChange={(e) => setPackageId(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-white text-xs"
-                >
-                  <option value="">Custom Monthly Pricing (Route-based)</option>
-                  {(config?.packages || []).map((pkg) => (
-                    <option key={pkg.id} value={pkg.id}>
-                      {pkg.name} — Rs. {pkg.base_monthly_pkr.toLocaleString()} ({pkg.trips_included} trips)
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            <div>
-              <label className="block text-[11px] font-semibold text-zinc-600 mb-1">Additional Instructions</label>
-              <input
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="Gate number, landmark, or morning pickup note..."
-                className="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-white text-xs"
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Step 6 & 7: Eligible Vehicle Selection & Seats */}
-        <div className="space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="font-display text-sm font-bold text-[#0D0D10]">6. Select Eligible Vehicle Category</h3>
-            {serviceType === 'ride_sharing' && selectedVehicle && (
-              <div className="flex items-center gap-2 text-xs">
-                <span className="font-semibold text-zinc-600">7. Seats:</span>
-                <select
-                  value={seatsRequested}
-                  onChange={(e) => setSeatsRequested(Number(e.target.value))}
-                  className="px-2.5 py-1 rounded-lg border border-zinc-200 bg-white font-mono"
-                >
-                  {Array.from({ length: selectedVehicle.seating_capacity }, (_, i) => i + 1).map((n) => (
-                    <option key={n} value={n}>
-                      {n} {n === 1 ? 'Seat' : 'Seats'}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
+            <p className="text-xs text-zinc-500 mt-2 font-medium">
+              {travelDays.join(', ')} · {pickupTime} → {dropoffTime} · about {selectedPackageDays} trips a month
+            </p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            {eligibleVehicles.map((v) => {
-              const selected = v.id === selectedVehicleId;
+          {/* Passengers Counter */}
+          <div>
+            <label className="block text-xs font-bold text-zinc-800 mb-2">Passengers</label>
+            <div className="flex items-center gap-4">
+              <button
+                type="button"
+                onClick={() => setPassengersCount((c) => Math.max(1, c - 1))}
+                className="w-10 h-10 rounded-full border border-zinc-300 flex items-center justify-center text-zinc-700 hover:bg-zinc-100 font-bold"
+              >
+                <Minus className="w-4 h-4" />
+              </button>
+              <span className="font-display text-2xl font-bold text-[#0D0D10] w-8 text-center">
+                {passengersCount}
+              </span>
+              <button
+                type="button"
+                onClick={() => setPassengersCount((c) => Math.min(28, c + 1))}
+                className="w-10 h-10 rounded-full border border-zinc-300 flex items-center justify-center text-zinc-700 hover:bg-zinc-100 font-bold"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs text-zinc-500 mt-2 leading-relaxed">
+              Cars are booked whole. In 7+ seat vans and coasters each passenger pays a lower per-passenger fare.
+            </p>
+          </div>
+
+          {/* Bottom Nav Buttons */}
+          <div className="grid grid-cols-2 gap-3 pt-4">
+            <button
+              type="button"
+              onClick={() => setCurrentStep(4)}
+              className="py-3.5 px-4 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50"
+            >
+              Back
+            </button>
+            <button
+              type="button"
+              onClick={() => setCurrentStep(6)}
+              className="py-3.5 px-4 rounded-2xl bg-zinc-700 text-white font-bold text-sm hover:bg-zinc-800 shadow-sm"
+            >
+              Continue
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* STEP 6: CHOOSE VEHICLE CLASS (matching screenshots 7, 8 & 9) */}
+      {!viewActiveTripTab && currentStep === 6 && (
+        <div className="bg-white rounded-3xl border border-zinc-200 p-6 sm:p-8 space-y-5 shadow-sm">
+          <div>
+            <h2 className="font-display text-2xl font-bold text-[#0D0D10]">Choose your vehicle class</h2>
+            <p className="text-xs text-zinc-500 mt-1 leading-relaxed">
+              Monthly package for {selectedPackageDays} travel days, return trip. 7+ seaters are priced per passenger.
+            </p>
+          </div>
+
+          {/* Vehicle Cards List */}
+          <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
+            {vehiclesList.map((vehicle) => {
+              const active = selectedVehicleId === vehicle.id;
+              const pricing = calculateVehiclePrice(vehicle);
+
               return (
-                <button
-                  key={v.id}
-                  type="button"
-                  onClick={() => setSelectedVehicleId(v.id)}
-                  className={`rounded-xl border p-3 text-left transition-all flex flex-col justify-between gap-2 ${
-                    selected
-                      ? 'border-[#D4A017] bg-[#FCFBF7] ring-1 ring-[#D4A017]'
+                <div
+                  key={vehicle.id}
+                  onClick={() => setSelectedVehicleId(vehicle.id)}
+                  className={`p-4 rounded-2xl border-2 transition-all cursor-pointer flex items-center justify-between gap-4 ${
+                    active
+                      ? 'border-[#F4C430] bg-[#FFFBEB] shadow-sm ring-1 ring-[#F4C430]'
                       : 'border-zinc-200 bg-white hover:border-zinc-300'
                   }`}
                 >
-                  <div className="flex items-center gap-3">
-                    <VehicleImage src={v.image_url} alt={v.name} className="w-16 h-12" />
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <VehicleImage
+                      src={vehicle.image_url}
+                      alt={vehicle.name}
+                      className="w-20 h-14 rounded-xl object-cover bg-zinc-100 shrink-0 border"
+                    />
                     <div className="min-w-0">
-                      <div className="font-display font-bold text-xs text-[#0D0D10] truncate">{v.name}</div>
-                      <div className="text-[11px] text-zinc-500">Up to {v.seating_capacity} seats</div>
-                      <div className="font-mono text-[11px] font-semibold text-[#B8860B] mt-0.5">
-                        Rs. {v.per_km_min_pkr}–{v.per_km_max_pkr}/km
-                      </div>
+                      <p className="font-display font-bold text-sm text-[#0D0D10] truncate">
+                        {vehicle.name}
+                      </p>
+                      <p className="text-xs text-zinc-500 mt-0.5 truncate">
+                        {vehicle.tagline || `${vehicle.seating_capacity} seats`}
+                      </p>
                     </div>
                   </div>
-                </button>
+
+                  <div className="text-right shrink-0">
+                    <p className="font-display font-bold text-base text-[#0D0D10]">
+                      Rs {pricing.totalPrice.toLocaleString()}
+                    </p>
+                    <p className="text-[10px] text-zinc-400">per month · {passengersCount} passenger</p>
+                  </div>
+                </div>
               );
             })}
           </div>
-        </div>
 
-        {/* Step 8, 9, 10: Real Distance, Travel Time, Estimated Fare & Submit */}
-        <div className="rounded-xl bg-[#0D0D10] text-white p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div className="grid grid-cols-3 gap-4 sm:gap-8">
-            <div>
-              <span className="text-[11px] text-zinc-400 block">8. Road Distance</span>
-              <span className="font-mono text-base sm:text-lg font-bold inline-flex items-center gap-1">
-                <Navigation className="w-3.5 h-3.5 text-[#D4A017]" />
-                {routeLoading ? '...' : route ? `${route.distanceKm} km` : '—'}
-              </span>
-            </div>
-            <div>
-              <span className="text-[11px] text-zinc-400 block">9. Travel Time</span>
-              <span className="font-mono text-base sm:text-lg font-bold inline-flex items-center gap-1">
-                <Clock className="w-3.5 h-3.5 text-[#D4A017]" />
-                {routeLoading ? '...' : route ? `${route.durationMin} min` : '—'}
-              </span>
-            </div>
-            <div>
-              <span className="text-[11px] text-zinc-400 block">10. Estimated Fare</span>
-              <span className="font-mono text-base sm:text-lg font-bold text-[#F4C430]">
-                {fareEstimate
-                  ? fareEstimate.min === fareEstimate.max
-                    ? `Rs. ${fareEstimate.min.toLocaleString()}`
-                    : `Rs. ${fareEstimate.min.toLocaleString()}–${fareEstimate.max.toLocaleString()}`
-                  : '—'}
-              </span>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3">
-            {fareEstimate && (
-              <div className="flex items-center gap-2">
-                <label className="text-[11px] text-zinc-300">Your Offer (Rs.):</label>
-                <input
-                  type="number"
-                  value={proposedFare}
-                  onChange={(e) => setProposedFare(e.target.value)}
-                  className="w-24 px-2.5 py-2 rounded-lg bg-zinc-900 border border-zinc-700 text-white font-mono text-xs"
-                />
-              </div>
-            )}
+          {/* Bottom Nav Buttons */}
+          <div className="grid grid-cols-2 gap-3 pt-3">
             <button
-              type="submit"
-              disabled={submitting || !route || !selectedVehicle}
-              className="px-6 py-3 rounded-xl bg-[#D4A017] text-[#0D0D10] text-xs font-bold hover:bg-[#EAB308] transition-colors disabled:opacity-50 inline-flex items-center gap-2 whitespace-nowrap"
+              type="button"
+              onClick={() => setCurrentStep(5)}
+              className="py-3.5 px-4 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50"
             >
-              {submitting && <Loader2 className="w-4 h-4 animate-spin" />}
-              {bookingMode === 'go_now' ? t(lang, 'findPartner') : t(lang, 'confirmSchedule')}
+              Back
+            </button>
+            <button
+              type="button"
+              onClick={() => setCurrentStep(7)}
+              className="py-3.5 px-4 rounded-2xl bg-zinc-700 text-white font-bold text-sm hover:bg-zinc-800 shadow-sm"
+            >
+              Continue
             </button>
           </div>
         </div>
+      )}
 
-        {submitError && (
-          <p className="text-xs font-semibold text-red-700 bg-red-50 border border-red-200 rounded-xl px-4 py-2.5">
-            {submitError}
-          </p>
-        )}
-      </form>
+      {/* STEP 7: FARE BREAKDOWN & NEGOTIATION (matching screenshots 10 & 11) */}
+      {!viewActiveTripTab && currentStep === 7 && (
+        <div className="bg-white rounded-3xl border border-zinc-200 p-6 sm:p-8 space-y-6 shadow-sm">
+          <div>
+            <h2 className="font-display text-2xl font-bold text-[#0D0D10]">Review &amp; confirm</h2>
+          </div>
 
-      <ShareTripStatusModal
-        isOpen={Boolean(shareModalBooking)}
-        onClose={() => setShareModalBooking(null)}
-        booking={shareModalBooking}
-        passengerName={passengerName}
-        lang={lang}
-      />
+          {/* Review Summary Card (matching screenshot 10) */}
+          <div className="divide-y divide-zinc-100 text-xs text-zinc-700">
+            <div className="py-2.5 flex justify-between">
+              <span className="text-zinc-500">Booking type</span>
+              <span className="font-semibold text-right">
+                {serviceType === 'pick_and_drop'
+                  ? 'Monthly Pick & Drop'
+                  : serviceType === 'ride_sharing'
+                  ? 'Ride Sharing'
+                  : 'Fuel Sharing'}
+              </span>
+            </div>
+            <div className="py-2.5 flex justify-between gap-4">
+              <span className="text-zinc-500 shrink-0">Pickup</span>
+              <span className="font-semibold text-right truncate max-w-[280px]">{pickup?.label}</span>
+            </div>
+            <div className="py-2.5 flex justify-between gap-4">
+              <span className="text-zinc-500 shrink-0">Drop-off</span>
+              <span className="font-semibold text-right truncate max-w-[280px]">{dropoff?.label}</span>
+            </div>
+            <div className="py-2.5 flex justify-between">
+              <span className="text-zinc-500">Distance</span>
+              <span className="font-semibold">{route?.distanceKm || 30.4} km · ~{route?.durationMin || 31} min</span>
+            </div>
+            <div className="py-2.5 flex justify-between">
+              <span className="text-zinc-500">Date</span>
+              <span className="font-semibold">{startDate}</span>
+            </div>
+            <div className="py-2.5 flex justify-between">
+              <span className="text-zinc-500">Pickup time</span>
+              <span className="font-semibold">{pickupTime}</span>
+            </div>
+            <div className="py-2.5 flex justify-between">
+              <span className="text-zinc-500">Drop-off time</span>
+              <span className="font-semibold">{dropoffTime}</span>
+            </div>
+            <div className="py-2.5 flex justify-between">
+              <span className="text-zinc-500">Package</span>
+              <span className="font-semibold">{selectedPackageDays} days / month</span>
+            </div>
+            <div className="py-2.5 flex justify-between">
+              <span className="text-zinc-500">Travel days</span>
+              <span className="font-semibold">{travelDays.join(', ')}</span>
+            </div>
+            <div className="py-2.5 flex justify-between">
+              <span className="text-zinc-500">Vehicle</span>
+              <span className="font-semibold">{selectedVehicle?.name || 'Economy'}</span>
+            </div>
+            <div className="py-2.5 flex justify-between">
+              <span className="text-zinc-500">Passengers</span>
+              <span className="font-semibold">{passengersCount}</span>
+            </div>
+          </div>
+
+          {/* Obsidian Black Fare Breakdown Card (matching screenshot 11) */}
+          <div className="rounded-3xl bg-[#0D0D10] text-white p-6 space-y-3 shadow-lg">
+            <p className="text-xs font-bold text-[#F4C430] uppercase tracking-wider">Fare breakdown</p>
+            <div className="space-y-2 text-xs text-zinc-300">
+              <div className="flex justify-between">
+                <span>Route</span>
+                <span className="font-mono">
+                  {route?.distanceKm || 30.4} km × {returnJourney ? 2 : 1} (return) × {selectedPackageDays} days ={' '}
+                  {Math.round((route?.distanceKm || 30.4) * (returnJourney ? 2 : 1) * selectedPackageDays * 10) / 10} km
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span>Pick &amp; Drop rate</span>
+                <span className="font-mono">
+                  Rs {selectedVehicle ? calculateVehiclePrice(selectedVehicle).ratePerKm : 25}/km
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span>Booking</span>
+                <span>{selectedVehicle && selectedVehicle.seating_capacity >= 7 ? 'Per passenger' : 'Whole vehicle'}</span>
+              </div>
+            </div>
+            <div className="border-t border-zinc-800 pt-3 flex items-baseline justify-between">
+              <span className="text-sm font-semibold">Reference fare (monthly)</span>
+              <span className="font-display text-2xl font-bold text-[#F4C430]">
+                Rs {referenceFare.toLocaleString()}
+              </span>
+            </div>
+          </div>
+
+          {/* Offer Your Fare Counter (matching screenshot 11) */}
+          <div className="p-5 rounded-3xl border border-zinc-200 bg-white space-y-3 shadow-xs">
+            <div>
+              <p className="font-bold text-sm text-[#0D0D10]">Offer your fare · کرایہ پیشکش</p>
+              <p className="text-xs text-zinc-500 mt-0.5">
+                Up to 10% below the reference fare. The Pro Partner must accept it.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-between pt-2">
+              <button
+                type="button"
+                onClick={() => setOfferedFare((f) => Math.max(minOfferFare, f - 250))}
+                className="w-12 h-12 rounded-full border border-zinc-300 flex items-center justify-center text-zinc-800 hover:bg-zinc-100 font-bold"
+              >
+                <Minus className="w-5 h-5" />
+              </button>
+              <div className="text-center">
+                <span className="font-display text-2xl font-bold text-[#0D0D10]">
+                  Rs {offeredFare.toLocaleString()}
+                </span>
+                <span className="block text-[11px] text-zinc-400 mt-0.5">
+                  {offeredFare === referenceFare
+                    ? 'Reference fare'
+                    : offeredFare < referenceFare
+                    ? `Discount: -Rs ${(referenceFare - offeredFare).toLocaleString()}`
+                    : `Added Tip: +Rs ${(offeredFare - referenceFare).toLocaleString()}`}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOfferedFare((f) => f + 250)}
+                className="w-12 h-12 rounded-full border border-zinc-300 flex items-center justify-center text-zinc-800 hover:bg-zinc-100 font-bold"
+              >
+                <Plus className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Bottom Nav Buttons */}
+          <div className="grid grid-cols-2 gap-3 pt-3">
+            <button
+              type="button"
+              onClick={() => setCurrentStep(6)}
+              className="py-3.5 px-4 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50"
+            >
+              Back
+            </button>
+            <button
+              type="button"
+              onClick={() => setCurrentStep(8)}
+              className="py-3.5 px-4 rounded-2xl bg-[#F4C430] text-[#0D0D10] font-bold text-sm hover:bg-[#E5B520] shadow-sm"
+            >
+              Continue to Confirm
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* STEP 8: FINAL REVIEW & PAYMENT (Pre-Confirmation) */}
+      {!viewActiveTripTab && currentStep === 8 && (
+        <div className="bg-white rounded-3xl border border-zinc-200 p-6 sm:p-8 space-y-6 shadow-sm">
+          <div>
+            <h2 className="font-display text-2xl font-bold text-[#0D0D10]">Payment &amp; Final Confirmation</h2>
+            <p className="text-xs text-zinc-500 mt-1">Select your preferred settlement method for the trip.</p>
+          </div>
+
+          {/* Payment Method Cards */}
+          <div className="space-y-3">
+            {[
+              {
+                id: 'cash',
+                label: 'Cash on Pickup / Trip Completion',
+                desc: 'Pay driver directly on daily or monthly basis',
+              },
+              {
+                id: 'wallet',
+                label: 'PRO RIDER Digital Wallet',
+                desc: 'Direct deduction from wallet balance with invoice receipt',
+              },
+              {
+                id: 'jazzcash_easypaisa',
+                label: 'JazzCash / EasyPaisa / Bank Transfer',
+                desc: 'Digital online settlement to driver or company',
+              },
+            ].map((p) => (
+              <div
+                key={p.id}
+                onClick={() => setPaymentMethod(p.id as any)}
+                className={`p-4 rounded-2xl border cursor-pointer transition-all ${
+                  paymentMethod === p.id
+                    ? 'border-[#F4C430] bg-[#FFFBEB] ring-1 ring-[#F4C430]'
+                    : 'border-zinc-200 bg-white hover:bg-zinc-50'
+                }`}
+              >
+                <p className="font-bold text-sm text-[#0D0D10]">{p.label}</p>
+                <p className="text-xs text-zinc-500 mt-0.5">{p.desc}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Driver Notes */}
+          <div>
+            <label className="block text-xs font-bold text-zinc-800 mb-1">
+              Instructions or Landmark for Driver (Optional)
+            </label>
+            <textarea
+              rows={2}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="e.g. Near gate 2, please call before arriving..."
+              className="w-full px-4 py-2.5 rounded-xl border border-zinc-200 text-xs focus:ring-2 focus:ring-[#F4C430]"
+            />
+          </div>
+
+          {/* Submit Error */}
+          {submitError && (
+            <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700 flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>{submitError}</span>
+            </div>
+          )}
+
+          {/* Bottom Nav Buttons */}
+          <div className="grid grid-cols-2 gap-3 pt-2">
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => setCurrentStep(7)}
+              className="py-3.5 px-4 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50"
+            >
+              Back
+            </button>
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={handleConfirmBooking}
+              className="py-3.5 px-4 rounded-2xl bg-[#F4C430] text-[#0D0D10] font-bold text-sm hover:bg-[#E5B520] shadow-md flex items-center justify-center gap-2"
+            >
+              {submitting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Confirming...
+                </>
+              ) : (
+                'Confirm Booking'
+              )}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* STEP 9: BOOKING CONFIRMED & WHATSAPP BILL INVOICE (matching screenshot 12_d9881a32.jpeg) */}
+      {!viewActiveTripTab && currentStep === 9 && (
+        <div className="bg-white rounded-3xl border border-zinc-200 p-6 sm:p-8 space-y-6 shadow-sm text-center animate-in fade-in zoom-in-95">
+          {/* Yellow Circular Checkmark Badge */}
+          <div className="w-20 h-20 rounded-full border-4 border-[#F4C430] flex items-center justify-center mx-auto text-[#F4C430]">
+            <Check className="w-10 h-10 stroke-[3.5]" />
+          </div>
+
+          <div>
+            <h2 className="font-display text-2xl sm:text-3xl font-bold text-[#0D0D10]">
+              Booking confirmed!
+            </h2>
+            <p className="text-xs text-zinc-600 mt-2 max-w-md mx-auto leading-relaxed">
+              Your request is saved as <strong>Pending</strong>. Our team has been notified and will assign a driver.
+            </p>
+          </div>
+
+          {/* Action: Also send on WhatsApp (matching screenshot 12) */}
+          <button
+            type="button"
+            onClick={handleShareWhatsApp}
+            className="w-full py-4 rounded-2xl bg-[#F4C430] text-[#0D0D10] font-bold text-sm hover:bg-[#E5B520] transition-colors shadow-md flex items-center justify-center gap-2"
+          >
+            <Phone className="w-4 h-4 fill-current" />
+            Also send on WhatsApp
+          </button>
+
+          {/* Action: Download PDF Invoice */}
+          {confirmedBooking && (
+            <button
+              type="button"
+              onClick={() => downloadBookingPdf(confirmedBooking, 'passenger', passengerName)}
+              className="w-full py-3.5 rounded-2xl border border-zinc-200 text-zinc-800 font-semibold text-xs hover:bg-zinc-50 flex items-center justify-center gap-2"
+            >
+              <Download className="w-4 h-4 text-[#D4A017]" />
+              Download Official Digital Bill (PDF)
+            </button>
+          )}
+
+          {/* Action: Done Button */}
+          <button
+            type="button"
+            onClick={() => {
+              setCurrentStep(1);
+              onGoToBookings();
+            }}
+            className="w-full py-3.5 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50"
+          >
+            Done
+          </button>
+        </div>
+      )}
+
+      {/* Share Trip Status Modal */}
+      {shareModalBooking && (
+        <ShareTripStatusModal
+          isOpen={Boolean(shareModalBooking)}
+          booking={shareModalBooking}
+          lang={lang}
+          passengerName={passengerName}
+          onClose={() => setShareModalBooking(null)}
+        />
+      )}
     </div>
   );
 };

@@ -107,15 +107,17 @@ export const WelcomePage: React.FC<WelcomePageProps> = ({ lang, onChangeLang, on
           </div>
 
           {/* Right Column: Architectural Mobility Visual */}
-          <div className="lg:col-span-6 flex flex-col">
-            <div className="relative flex-1 min-h-[300px] lg:min-h-[460px] rounded-3xl overflow-hidden border border-zinc-200 bg-[#0D0D10]">
+          <div className="lg:col-span-6 flex flex-col justify-center">
+            <div className="hero-image-container relative w-full aspect-[16/10] sm:aspect-[16/9] lg:aspect-[16/10] min-h-[300px] lg:min-h-[440px] rounded-3xl overflow-hidden border border-zinc-200 bg-[#0D0D10] shadow-xl flex items-center justify-center">
               <img
                 src="/src/assets/images/hero_mobility_pakistan_1794584048013.jpg"
                 alt="PRO RIDER AI executive sedan in Islamabad"
                 referrerPolicy="no-referrer"
-                className="w-full h-full object-cover"
+                className="hero-image-cover w-full h-full object-cover object-center"
+                style={{ objectFit: 'cover', objectPosition: 'center' }}
+                loading="eager"
               />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent flex flex-col justify-end p-6 sm:p-8">
+              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent flex flex-col justify-end p-6 sm:p-8 pointer-events-none">
                 <p className="text-xs font-semibold uppercase tracking-widest text-[#F4C430]">
                   Pakistan Smart Mobility Network
                 </p>

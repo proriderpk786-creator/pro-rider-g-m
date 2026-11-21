@@ -341,115 +341,254 @@ function seedInitialData() {
     db.prepare(`UPDATE users SET password_hash = '', admin_setup_completed = 0 WHERE id = ?`).run(adminRow.id);
   }
 
-  // 2. Seed Fleet Categories
-  const fleetCount = (db.prepare('SELECT COUNT(*) as c FROM fleet_categories').get() as { c: number }).c;
-  if (fleetCount === 0) {
-    const insertFleet = db.prepare(`
-      INSERT INTO fleet_categories (id, slug, name, tagline, image_url, seating_capacity, base_fare_pkr, per_km_min_pkr, per_km_max_pkr, waiting_charge_per_min, extra_stop_pkr, commission_pct, services_eligible, is_active, sort_order)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+  // 2. Seed / Upsert Complete Fleet Categories conforming to user rules and screenshots
+  const upsertFleet = db.prepare(`
+    INSERT INTO fleet_categories (
+      id, slug, name, tagline, image_url, seating_capacity, base_fare_pkr,
+      per_km_min_pkr, per_km_max_pkr, waiting_charge_per_min, extra_stop_pkr,
+      commission_pct, services_eligible, is_active, sort_order
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name,
+      tagline = excluded.tagline,
+      image_url = CASE WHEN fleet_categories.image_url = '' OR fleet_categories.image_url IS NULL THEN excluded.image_url ELSE fleet_categories.image_url END,
+      seating_capacity = excluded.seating_capacity,
+      base_fare_pkr = excluded.base_fare_pkr,
+      per_km_min_pkr = excluded.per_km_min_pkr,
+      per_km_max_pkr = excluded.per_km_max_pkr,
+      services_eligible = excluded.services_eligible,
+      sort_order = excluded.sort_order,
+      is_active = excluded.is_active
+  `);
 
-    insertFleet.run(
-      'fleet-economy',
-      'economy',
-      'Economy (660cc)',
-      'Alto / Mira / WagonR — Everyday city commute',
-      '/src/assets/images/fleet_economy_1794584047757.jpg',
-      4,
-      150,
-      35,
-      45,
-      5,
-      50,
-      15,
-      JSON.stringify(['pick_and_drop', 'ride_sharing', 'fuel_sharing']),
+  const initialFleet = [
+    {
+      id: 'fleet-economy',
+      slug: 'economy',
+      name: 'Economy · اکانومی',
+      tagline: '3 seats · 1 bags · Hatchback (Alto / Mira / WagonR)',
+      image_url: '/src/assets/images/fleet_economy_1794584047757.jpg',
+      seating_capacity: 3,
+      base_fare_pkr: 150,
+      per_km_min_pkr: 35,
+      per_km_max_pkr: 45,
+      waiting_charge_per_min: 5,
+      extra_stop_pkr: 50,
+      commission_pct: 12,
+      services: ['pick_and_drop', 'ride_sharing', 'fuel_sharing'],
+      sort_order: 1,
+    },
+    {
+      id: 'fleet-comfort',
+      slug: 'comfort',
+      name: 'Comfort · کمفرٹ',
+      tagline: '4 seats · 2 bags · Hatchback (+Rs 5/km over base)',
+      image_url: '/src/assets/images/fleet_comfort_1794584048991.jpg',
+      seating_capacity: 4,
+      base_fare_pkr: 200,
+      per_km_min_pkr: 40,
+      per_km_max_pkr: 50,
+      waiting_charge_per_min: 6,
+      extra_stop_pkr: 60,
+      commission_pct: 14,
+      services: ['pick_and_drop', 'ride_sharing', 'fuel_sharing'],
+      sort_order: 2,
+    },
+    {
+      id: 'fleet-comfort-plus',
+      slug: 'comfort-plus',
+      name: 'Comfort Plus · کمفرٹ پلس',
+      tagline: '4 seats · 2 bags · Sedan (Yaris / City / Swift)',
+      image_url: 'https://images.unsplash.com/photo-1590362891991-f776e747a588?auto=format&fit=crop&w=600&q=80',
+      seating_capacity: 4,
+      base_fare_pkr: 240,
+      per_km_min_pkr: 45,
+      per_km_max_pkr: 55,
+      waiting_charge_per_min: 7,
+      extra_stop_pkr: 70,
+      commission_pct: 14,
+      services: ['pick_and_drop', 'ride_sharing', 'fuel_sharing'],
+      sort_order: 3,
+    },
+    {
+      id: 'fleet-sedan',
+      slug: 'sedan',
+      name: 'Sedan · سیڈان',
+      tagline: '4 seats · 3 bags · Sedan (+Rs 20/km over base, Corolla / Civic)',
+      image_url: '/src/assets/images/fleet_sedan_1794584048087.jpg',
+      seating_capacity: 4,
+      base_fare_pkr: 250,
+      per_km_min_pkr: 55,
+      per_km_max_pkr: 65,
+      waiting_charge_per_min: 8,
+      extra_stop_pkr: 75,
+      commission_pct: 15,
+      services: ['pick_and_drop', 'ride_sharing', 'fuel_sharing'],
+      sort_order: 4,
+    },
+    {
+      id: 'fleet-suv',
+      slug: 'suv',
+      name: 'SUV · ایس یو وی',
+      tagline: '6 seats · 4 bags · SUV (Sportage / Tucson / BR-V)',
+      image_url: 'https://images.unsplash.com/photo-1519641471654-76ce0107ad1b?auto=format&fit=crop&w=600&q=80',
+      seating_capacity: 6,
+      base_fare_pkr: 350,
+      per_km_min_pkr: 60,
+      per_km_max_pkr: 75,
+      waiting_charge_per_min: 10,
+      extra_stop_pkr: 100,
+      commission_pct: 16,
+      services: ['pick_and_drop', 'ride_sharing', 'fuel_sharing'],
+      sort_order: 5,
+    },
+    {
+      id: 'fleet-premium',
+      slug: 'premium',
+      name: 'Premium · پریمیم',
+      tagline: '4 seats · 3 bags · Executive Sedan (Chauffeur Class)',
+      image_url: '/src/assets/images/fleet_premium_1794584050155.jpg',
+      seating_capacity: 4,
+      base_fare_pkr: 450,
+      per_km_min_pkr: 75,
+      per_km_max_pkr: 95,
+      waiting_charge_per_min: 12,
+      extra_stop_pkr: 120,
+      commission_pct: 18,
+      services: ['pick_and_drop', 'fuel_sharing'],
+      sort_order: 6,
+    },
+    {
+      id: 'fleet-luxury',
+      slug: 'luxury',
+      name: 'Luxury · لگژری',
+      tagline: '4 seats · 4 bags · Luxury Sedan / SUV (+10% VIP Tier)',
+      image_url: 'https://images.unsplash.com/photo-1563720223185-11003d516935?auto=format&fit=crop&w=600&q=80',
+      seating_capacity: 4,
+      base_fare_pkr: 600,
+      per_km_min_pkr: 100,
+      per_km_max_pkr: 130,
+      waiting_charge_per_min: 15,
+      extra_stop_pkr: 150,
+      commission_pct: 20,
+      services: ['pick_and_drop', 'fuel_sharing'],
+      sort_order: 7,
+    },
+    {
+      id: 'fleet-van-7',
+      slug: 'van-7',
+      name: 'Van · 7-seater · وین',
+      tagline: '7 seats · 3 bags · Van (7-seater APV / Every)',
+      image_url: 'https://images.unsplash.com/photo-1541899481282-d53bffe3c35d?auto=format&fit=crop&w=600&q=80',
+      seating_capacity: 7,
+      base_fare_pkr: 300,
+      per_km_min_pkr: 20,
+      per_km_max_pkr: 30,
+      waiting_charge_per_min: 7,
+      extra_stop_pkr: 60,
+      commission_pct: 15,
+      services: ['pick_and_drop', 'ride_sharing'],
+      sort_order: 8,
+    },
+    {
+      id: 'fleet-van-12',
+      slug: 'van-12',
+      name: 'Van · 12-seater · وین',
+      tagline: '12 seats · 6 bags · Van (12-seater HiAce)',
+      image_url: 'https://images.unsplash.com/photo-1559297434-fae8a1916a79?auto=format&fit=crop&w=600&q=80',
+      seating_capacity: 12,
+      base_fare_pkr: 400,
+      per_km_min_pkr: 18,
+      per_km_max_pkr: 28,
+      waiting_charge_per_min: 8,
+      extra_stop_pkr: 80,
+      commission_pct: 15,
+      services: ['pick_and_drop', 'ride_sharing'],
+      sort_order: 9,
+    },
+    {
+      id: 'fleet-van-15',
+      slug: 'van-15',
+      name: 'Van · 15-seater · وین',
+      tagline: '15 seats · 8 bags · Van (15-seater Grand Cabin)',
+      image_url: 'https://images.unsplash.com/photo-1568605117036-5fe5e7bab0b7?auto=format&fit=crop&w=600&q=80',
+      seating_capacity: 15,
+      base_fare_pkr: 500,
+      per_km_min_pkr: 15,
+      per_km_max_pkr: 25,
+      waiting_charge_per_min: 10,
+      extra_stop_pkr: 100,
+      commission_pct: 15,
+      services: ['pick_and_drop', 'ride_sharing'],
+      sort_order: 10,
+    },
+    {
+      id: 'fleet-coaster',
+      slug: 'coaster',
+      name: 'Coaster / Group Transport · کوسٹر',
+      tagline: '28 seats · 15 bags · Coaster (28-seater corporate & university)',
+      image_url: 'https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?auto=format&fit=crop&w=600&q=80',
+      seating_capacity: 28,
+      base_fare_pkr: 800,
+      per_km_min_pkr: 12,
+      per_km_max_pkr: 25,
+      waiting_charge_per_min: 12,
+      extra_stop_pkr: 150,
+      commission_pct: 15,
+      services: ['pick_and_drop', 'ride_sharing'],
+      sort_order: 11,
+    },
+    {
+      id: 'fleet-bike',
+      slug: 'bike',
+      name: 'Motorcycle / Bike · موٹر سائیکل',
+      tagline: '1 seats · 0 bags · Motorcycle (Express single rider)',
+      image_url: 'https://images.unsplash.com/photo-1558981403-c5f9899a28bc?auto=format&fit=crop&w=600&q=80',
+      seating_capacity: 1,
+      base_fare_pkr: 60,
+      per_km_min_pkr: 10,
+      per_km_max_pkr: 18,
+      waiting_charge_per_min: 3,
+      extra_stop_pkr: 25,
+      commission_pct: 10,
+      services: ['pick_and_drop', 'ride_sharing'],
+      sort_order: 12,
+    },
+    {
+      id: 'fleet-rickshaw',
+      slug: 'rickshaw',
+      name: 'City Rickshaw · رکشہ',
+      tagline: '3 seats · 1 bags · Auto Rickshaw (Short-hop city travel)',
+      image_url: 'https://images.unsplash.com/photo-1582639590011-f5a8416d1101?auto=format&fit=crop&w=600&q=80',
+      seating_capacity: 3,
+      base_fare_pkr: 80,
+      per_km_min_pkr: 15,
+      per_km_max_pkr: 22,
+      waiting_charge_per_min: 3,
+      extra_stop_pkr: 30,
+      commission_pct: 12,
+      services: ['pick_and_drop'],
+      sort_order: 13,
+    },
+  ];
+
+  for (const item of initialFleet) {
+    upsertFleet.run(
+      item.id,
+      item.slug,
+      item.name,
+      item.tagline,
+      item.image_url,
+      item.seating_capacity,
+      item.base_fare_pkr,
+      item.per_km_min_pkr,
+      item.per_km_max_pkr,
+      item.waiting_charge_per_min,
+      item.extra_stop_pkr,
+      item.commission_pct,
+      JSON.stringify(item.services),
       1,
-      1
-    );
-    insertFleet.run(
-      'fleet-sedan',
-      'sedan',
-      'Sedan (1000cc–1300cc)',
-      'Corolla / City / Yaris — Comfortable office & family travel',
-      '/src/assets/images/fleet_sedan_1794584048087.jpg',
-      4,
-      200,
-      40,
-      50,
-      5,
-      50,
-      15,
-      JSON.stringify(['pick_and_drop', 'ride_sharing', 'fuel_sharing']),
-      1,
-      2
-    );
-    insertFleet.run(
-      'fleet-comfort',
-      'comfort',
-      'Comfort Executive',
-      'Civic / Grande — Spacious climate-controlled cabin',
-      '/src/assets/images/fleet_comfort_1794584048991.jpg',
-      4,
-      280,
-      45,
-      55,
-      8,
-      75,
-      15,
-      JSON.stringify(['pick_and_drop', 'ride_sharing', 'fuel_sharing']),
-      1,
-      3
-    );
-    insertFleet.run(
-      'fleet-premium',
-      'premium',
-      'Premium SUV / VIP',
-      'Fortuner / Sportage / Executive SUV — Chauffeur class',
-      '/src/assets/images/fleet_premium_1794584050155.jpg',
-      6,
-      450,
-      55,
-      70,
-      10,
-      100,
-      18,
-      JSON.stringify(['pick_and_drop', 'fuel_sharing']),
-      1,
-      4
-    );
-    insertFleet.run(
-      'fleet-rickshaw',
-      'rickshaw',
-      'City Rickshaw',
-      'Quick sector-to-sector short-hop travel',
-      '',
-      3,
-      80,
-      20,
-      28,
-      3,
-      30,
-      12,
-      JSON.stringify(['pick_and_drop']),
-      1,
-      5
-    );
-    insertFleet.run(
-      'fleet-coaster',
-      'coaster',
-      'Coaster / Commuter Van',
-      '14-Seater corporate & university group routes',
-      '',
-      14,
-      600,
-      65,
-      85,
-      12,
-      150,
-      15,
-      JSON.stringify(['pick_and_drop', 'ride_sharing']),
-      0,
-      6
+      item.sort_order
     );
   }
 
@@ -509,19 +648,33 @@ function seedInitialData() {
     );
   }
 
-  // 5. Seed Platform Settings
-  const settingsCount = (db.prepare('SELECT COUNT(*) as c FROM platform_settings').get() as { c: number }).c;
-  if (settingsCount === 0) {
-    const insertSetting = db.prepare('INSERT OR IGNORE INTO platform_settings (key, value) VALUES (?, ?)');
-    insertSetting.run('go_now_min_offer_pct', '80');
-    insertSetting.run('go_now_max_offer_pct', '135');
-    insertSetting.run('schedule_default_pickup', '08:00 AM');
-    insertSetting.run('schedule_default_drop', '05:30 PM');
-    insertSetting.run('schedule_allowed_days', JSON.stringify(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']));
-    insertSetting.run('schedule_rate_per_km', '38');
-    insertSetting.run('support_whatsapp', '03125007782');
-    insertSetting.run('support_email', 'ProRider.pk786@gmail.com');
-  }
+  // 5. Seed / Upsert Platform Settings
+  const insertSetting = db.prepare('INSERT OR IGNORE INTO platform_settings (key, value) VALUES (?, ?)');
+  insertSetting.run('go_now_min_offer_pct', '80');
+  insertSetting.run('go_now_max_offer_pct', '135');
+  insertSetting.run('schedule_default_pickup', '09:15 AM');
+  insertSetting.run('schedule_default_drop', '06:00 PM');
+  insertSetting.run('schedule_allowed_days', JSON.stringify(['Mon', 'Tue', 'Wed', 'Thu', 'Fri']));
+  insertSetting.run('schedule_rate_per_km', '38');
+  insertSetting.run('support_whatsapp', '03125007782');
+  insertSetting.run('support_email', 'ProRider.pk786@gmail.com');
+
+  // Exact user-specified cross-calculation tariff rules
+  insertSetting.run('rate_economy_pick_drop_min', '35');
+  insertSetting.run('rate_economy_pick_drop_max', '45');
+  insertSetting.run('rate_economy_ride_share_min', '30');
+  insertSetting.run('rate_economy_ride_share_max', '40');
+  insertSetting.run('rate_economy_fuel_share_min', '20');
+  insertSetting.run('rate_economy_fuel_share_max', '30');
+  insertSetting.run('rate_comfort_addon_per_km', '5');
+  insertSetting.run('rate_sedan_addon_per_km', '20');
+  insertSetting.run('rate_luxury_multiplier_pct', '10');
+  insertSetting.run('rate_van_7_min', '20');
+  insertSetting.run('rate_van_7_max', '30');
+  insertSetting.run('rate_van_15_min', '15');
+  insertSetting.run('rate_van_15_max', '25');
+  insertSetting.run('rate_coaster_min', '12');
+  insertSetting.run('rate_coaster_max', '25');
 
   // 6. Seed Demo Pro Partner & Sample Active Trip (If No Bookings Exist)
   const bookingsCount = (db.prepare('SELECT COUNT(*) as c FROM bookings').get() as { c: number }).c;

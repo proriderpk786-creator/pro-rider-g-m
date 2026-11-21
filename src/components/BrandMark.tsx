@@ -5,14 +5,11 @@ import type { Language } from '../types';
 export const BrandLogo: React.FC<{ dark?: boolean; compact?: boolean }> = ({ dark = false, compact = false }) => {
   return (
     <div className="inline-flex items-center gap-2.5 select-none shrink-0">
-      <div className="w-9 h-9 rounded-xl bg-[#0D0D10] border border-[#D4A017]/60 flex items-center justify-center shrink-0">
-        <svg viewBox="0 0 40 40" className="w-6 h-6" aria-hidden="true">
-          <path d="M7 24c3-7 8-11 13-11s10 4 13 11" fill="none" stroke="#D4A017" strokeWidth="2.8" strokeLinecap="round" />
-          <path d="M12 20c2.5-3.5 5-4.5 8-4.5s5.5 1 8 4.5" fill="none" stroke="#F4C430" strokeWidth="1.6" strokeLinecap="round" />
-          <circle cx="13" cy="27" r="2.6" fill="#D4A017" />
-          <circle cx="27" cy="27" r="2.6" fill="#D4A017" />
-        </svg>
-      </div>
+      <img
+        src="/assets/aistudio/pmg_3_88102afb.png"
+        alt="PRO RIDER AI"
+        className={`${compact ? 'w-8 h-8' : 'w-10 h-10'} rounded-full object-contain shrink-0 shadow-md border border-[#D4A017]/40 bg-black`}
+      />
       <div className="flex flex-col leading-none">
         <span
           className={`font-display font-bold tracking-tight text-base whitespace-nowrap ${
