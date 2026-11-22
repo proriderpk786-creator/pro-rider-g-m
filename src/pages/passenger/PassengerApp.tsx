@@ -48,14 +48,14 @@ import {
 
 type PassengerTab = 'home' | 'bookings' | 'wallet' | 'notifications' | 'support' | 'profile';
 
-const LOCAL_PASSENGER_BOOKINGS_KEY = 'pr_local_bookings_passenger';
+const getLocalPassengerBookingsKey = (userId?: string) => `pr_local_bookings_passenger_${userId || 'guest'}`;
 
-function readLocalPassengerBookings(): Booking[] {
+function readLocalPassengerBookings(userId?: string): Booking[] {
   try {
-    const raw = localStorage.getItem(LOCAL_PASSENGER_BOOKINGS_KEY);
+    const raw = localStorage.getItem(getLocalPassengerBookingsKey(userId));
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed) ? parsed.filter((b: Booking) => !userId || b.passenger_id === userId || b.passenger_id === 'local-passenger') : [];
   } catch {
     return [];
   }
@@ -78,7 +78,7 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
   const [token, setToken] = useState<string | null>(() => getRoleToken('passenger'));
   const [user, setUser] = useState<User | null>(() => getStoredRoleUser<User>('passenger'));
   const [tab, setTab] = useState<PassengerTab>('home');
-  const [bookings, setBookings] = useState<Booking[]>(() => readLocalPassengerBookings());
+  const [bookings, setBookings] = useState<Booking[]>(() => readLocalPassengerBookings(getStoredRoleUser<User>('passenger')?.id));
   const [wallet, setWallet] = useState<{
     balancePkr: number;
     totalPaymentsPkr: number;
@@ -139,7 +139,8 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
         // Static hosting (Vercel without Node backend) or transient backend outage:
         // keep authenticated Firebase/local session intact and hydrate cached bookings.
         setBookings((prev) => {
-          const local = readLocalPassengerBookings();
+          const localUser = user || getStoredRoleUser<User>('passenger');
+          const local = readLocalPassengerBookings(localUser?.id);
           return local.length > 0 ? local : Array.isArray(prev) ? prev : [];
         });
         setUser((prev) => prev || getStoredRoleUser<User>('passenger'));

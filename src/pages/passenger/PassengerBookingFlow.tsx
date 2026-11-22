@@ -41,7 +41,7 @@ import type {
 import { apiRequest, isBackendOfflineError } from '../../utils/api';
 import { downloadBookingPdf } from '../../utils/pdfGenerator';
 
-const LOCAL_PASSENGER_BOOKINGS_KEY = 'pr_local_bookings_passenger';
+const getLocalPassengerBookingsKey = (userId?: string) => `pr_local_bookings_passenger_${userId || 'guest'}`;
 
 function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371;
@@ -537,10 +537,11 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
           created_at: nowIso,
         };
         try {
-          const existingRaw = localStorage.getItem(LOCAL_PASSENGER_BOOKINGS_KEY);
+          const uKey = getLocalPassengerBookingsKey(firebaseUser?.uid || localBooking.passenger_id);
+          const existingRaw = localStorage.getItem(uKey);
           const existing = existingRaw ? (JSON.parse(existingRaw) as Booking[]) : [];
           const next = [localBooking, ...(Array.isArray(existing) ? existing : [])];
-          localStorage.setItem(LOCAL_PASSENGER_BOOKINGS_KEY, JSON.stringify(next));
+          localStorage.setItem(uKey, JSON.stringify(next));
         } catch {
           // ignore storage quota errors
         }
