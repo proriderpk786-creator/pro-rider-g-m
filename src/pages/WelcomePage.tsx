@@ -15,8 +15,8 @@ import {
   Users,
   Wallet,
 } from 'lucide-react';
-import heroMobilityImg from '../assets/images/hero_mobility_pakistan_1794584048013.jpg';
-import { BrandLogo, LanguageToggle, PWAInstallButton } from '../components/BrandMark';
+import sovereignHeroImg from '../../public/assets/aistudio/Meta_AI_922449561_2227628244634402_903597125062342127_n_20261122_182719.webp_add99c4b.jpg';
+import { BrandLogo, LanguageToggle, PWAInstallButton, ThemeModeToggle } from '../components/BrandMark';
 import { useTheme } from '../contexts/ThemeContext';
 import { t, tr } from '../i18n/translations';
 import type { Language } from '../types';
@@ -67,6 +67,7 @@ export const WelcomePage: React.FC<WelcomePageProps> = ({ lang, onChangeLang, on
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-14 sm:h-16 flex items-center justify-between gap-2 sm:gap-3">
         <BrandLogo compact lang={lang} />
         <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
+          <ThemeModeToggle lang={lang} />
           <LanguageToggle lang={lang} onChange={onChangeLang} />
           <PWAInstallButton lang={lang} />
         </div>
@@ -110,7 +111,7 @@ export const WelcomePage: React.FC<WelcomePageProps> = ({ lang, onChangeLang, on
     >
       {!heroImgFailed ? (
         <img
-          src={heroMobilityImg}
+          src={sovereignHeroImg}
           alt={tr(lang, 'PRO RIDER AI executive sedan in Islamabad', 'پرو رائیڈر اے آئی ایگزیکٹو سیڈان اسلام آباد')}
           referrerPolicy="no-referrer"
           onError={() => setHeroImgFailed(true)}
@@ -135,6 +136,121 @@ export const WelcomePage: React.FC<WelcomePageProps> = ({ lang, onChangeLang, on
       </div>
     </div>
   );
+
+  // SOVEREIGN PAKISTAN POSTER LAYOUT (Exact match to reference image without duplicate HTML text/headers)
+  if (homeLayout === 'sovereign') {
+    return (
+      <div dir={lang === 'ur' ? 'rtl' : 'ltr'} className="min-h-screen bg-[#070709] text-white flex flex-col items-center justify-center relative overflow-x-hidden selection:bg-[#F4C430] selection:text-black py-2 sm:py-6 px-2 sm:px-4">
+        {/* Floating Language & Theme Switcher in top corner */}
+        <div className="fixed top-3 right-3 sm:top-5 sm:right-5 z-40 flex items-center gap-1.5 sm:gap-2 bg-black/80 backdrop-blur-md px-2.5 py-1.5 rounded-full border border-[#D4A017]/40 shadow-xl">
+          <ThemeModeToggle dark={true} lang={lang} />
+          <LanguageToggle lang={lang} onChange={onChangeLang} dark />
+          <PWAInstallButton lang={lang} />
+        </div>
+
+        {/* The Exact Pure Sovereign Poster with Hotspot Interactive Buttons */}
+        <main className="w-full flex-1 flex items-center justify-center">
+          <div className="relative w-full max-w-[460px] sm:max-w-[490px] aspect-[1072/2384] mx-auto select-none rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl border border-[#D4A017]/40 bg-black">
+            <img
+              src="/assets/aistudio/Meta_AI_925947838_917402431363083_8268209735092311524_n_20261122_182601_f4b79422.webp"
+              alt="PRO RIDER AI — Your Ride, Your Partner, Your Pakistan"
+              className="w-full h-full object-cover block pointer-events-none"
+              loading="eager"
+            />
+
+            {/* Interactive Functional Buttons directly over image buttons */}
+
+            {/* 1. Pick & Drop */}
+            <button
+              type="button"
+              onClick={() => {
+                sessionStorage.setItem('pr_initial_service', 'pick_and_drop');
+                sessionStorage.setItem('pr_initial_mode', 'schedule');
+                onNavigate('/passenger');
+              }}
+              title={t(lang, 'pickAndDrop')}
+              aria-label={t(lang, 'pickAndDrop')}
+              className="absolute rounded-2xl cursor-pointer transition-all hover:bg-[#F4C430]/15 hover:ring-2 hover:ring-[#F4C430]/80 active:scale-95 focus:outline-none focus:ring-2 focus:ring-[#F4C430]"
+              style={{ left: '4.48%', top: '63.25%', width: '29.10%', height: '11.83%' }}
+            />
+
+            {/* 2. Ride Sharing */}
+            <button
+              type="button"
+              onClick={() => {
+                sessionStorage.setItem('pr_initial_service', 'ride_sharing');
+                sessionStorage.setItem('pr_initial_mode', 'schedule');
+                onNavigate('/passenger');
+              }}
+              title={t(lang, 'rideSharing')}
+              aria-label={t(lang, 'rideSharing')}
+              className="absolute rounded-2xl cursor-pointer transition-all hover:bg-[#F4C430]/15 hover:ring-2 hover:ring-[#F4C430]/80 active:scale-95 focus:outline-none focus:ring-2 focus:ring-[#F4C430]"
+              style={{ left: '37.13%', top: '63.25%', width: '29.10%', height: '11.83%' }}
+            />
+
+            {/* 3. Fuel Sharing */}
+            <button
+              type="button"
+              onClick={() => {
+                sessionStorage.setItem('pr_initial_service', 'fuel_sharing');
+                sessionStorage.setItem('pr_initial_mode', 'schedule');
+                onNavigate('/passenger');
+              }}
+              title={t(lang, 'fuelSharing')}
+              aria-label={t(lang, 'fuelSharing')}
+              className="absolute rounded-2xl cursor-pointer transition-all hover:bg-[#F4C430]/15 hover:ring-2 hover:ring-[#F4C430]/80 active:scale-95 focus:outline-none focus:ring-2 focus:ring-[#F4C430]"
+              style={{ left: '66.60%', top: '63.25%', width: '28.92%', height: '11.83%' }}
+            />
+
+            {/* 4. AS A PASSENGER -> (Opens Passenger home with 4 services including Instant Booking) */}
+            <button
+              type="button"
+              onClick={() => {
+                sessionStorage.removeItem('pr_initial_service');
+                sessionStorage.removeItem('pr_initial_mode');
+                onNavigate('/passenger');
+              }}
+              title={t(lang, 'asPassenger')}
+              aria-label={t(lang, 'asPassenger')}
+              className="absolute rounded-2xl cursor-pointer transition-all hover:bg-[#F4C430]/20 hover:ring-2 hover:ring-[#F4C430] active:scale-95 focus:outline-none focus:ring-2 focus:ring-[#F4C430]"
+              style={{ left: '4.20%', top: '79.87%', width: '44.31%', height: '6.54%' }}
+            />
+
+            {/* 5. AS A DRIVER PRO PARTNER -> */}
+            <button
+              type="button"
+              onClick={() => onNavigate('/partner')}
+              title={t(lang, 'asPartner')}
+              aria-label={t(lang, 'asPartner')}
+              className="absolute rounded-2xl cursor-pointer transition-all hover:bg-[#F4C430]/20 hover:ring-2 hover:ring-[#F4C430] active:scale-95 focus:outline-none focus:ring-2 focus:ring-[#F4C430]"
+              style={{ left: '51.12%', top: '79.87%', width: '44.40%', height: '6.54%' }}
+            />
+
+            {/* 6. Visit Website */}
+            <button
+              type="button"
+              onClick={() => onNavigate('/website')}
+              title={tr(lang, 'Visit Website', 'ویب سائٹ دیکھیں')}
+              aria-label={tr(lang, 'Visit Website', 'ویب سائٹ دیکھیں')}
+              className="absolute rounded-full cursor-pointer transition-all hover:bg-[#F4C430]/20 hover:ring-2 hover:ring-[#F4C430] active:scale-95 focus:outline-none focus:ring-2 focus:ring-[#F4C430]"
+              style={{ left: '30.78%', top: '88.25%', width: '38.25%', height: '4.36%' }}
+            />
+
+            {/* 7. WhatsApp 03125007782 */}
+            <a
+              href="https://wa.me/923125007782"
+              target="_blank"
+              rel="noreferrer"
+              title="WhatsApp: 03125007782"
+              aria-label="WhatsApp: 03125007782"
+              className="absolute rounded-full cursor-pointer transition-all hover:bg-emerald-500/25 hover:ring-2 hover:ring-emerald-400 active:scale-95 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+              style={{ left: '20.52%', top: '94.80%', width: '58.77%', height: '3.15%' }}
+            />
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div dir={lang === 'ur' ? 'rtl' : 'ltr'} className="min-h-screen bg-[#F8F8FA] text-[#0D0D10] flex flex-col overflow-x-clip">
@@ -222,105 +338,7 @@ export const WelcomePage: React.FC<WelcomePageProps> = ({ lang, onChangeLang, on
         </main>
       )}
 
-      {/* 2. SOVEREIGN PAKISTAN HERO (Inspired by Upload 182601 / 182719) */}
-      {homeLayout === 'sovereign' && (
-        <main className="flex-1 max-w-5xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 sm:py-10 space-y-6 sm:space-y-8">
-          <div className="text-center space-y-3">
-            <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full border border-[#D4A017]/50 bg-[#D4A017]/10 text-[11px] font-bold uppercase tracking-widest text-[#D4A017]">
-              PRO RIDER AI · {tr(lang, 'Pakistan Smart Mobility', 'پاکستان اسمارٹ موبلٹی')}
-            </div>
-            <h1 className="font-display text-3xl sm:text-5xl lg:text-6xl font-bold tracking-tight leading-[1.12]">
-              {tr(lang, 'Your Ride, Your Partner,', 'آپ کی سواری، آپ کا پارٹنر،')}{' '}
-              <span className="text-[#D4A017]">{tr(lang, 'Your Pakistan', 'آپ کا پاکستان')}</span>
-            </h1>
-            <p className="text-sm sm:text-base text-zinc-600 max-w-2xl mx-auto">
-              {t(lang, 'welcomeDesc')}
-            </p>
-          </div>
 
-          {ExploreWebsiteBanner}
-
-          {HeroImageBox('max-h-[380px] sm:max-h-[430px] border-2 !border-[#D4A017]/40')}
-
-          {/* 3 Service Tiles */}
-          <div className="grid grid-cols-3 gap-2.5 sm:gap-4">
-            {[
-              { icon: MapPin, label: t(lang, 'pickAndDrop'), sub: tr(lang, 'Door-to-Door', 'گھر سے منزل تک') },
-              { icon: Users, label: t(lang, 'rideSharing'), sub: tr(lang, 'Split & Save', 'مشترکہ سفر') },
-              { icon: Fuel, label: t(lang, 'fuelSharing'), sub: tr(lang, 'Fair Fuel Split', 'فیول شیئرنگ') },
-            ].map((srv) => {
-              const Icon = srv.icon;
-              return (
-                <button
-                  key={srv.label}
-                  type="button"
-                  onClick={() => onNavigate('/passenger')}
-                  className="rounded-2xl border border-[#D4A017]/40 bg-white p-3.5 sm:p-5 text-center hover:border-[#D4A017] transition-all flex flex-col items-center gap-2 shadow-sm"
-                >
-                  <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-[#D4A017]/15 border border-[#D4A017]/40 flex items-center justify-center text-[#D4A017]">
-                    <Icon className="w-5 h-5 sm:w-6 sm:h-6" />
-                  </div>
-                  <div className="font-display font-bold text-xs sm:text-sm">{srv.label}</div>
-                  <div className="text-[10px] sm:text-xs text-zinc-500 hidden sm:block">{srv.sub}</div>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Two Primary Entry Buttons */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <button
-              type="button"
-              onClick={() => onNavigate('/passenger')}
-              className="pr-gold-cta rounded-2xl p-5 flex items-center justify-between gap-3 text-start font-bold min-h-[76px] transition-transform hover:scale-[1.01]"
-            >
-              <div className="flex items-center gap-3.5">
-                <UserCheck className="w-6 h-6 shrink-0" />
-                <div>
-                  <div className="font-display text-base sm:text-lg font-bold">{t(lang, 'asPassenger')}</div>
-                  <div className="text-xs opacity-80 font-medium">{t(lang, 'asPassengerSub')}</div>
-                </div>
-              </div>
-              <ArrowRight className={`w-5 h-5 shrink-0 ${lang === 'ur' ? 'rotate-180' : ''}`} />
-            </button>
-
-            <button
-              type="button"
-              onClick={() => onNavigate('/partner')}
-              className="rounded-2xl border-2 border-[#D4A017]/70 bg-white p-5 flex items-center justify-between gap-3 text-start min-h-[76px] hover:border-[#D4A017] transition-transform hover:scale-[1.01]"
-            >
-              <div className="flex items-center gap-3.5">
-                <CarFront className="w-6 h-6 text-[#D4A017] shrink-0" />
-                <div>
-                  <div className="font-display text-base sm:text-lg font-bold">{t(lang, 'asPartner')}</div>
-                  <div className="text-xs text-zinc-500">{t(lang, 'asPartnerSub')}</div>
-                </div>
-              </div>
-              <ArrowRight className={`w-5 h-5 text-[#D4A017] shrink-0 ${lang === 'ur' ? 'rotate-180' : ''}`} />
-            </button>
-          </div>
-
-          <div className="flex flex-wrap items-center justify-center gap-4 pt-1">
-            <button
-              type="button"
-              onClick={() => onNavigate('/website')}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full border border-[#D4A017]/60 bg-white text-xs font-bold hover:border-[#D4A017]"
-            >
-              <Compass className="w-4 h-4 text-[#D4A017]" />
-              {tr(lang, 'Visit Official Website', 'آفیشل ویب سائٹ دیکھیں')}
-            </button>
-            <a
-              href="https://wa.me/923125007782"
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full border border-emerald-600/40 bg-emerald-50 text-emerald-800 text-xs font-mono font-bold"
-            >
-              <PhoneCall className="w-4 h-4" />
-              WhatsApp: 03125007782
-            </a>
-          </div>
-        </main>
-      )}
 
       {/* 3. EDITORIAL SMART MOBILITY SHOWCASE (Inspired by Upload 182539 / 182554) */}
       {homeLayout === 'editorial' && (
@@ -490,7 +508,7 @@ export const WelcomePage: React.FC<WelcomePageProps> = ({ lang, onChangeLang, on
               </div>
               <div className="lg:col-span-7 relative min-h-[240px] sm:min-h-[320px]">
                 <img
-                  src={heroMobilityImg}
+                  src={sovereignHeroImg}
                   alt="PRO RIDER AI"
                   referrerPolicy="no-referrer"
                   className="w-full h-full object-cover object-center"

@@ -82,29 +82,6 @@ export function setStoredRoleUser(role: UserRole, user: unknown | null) {
   }
 }
 
-let staticHostingDetected = false;
-let backendHealthPromise: Promise<boolean> | null = null;
-
-async function verifyLiveApiBackend(baseUrl: string): Promise<boolean> {
-  if (staticHostingDetected) return false;
-  if (!backendHealthPromise) {
-    backendHealthPromise = fetch(`${baseUrl}/api/health`)
-      .then((res) => {
-        const ct = (res.headers.get('content-type') || '').toLowerCase();
-        const ok = res.ok && ct.includes('application/json');
-        if (!ok && !baseUrl) {
-          staticHostingDetected = true;
-        }
-        return ok;
-      })
-      .catch(() => {
-        if (!baseUrl) staticHostingDetected = true;
-        return false;
-      });
-  }
-  return backendHealthPromise;
-}
-
 export async function apiRequest<T = any>(
   path: string,
   options: {
@@ -125,11 +102,6 @@ export async function apiRequest<T = any>(
   const baseUrl = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_BASE_URL) || '';
   const fullUrl = path.startsWith('http') ? path : `${baseUrl}${path}`;
 
-  // Avoid noisy requests only when static hosting (Express absent, HTML fallback) was genuinely confirmed
-  if (staticHostingDetected && !baseUrl && path !== '/api/health') {
-    throw new ApiRequestError('Backend API unavailable on static hosting.', 405, true);
-  }
-
   let res: Response;
   try {
     res = await fetch(fullUrl, {
@@ -144,7 +116,6 @@ export async function apiRequest<T = any>(
   const contentType = (res.headers.get('content-type') || '').toLowerCase();
   const rawText = await res.text().catch(() => '');
 
-  // Detect static SPA fallback returning index.html on /api/* routes (e.g. static host without Express)
   const trimmed = rawText.trim();
   const isHtml =
     contentType.includes('text/html') ||
@@ -153,20 +124,16 @@ export async function apiRequest<T = any>(
     trimmed.startsWith('<html');
 
   if (isHtml) {
-    if (!baseUrl) staticHostingDetected = true;
-    throw new ApiRequestError('Backend API unavailable on static hosting (HTML received).', res.status || 404, true);
+    throw new ApiRequestError('Backend API unavailable (HTML received instead of JSON).', res.status || 502, true);
   }
 
   let data: any = {};
-  let parsedJson = false;
   if (trimmed) {
     try {
       data = JSON.parse(trimmed);
-      parsedJson = true;
     } catch {
       if (res.ok) {
-        if (!baseUrl) staticHostingDetected = true;
-        throw new ApiRequestError('Invalid JSON response from API server.', res.status, true);
+        throw new ApiRequestError('Invalid JSON response from API server.', res.status, false);
       }
     }
   }
@@ -175,20 +142,13 @@ export async function apiRequest<T = any>(
     if (res.status === 429 && data?.quotaExceeded && typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('gmp-quota-exceeded'));
     }
-    // Only consider backend static/offline if Express did NOT return a structured JSON error payload
-    const isStaticMethodBlock = res.status === 405 && !parsedJson;
-    if (isStaticMethodBlock && !baseUrl) {
-      staticHostingDetected = true;
-    }
     throw new ApiRequestError(
       data?.error || `Request failed (${res.status})`,
       res.status,
-      isStaticMethodBlock
+      false
     );
   }
 
-  // Confirmed live JSON response from backend
-  staticHostingDetected = false;
   return data as T;
 }
 
@@ -204,7 +164,7 @@ export function useRoleWebSocket(
   useEffect(() => {
     if (!token) return;
     const customBase = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_BASE_URL) || '';
-    if ((token.startsWith('pr_fb_') || staticHostingDetected) && !customBase) {
+    if (token.startsWith('pr_fb_') && !customBase) {
       return;
     }
 
@@ -213,7 +173,7 @@ export function useRoleWebSocket(
     let retryCount = 0;
 
     const connect = () => {
-      if (!active || retryCount > 4 || (staticHostingDetected && !customBase)) return;
+      if (!active || retryCount > 4) return;
       let wsHost = window.location.host;
       let proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       if (customBase) {
@@ -246,7 +206,7 @@ export function useRoleWebSocket(
         };
 
         ws.onclose = () => {
-          if (active && !(staticHostingDetected && !customBase)) {
+          if (active) {
             retryCount += 1;
             retryTimer = window.setTimeout(connect, Math.min(15000, 3000 * retryCount));
           }
@@ -256,11 +216,7 @@ export function useRoleWebSocket(
       }
     };
 
-    void verifyLiveApiBackend(customBase).then((hasBackend) => {
-      if (active && hasBackend) {
-        connect();
-      }
-    });
+    connect();
 
     return () => {
       active = false;

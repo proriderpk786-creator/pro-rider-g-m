@@ -14,6 +14,11 @@ import {
   Phone,
   Plus,
   Share2,
+  Users,
+  Fuel,
+  CarFront,
+  ArrowRight,
+  Zap,
 } from 'lucide-react';
 import { AnalogClockPicker } from '../../components/AnalogClockPicker';
 import { VehicleImage } from '../../components/BrandMark';
@@ -61,9 +66,17 @@ interface PassengerBookingFlowProps {
 
 const WEEK_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-export type BookingStep = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+export type BookingStep = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
-function getNumberedSteps(lang: Language): Array<{ step: BookingStep; title: string; short: string }> {
+function getNumberedSteps(lang: Language, mode: 'go_now' | 'schedule'): Array<{ step: BookingStep; title: string; short: string }> {
+  if (mode === 'go_now') {
+    return [
+      { step: 1, title: tr(lang, 'Select pickup', 'پِک اپ مقام منتخب کریں'), short: tr(lang, 'Pickup', 'پِک اپ') },
+      { step: 2, title: tr(lang, 'Select drop-off', 'ڈراپ آف مقام منتخب کریں'), short: tr(lang, 'Drop-off', 'ڈراپ آف') },
+      { step: 5, title: tr(lang, 'Choose fleet vehicle', 'گاڑی منتخب کریں'), short: tr(lang, 'Fleet', 'گاڑی') },
+      { step: 6, title: tr(lang, 'Fare & confirmation', 'کرایہ اور تصدیق'), short: tr(lang, 'Confirm', 'تصدیق') },
+    ];
+  }
   return [
     { step: 1, title: tr(lang, 'Select pickup', 'پِک اپ مقام منتخب کریں'), short: tr(lang, 'Pickup', 'پِک اپ') },
     { step: 2, title: tr(lang, 'Select drop-off', 'ڈراپ آف مقام منتخب کریں'), short: tr(lang, 'Drop-off', 'ڈراپ آف') },
@@ -85,12 +98,38 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
 }) => {
   const { firebaseUser, syncBookingSummary } = useFirebase();
 
-  // Clean 6-step booking flow + Step 7 confirmed receipt
-  const [currentStep, setCurrentStep] = useState<BookingStep>(1);
+  // Initialize booking mode & service type (supports direct launch from home poster buttons)
+  const [bookingMode, setBookingMode] = useState<'go_now' | 'schedule'>(() => {
+    try {
+      const saved = sessionStorage.getItem('pr_initial_mode');
+      return saved === 'go_now' ? 'go_now' : 'schedule';
+    } catch {
+      return 'schedule';
+    }
+  });
 
-  // Service Mode (default Pick & Drop, switchable smoothly without adding a blocker screen)
-  const bookingMode: 'go_now' | 'schedule' = 'schedule';
-  const [serviceType, setServiceType] = useState<ServiceType>('pick_and_drop');
+  const [serviceType, setServiceType] = useState<ServiceType>(() => {
+    try {
+      const saved = sessionStorage.getItem('pr_initial_service');
+      return saved ? (saved as ServiceType) : 'pick_and_drop';
+    } catch {
+      return 'pick_and_drop';
+    }
+  });
+
+  // 0 = Service Selector Home Screen (Instant Booking, Pick & Drop, Ride Sharing, Fuel Sharing)
+  // If user came from a specific button on welcome page, jump straight to Step 1!
+  const [currentStep, setCurrentStep] = useState<BookingStep>(() => {
+    try {
+      const saved = sessionStorage.getItem('pr_initial_service');
+      if (saved) {
+        sessionStorage.removeItem('pr_initial_service');
+        sessionStorage.removeItem('pr_initial_mode');
+        return 1;
+      }
+    } catch {}
+    return 0;
+  });
 
   // Step 1: Pickup
   const [pickup, setPickup] = useState<MapPoint | null>({
@@ -294,43 +333,87 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
   // Dynamic rate resolver per fleet vehicle
   const calculateVehiclePrice = (v: FleetCategory) => {
     const dist = route?.distanceKm || 18.4;
+
+    // 1. INSTANT BOOKING (Entire vehicle, single point-to-point trip, automatic per-km calculation)
+    if (bookingMode === 'go_now') {
+      let ratePerKm = 55; // Default Economy: Rs 55/km
+
+      if (v.slug.includes('bike')) {
+        ratePerKm = 25; // Motorbike Rs 25/km
+      } else if (v.slug.includes('rickshaw')) {
+        ratePerKm = 30; // Rickshaw Rs 30/km
+      } else if (v.slug.includes('economy')) {
+        ratePerKm = 55; // Economy Rs 55/km
+      } else if (v.slug === 'comfort') {
+        ratePerKm = 65; // Comfort Rs 65/km
+      } else if (v.slug.includes('comfort-plus')) {
+        ratePerKm = 80; // Comfort Plus Rs 80/km
+      } else if (v.slug.includes('sedan')) {
+        ratePerKm = 100; // Sedan Rs 100/km
+      } else if (v.slug.includes('suv')) {
+        ratePerKm = 120; // SUV Rs 120/km (+20)
+      } else if (v.slug.includes('premium')) {
+        ratePerKm = 140; // Premium Rs 140/km (+20)
+      } else if (v.slug.includes('luxury')) {
+        ratePerKm = 160; // Luxury Rs 160/km (+20)
+      } else if (v.slug.includes('van-7')) {
+        ratePerKm = 180; // Van 7-seater Rs 180/km
+      } else if (v.slug.includes('van-12')) {
+        ratePerKm = 200; // Van 12-seater Rs 200/km
+      } else if (v.slug.includes('van-15')) {
+        ratePerKm = 220; // Van 15-seater Rs 220/km
+      } else if (v.slug.includes('coaster')) {
+        ratePerKm = 250; // Coaster Rs 250/km
+      } else {
+        ratePerKm = (v.per_km_min_pkr + v.per_km_max_pkr) / 2 || 60;
+      }
+
+      const totalKm = Math.round(dist * 10) / 10;
+      const calculatedTotal = Math.max(ratePerKm, Math.round(totalKm * ratePerKm));
+
+      return {
+        ratePerKm,
+        totalKm,
+        totalPrice: calculatedTotal,
+      };
+    }
+
+    // 2. SCHEDULED / MONTHLY PACKAGES (Pick & Drop, Ride Sharing, Fuel Sharing)
     const dailyTrips = returnJourney ? 2 : 1;
-    const totalKm = dist * dailyTrips * selectedPackageDays;
+    const totalKm = Math.round(dist * dailyTrips * selectedPackageDays * 10) / 10;
 
     let ratePerKm = (v.per_km_min_pkr + v.per_km_max_pkr) / 2;
 
-    if (bookingMode === 'schedule') {
-      if (v.slug.includes('economy')) {
-        ratePerKm = serviceType === 'pick_and_drop' ? 25 : serviceType === 'ride_sharing' ? 20 : 18;
-      } else if (v.slug.includes('comfort-plus')) {
-        ratePerKm = 40;
-      } else if (v.slug === 'comfort') {
-        ratePerKm = 30;
-      } else if (v.slug.includes('sedan') || v.slug.includes('suv')) {
-        ratePerKm = 60;
-      } else if (v.slug.includes('premium')) {
-        ratePerKm = 75;
-      } else if (v.slug.includes('luxury')) {
-        ratePerKm = 100;
-      } else if (v.slug.includes('van-7')) {
-        ratePerKm = 22.5;
-      } else if (v.slug.includes('van-12')) {
-        ratePerKm = 21.25;
-      } else if (v.slug.includes('van-15')) {
-        ratePerKm = 20.5;
-      } else if (v.slug.includes('coaster')) {
-        ratePerKm = 17.25;
-      } else if (v.slug.includes('bike')) {
-        ratePerKm = 12;
-      } else if (v.slug.includes('rickshaw')) {
-        ratePerKm = 16;
-      }
+    if (v.slug.includes('economy')) {
+      ratePerKm = serviceType === 'pick_and_drop' ? 25 : serviceType === 'ride_sharing' ? 20 : 18;
+    } else if (v.slug.includes('comfort-plus')) {
+      ratePerKm = 40;
+    } else if (v.slug === 'comfort') {
+      ratePerKm = 30;
+    } else if (v.slug.includes('sedan') || v.slug.includes('suv')) {
+      ratePerKm = 60;
+    } else if (v.slug.includes('premium')) {
+      ratePerKm = 75;
+    } else if (v.slug.includes('luxury')) {
+      ratePerKm = 100;
+    } else if (v.slug.includes('van-7')) {
+      ratePerKm = 22.5;
+    } else if (v.slug.includes('van-12')) {
+      ratePerKm = 21.25;
+    } else if (v.slug.includes('van-15')) {
+      ratePerKm = 20.5;
+    } else if (v.slug.includes('coaster')) {
+      ratePerKm = 17.25;
+    } else if (v.slug.includes('bike')) {
+      ratePerKm = 12;
+    } else if (v.slug.includes('rickshaw')) {
+      ratePerKm = 16;
     }
 
     const calculatedTotal = Math.round(totalKm * ratePerKm);
     return {
       ratePerKm,
-      totalKm: Math.round(totalKm * 10) / 10,
+      totalKm,
       totalPrice: calculatedTotal,
     };
   };
@@ -488,18 +571,31 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
     const booking = confirmedBooking || activeBooking;
     if (!booking) return;
 
-    const summaryText = `*PRO RIDER AI — BOOKING INVOICE*
+    const isInstant = booking.booking_mode === 'go_now' || bookingMode === 'go_now';
+    const serviceName = isInstant
+      ? 'Instant Booking (Go Now · Entire Vehicle)'
+      : serviceType === 'pick_and_drop'
+      ? 'Monthly Pick & Drop'
+      : serviceType === 'ride_sharing'
+      ? 'Ride Sharing'
+      : 'Fuel Sharing';
+
+    const fareTitle = isInstant ? 'Total Trip Fare' : 'Monthly Fare';
+    const scheduleLine = isInstant
+      ? 'Timing: Immediate Dispatch (Go Now · Point-to-Point)'
+      : `Schedule: ${selectedPackageDays} days (${pickupTime} -> ${dropoffTime})\nTravel Days: ${travelDays.join(', ')}`;
+
+    const summaryText = `*PRO RIDER AI — ${isInstant ? 'INSTANT TRIP BOOKING' : 'BOOKING INVOICE'}*
 Invoice: ${booking.invoice_number}
 Booking ID: ${booking.id}
-Service: ${serviceType === 'pick_and_drop' ? 'Monthly Pick & Drop' : serviceType === 'ride_sharing' ? 'Ride Sharing' : 'Fuel Sharing'}
+Service: ${serviceName}
 Pickup: ${booking.pickup_address}
 Drop-off: ${booking.dropoff_address}
 Distance: ${booking.distance_km} km
-Schedule: ${selectedPackageDays} days (${pickupTime} -> ${dropoffTime})
-Travel Days: ${travelDays.join(', ')}
+${scheduleLine}
 Vehicle: ${selectedVehicle?.name || 'Standard Economy'}
 Seats: ${passengersCount}
-Monthly Fare: Rs. ${(booking.agreed_fare_pkr || booking.proposed_fare_pkr || offeredFare).toLocaleString()}
+${fareTitle}: Rs. ${(booking.agreed_fare_pkr || booking.proposed_fare_pkr || offeredFare).toLocaleString()}
 Status: PENDING ASSIGNMENT
 
 Official Support: 03125007782
@@ -509,7 +605,7 @@ PRO RIDER AI — Travel with Trust`;
     window.open(url, '_blank');
   };
 
-  const numberedSteps = getNumberedSteps(lang);
+  const numberedSteps = getNumberedSteps(lang, bookingMode);
   const activeStepMeta = numberedSteps.find((s) => s.step === currentStep) || numberedSteps[0];
   const isFullMapStep = !viewActiveTripTab && (currentStep === 1 || currentStep === 2);
 
@@ -521,7 +617,16 @@ PRO RIDER AI — Travel with Trust`;
           <div className="flex items-center gap-2.5 min-w-0">
             <button
               type="button"
-              onClick={() => setCurrentStep((s) => (s - 1) as BookingStep)}
+              onClick={() => {
+                if (bookingMode === 'go_now') {
+                  if (currentStep === 6) setCurrentStep(5);
+                  else if (currentStep === 5) setCurrentStep(2);
+                  else if (currentStep === 2) setCurrentStep(1);
+                  else setCurrentStep(0);
+                } else {
+                  setCurrentStep((s) => (s - 1) as BookingStep);
+                }
+              }}
               aria-label={tr(lang, 'Go to previous step', 'پچھلے مرحلے پر جائیں')}
               className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-zinc-800 text-zinc-200 shrink-0"
             >
@@ -636,11 +741,226 @@ PRO RIDER AI — Travel with Trust`;
         </div>
       )}
 
+      {/* STEP 0: SERVICE SELECTOR HOME SCREEN (Instant Booking, Pick & Drop, Ride Sharing, Fuel Sharing) */}
+      {!viewActiveTripTab && currentStep === 0 && (
+        <div className="max-w-4xl w-full mx-auto p-4 sm:p-8 space-y-7">
+          <div className="text-center space-y-3">
+            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-[#D4A017]/60 bg-gradient-to-r from-[#D4A017]/15 to-[#B8860B]/15 text-[11px] font-bold uppercase tracking-widest text-[#B8860B] shadow-xs">
+              <span className="w-2 h-2 rounded-full bg-[#D4A017] animate-pulse" />
+              {passengerName} · {tr(lang, 'Pakistan Smart Mobility Network', 'پاکستان اسمارٹ موبلٹی نیٹ ورک')}
+            </div>
+            <h1 className="font-display text-3xl sm:text-5xl font-extrabold tracking-tight text-[#0D0D10] leading-tight">
+              {tr(lang, 'Select Your Service', 'اپنی سفری سروس منتخب کریں')}
+            </h1>
+            <p className="text-sm sm:text-base text-zinc-600 max-w-xl mx-auto leading-relaxed">
+              {tr(
+                lang,
+                'Choose Instant Booking for immediate point-to-point dispatch, or Pick & Drop, Ride Sharing & Fuel Sharing for regular commute.',
+                'فوری ون ٹائم سفر کے لیے انسٹنٹ بکنگ منتخب کریں، یا روزمرہ سفر کے لیے پک اینڈ ڈراپ، رائیڈ شیئرنگ اور فیول شیئرنگ چنیں۔'
+              )}
+            </p>
+          </div>
+
+          {/* 4 Smart, Modern, Sleek Service Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
+            {/* 1. Instant Booking (Highlighted Sovereign Gold Style) */}
+            <button
+              type="button"
+              onClick={() => {
+                setBookingMode('go_now');
+                setServiceType('pick_and_drop');
+                setCurrentStep(1);
+              }}
+              className="group relative rounded-3xl border-2 border-[#D4A017] bg-gradient-to-br from-[#16161B] via-[#0D0D10] to-[#261E0A] text-white p-6 sm:p-7 text-start shadow-xl hover:shadow-2xl hover:border-[#F4C430] active:scale-[0.99] transition-all flex flex-col justify-between gap-5 min-h-[190px]"
+            >
+              <div className="flex items-center justify-between">
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#F4C430] to-[#B8860B] text-[#0D0D10] flex items-center justify-center font-bold shadow-lg group-hover:scale-105 transition-transform">
+                  <Zap className="w-6 h-6 fill-[#0D0D10]" />
+                </div>
+                <span className="px-3 py-1 rounded-full bg-[#F4C430] text-[#0D0D10] font-bold text-[10px] uppercase tracking-widest shadow-sm">
+                  {tr(lang, 'Fast Dispatch', 'فوری روانگی · ون ٹائم')}
+                </span>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <h2 className="font-display text-xl sm:text-2xl font-bold text-[#F4C430]">
+                    {tr(lang, 'Instant Booking', 'انسٹنٹ بکنگ')}
+                  </h2>
+                  <ArrowRight className={`w-5 h-5 text-[#F4C430] transition-transform ${lang === 'ur' ? 'rotate-180 group-hover:-translate-x-1' : 'group-hover:translate-x-1'}`} />
+                </div>
+                <p className="text-xs sm:text-sm text-zinc-300 leading-snug">
+                  {tr(
+                    lang,
+                    'Entire vehicle for you. Automatic distance calculation via live map.',
+                    'پوری گاڑی آپ کے لیے۔ میپ سے خودکار فاصلہ اور فوری قریبی ڈرائیور کی روانگی۔'
+                  )}
+                </p>
+                <div className="pt-2 flex flex-wrap gap-1.5 text-[11px] font-mono text-zinc-300">
+                  <span className="px-2 py-0.5 rounded-md bg-white/10 text-[#F4C430] font-bold">
+                    Economy Rs 55/km
+                  </span>
+                  <span className="px-2 py-0.5 rounded-md bg-white/10">
+                    Comfort Rs 65/km
+                  </span>
+                  <span className="px-2 py-0.5 rounded-md bg-white/10">
+                    Sedan Rs 100/km
+                  </span>
+                  <span className="px-2 py-0.5 rounded-md bg-white/10 text-emerald-300">
+                    Bike Rs 25/km · Rickshaw Rs 30/km
+                  </span>
+                </div>
+              </div>
+            </button>
+
+            {/* 2. Pick & Drop */}
+            <button
+              type="button"
+              onClick={() => {
+                setBookingMode('schedule');
+                setServiceType('pick_and_drop');
+                setCurrentStep(1);
+              }}
+              className="group relative rounded-3xl border-2 border-zinc-200 bg-white text-[#0D0D10] p-6 sm:p-7 text-start shadow-sm hover:border-[#D4A017] hover:shadow-lg active:scale-[0.99] transition-all flex flex-col justify-between gap-5 min-h-[190px]"
+            >
+              <div className="flex items-center justify-between">
+                <div className="w-12 h-12 rounded-2xl bg-zinc-100 border border-zinc-200 text-[#0D0D10] flex items-center justify-center font-bold group-hover:bg-[#D4A017] group-hover:text-[#0D0D10] transition-all shadow-sm">
+                  <MapPin className="w-6 h-6" />
+                </div>
+                <span className="px-3 py-1 rounded-full bg-zinc-100 text-zinc-800 font-bold text-[10px] uppercase tracking-widest border border-zinc-200">
+                  {tr(lang, 'Scheduled Commute', 'ماہانہ و روزانہ')}
+                </span>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <h2 className="font-display text-xl sm:text-2xl font-bold text-[#0D0D10]">
+                    {tr(lang, 'Pick & Drop', 'پک اینڈ ڈراپ')}
+                  </h2>
+                  <ArrowRight className={`w-5 h-5 text-[#D4A017] transition-transform ${lang === 'ur' ? 'rotate-180 group-hover:-translate-x-1' : 'group-hover:translate-x-1'}`} />
+                </div>
+                <p className="text-xs sm:text-sm text-zinc-600 leading-snug">
+                  {tr(
+                    lang,
+                    'Fixed schedule door-to-door office & university commute packages.',
+                    'دفاتر اور کالج/یونیورسٹی کے لیے باقاعدہ صبح اور شام فکس روٹ پیکیج۔'
+                  )}
+                </p>
+                <div className="pt-2 flex flex-wrap gap-1.5 text-[11px] font-mono text-zinc-600">
+                  <span className="px-2 py-0.5 rounded-md bg-zinc-100 font-semibold">
+                    22 / 30 {tr(lang, 'Days Package', 'دن کا پیکیج')}
+                  </span>
+                  <span className="px-2 py-0.5 rounded-md bg-zinc-100">
+                    {tr(lang, 'Door-to-door', 'گھر سے دفتر')}
+                  </span>
+                </div>
+              </div>
+            </button>
+
+            {/* 3. Ride Sharing */}
+            <button
+              type="button"
+              onClick={() => {
+                setBookingMode('schedule');
+                setServiceType('ride_sharing');
+                setCurrentStep(1);
+              }}
+              className="group relative rounded-3xl border-2 border-zinc-200 bg-white text-[#0D0D10] p-6 sm:p-7 text-start shadow-sm hover:border-[#D4A017] hover:shadow-lg active:scale-[0.99] transition-all flex flex-col justify-between gap-5 min-h-[190px]"
+            >
+              <div className="flex items-center justify-between">
+                <div className="w-12 h-12 rounded-2xl bg-zinc-100 border border-zinc-200 text-[#0D0D10] flex items-center justify-center font-bold group-hover:bg-[#D4A017] group-hover:text-[#0D0D10] transition-all shadow-sm">
+                  <Users className="w-6 h-6" />
+                </div>
+                <span className="px-3 py-1 rounded-full bg-amber-50 text-amber-900 font-bold text-[10px] uppercase tracking-widest border border-amber-200">
+                  {tr(lang, 'Carpool & Split', 'مشترکہ رائیڈ')}
+                </span>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <h2 className="font-display text-xl sm:text-2xl font-bold text-[#0D0D10]">
+                    {tr(lang, 'Ride Sharing', 'رائیڈ شیئرنگ')}
+                  </h2>
+                  <ArrowRight className={`w-5 h-5 text-[#D4A017] transition-transform ${lang === 'ur' ? 'rotate-180 group-hover:-translate-x-1' : 'group-hover:translate-x-1'}`} />
+                </div>
+                <p className="text-xs sm:text-sm text-zinc-600 leading-snug">
+                  {tr(
+                    lang,
+                    'Share the commute with verified co-passengers and split fares.',
+                    'تصدیق شدہ مسافروں کے ساتھ سفر اور کرایہ شیئر کر کے سستی سواری پائیں۔'
+                  )}
+                </p>
+                <div className="pt-2 flex flex-wrap gap-1.5 text-[11px] font-mono text-zinc-600">
+                  <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 font-semibold">
+                    {tr(lang, 'Split by Seat', 'فی سیٹ بچت')}
+                  </span>
+                  <span className="px-2 py-0.5 rounded-md bg-zinc-100">
+                    {tr(lang, 'Verified Riders', 'تصدیق شدہ مسافر')}
+                  </span>
+                </div>
+              </div>
+            </button>
+
+            {/* 4. Fuel Sharing */}
+            <button
+              type="button"
+              onClick={() => {
+                setBookingMode('schedule');
+                setServiceType('fuel_sharing');
+                setCurrentStep(1);
+              }}
+              className="group relative rounded-3xl border-2 border-zinc-200 bg-white text-[#0D0D10] p-6 sm:p-7 text-start shadow-sm hover:border-[#D4A017] hover:shadow-lg active:scale-[0.99] transition-all flex flex-col justify-between gap-5 min-h-[190px]"
+            >
+              <div className="flex items-center justify-between">
+                <div className="w-12 h-12 rounded-2xl bg-zinc-100 border border-zinc-200 text-[#0D0D10] flex items-center justify-center font-bold group-hover:bg-[#D4A017] group-hover:text-[#0D0D10] transition-all shadow-sm">
+                  <Fuel className="w-6 h-6" />
+                </div>
+                <span className="px-3 py-1 rounded-full bg-emerald-50 text-emerald-900 font-bold text-[10px] uppercase tracking-widest border border-emerald-200">
+                  {tr(lang, 'Fair Fuel Split', 'فی کلومیٹر فیول')}
+                </span>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <h2 className="font-display text-xl sm:text-2xl font-bold text-[#0D0D10]">
+                    {tr(lang, 'Fuel Sharing', 'فیول شیئرنگ')}
+                  </h2>
+                  <ArrowRight className={`w-5 h-5 text-[#D4A017] transition-transform ${lang === 'ur' ? 'rotate-180 group-hover:-translate-x-1' : 'group-hover:translate-x-1'}`} />
+                </div>
+                <p className="text-xs sm:text-sm text-zinc-600 leading-snug">
+                  {tr(
+                    lang,
+                    'Transparent per-km fuel cost splitting for intercity and long distance trips.',
+                    'انٹرسٹی اور لمبے فاصلے کے لیے پیٹرول/سی این جی لاگت کی شفاف اور عادلانہ تقسیم۔'
+                  )}
+                </p>
+                <div className="pt-2 flex flex-wrap gap-1.5 text-[11px] font-mono text-zinc-600">
+                  <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 font-semibold">
+                    {tr(lang, 'Per-KM Split', 'فی کلومیٹر ایندھن لاگت')}
+                  </span>
+                  <span className="px-2 py-0.5 rounded-md bg-zinc-100">
+                    {tr(lang, 'Intercity & Long Trips', 'انٹرسٹی و طویل سفر')}
+                  </span>
+                </div>
+              </div>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* STEP 1: CLEAN FULL-OPEN MAP PICKUP (Matches reference layout directly) */}
       {!viewActiveTripTab && currentStep === 1 && (
         <div className="flex-1 flex flex-col min-h-[calc(100dvh-6.25rem)] md:min-h-[calc(100vh-3.5rem)] bg-white">
-          {/* Clean Top Row: Small Step Circle 1 + Search Bar + Optional Active Ride */}
+          {/* Clean Top Row: Back to Services + Small Step Circle 1 + Search Bar */}
           <div className="px-3 py-2 bg-white border-b border-zinc-100 flex items-center gap-2 z-30 shrink-0">
+            <button
+              type="button"
+              onClick={() => setCurrentStep(0)}
+              aria-label={tr(lang, 'Back to Services', 'سروسز پر واپس')}
+              className="w-8 h-8 rounded-full border border-zinc-200 flex items-center justify-center text-zinc-700 hover:bg-zinc-50 shrink-0"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </button>
             <span className="w-7 h-7 rounded-full bg-[#F4C430] text-[#0D0D10] font-mono font-bold text-xs flex items-center justify-center shrink-0 tabular-nums shadow-xs">
               1
             </span>
@@ -882,7 +1202,13 @@ PRO RIDER AI — Travel with Trust`;
               <button
                 type="button"
                 disabled={!dropoff || resolvingAddress === 'dropoff' || routeLoading}
-                onClick={() => setCurrentStep(3)}
+                onClick={() => {
+                  if (bookingMode === 'go_now') {
+                    setCurrentStep(5);
+                  } else {
+                    setCurrentStep(3);
+                  }
+                }}
                 className="py-3.5 px-4 rounded-2xl bg-[#F4C430] text-[#0D0D10] font-bold text-sm hover:bg-[#E5B520] shadow-sm disabled:opacity-60 transition-colors"
               >
                 {tr(lang, 'Select', 'منتخب کریں')}
@@ -1189,8 +1515,20 @@ PRO RIDER AI — Travel with Trust`;
                     {tr(lang, 'Choose your vehicle class', 'اپنی گاڑی کی کیٹیگری منتخب کریں')}
                   </h2>
                   <p className="text-xs text-zinc-500">
-                    {route?.distanceKm || 18.4} km · {selectedPackageDays} {tr(lang, 'days', 'دن')} ·{' '}
-                    {returnJourney ? tr(lang, 'Return trip', 'دو طرفہ سفر') : tr(lang, 'One-way', 'یک طرفہ')}
+                    {bookingMode === 'go_now' ? (
+                      <span className="inline-flex items-center gap-1.5 flex-wrap">
+                        <span className="font-bold text-[#0D0D10]">{route?.distanceKm || 18.4} km</span>
+                        <span>·</span>
+                        <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold text-[11px]">
+                          {tr(lang, 'Instant Booking (Entire Vehicle · Point-to-Point)', 'انسٹنٹ بُکنگ (پوری گاڑی · یک طرفہ سفر)')}
+                        </span>
+                      </span>
+                    ) : (
+                      <>
+                        {route?.distanceKm || 18.4} km · {selectedPackageDays} {tr(lang, 'days', 'دن')} ·{' '}
+                        {returnJourney ? tr(lang, 'Return trip', 'دو طرفہ سفر') : tr(lang, 'One-way', 'یک طرفہ')}
+                      </>
+                    )}
                   </p>
                 </div>
               </div>
@@ -1229,8 +1567,10 @@ PRO RIDER AI — Travel with Trust`;
                       <p className="font-display font-bold text-base text-[#0D0D10] tabular-nums">
                         Rs {pricing.totalPrice.toLocaleString()}
                       </p>
-                      <p className="text-[10px] text-zinc-400">
-                        Rs {pricing.ratePerKm}/km
+                      <p className="text-[10px] text-zinc-500 font-mono font-semibold">
+                        {bookingMode === 'go_now'
+                          ? `Rs ${pricing.ratePerKm}/km · ${pricing.totalKm} km`
+                          : `Rs ${pricing.ratePerKm}/km`}
                       </p>
                     </div>
                   </div>
@@ -1241,7 +1581,7 @@ PRO RIDER AI — Travel with Trust`;
             <div className="grid grid-cols-2 gap-3 pt-2">
               <button
                 type="button"
-                onClick={() => setCurrentStep(4)}
+                onClick={() => setCurrentStep(bookingMode === 'go_now' ? 2 : 4)}
                 className="py-3.5 px-4 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50"
               >
                 {tr(lang, 'Back', 'واپس')}
@@ -1310,13 +1650,17 @@ PRO RIDER AI — Travel with Trust`;
                   <div className="py-2.5 flex justify-between">
                     <span className="text-zinc-500">{tr(lang, 'Timing', 'وقت')}</span>
                     <span className="font-semibold font-mono tabular-nums">
-                      {pickupTime} → {dropoffTime}
+                      {bookingMode === 'go_now'
+                        ? tr(lang, 'Immediate / Go Now (Real-time Dispatch)', 'فوری روانگی (Go Now)')
+                        : `${pickupTime} → ${dropoffTime}`}
                     </span>
                   </div>
                   <div className="py-2.5 flex justify-between">
                     <span className="text-zinc-500">{tr(lang, 'Schedule', 'شیڈول')}</span>
                     <span className="font-semibold">
-                      {startDate} · {selectedPackageDays}{tr(lang, 'd', 'دن')} ({travelDays.map((d) => trDay(lang, d)).join(', ')})
+                      {bookingMode === 'go_now'
+                        ? tr(lang, 'One-time Point-to-Point Trip (Entire Vehicle)', 'یک طرفہ پوائنٹ ٹو پوائنٹ سفر (پوری گاڑی)')
+                        : `${startDate} · ${selectedPackageDays}${tr(lang, 'd', 'دن')} (${travelDays.map((d) => trDay(lang, d)).join(', ')})`}
                     </span>
                   </div>
                   <div className="py-2.5 flex justify-between">
@@ -1329,23 +1673,59 @@ PRO RIDER AI — Travel with Trust`;
 
                 {/* Obsidian Fare Breakdown */}
                 <div className="rounded-2xl bg-[#0D0D10] text-white p-5 space-y-2.5">
-                  <p className="text-xs font-bold text-[#F4C430] uppercase tracking-wider">
-                    {tr(lang, 'Fare breakdown', 'کرایہ کی تفصیل')}
-                  </p>
-                  <div className="flex justify-between text-xs text-zinc-300 font-mono tabular-nums">
-                    <span>{tr(lang, 'Monthly distance', 'ماہانہ فاصلہ')}</span>
-                    <span>
-                      {route?.distanceKm || 18.4} km × {returnJourney ? 2 : 1} × {selectedPackageDays}{tr(lang, 'd', 'دن')} ={' '}
-                      {Math.round((route?.distanceKm || 18.4) * (returnJourney ? 2 : 1) * selectedPackageDays * 10) / 10}{' '}
-                      km
-                    </span>
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-bold text-[#F4C430] uppercase tracking-wider">
+                      {bookingMode === 'go_now'
+                        ? tr(lang, 'Instant Trip Fare Breakdown', 'انسٹنٹ سفر کرایہ کی تفصیل')
+                        : tr(lang, 'Fare breakdown', 'کرایہ کی تفصیل')}
+                    </p>
+                    {bookingMode === 'go_now' && (
+                      <span className="px-2 py-0.5 rounded-full bg-[#F4C430] text-[#0D0D10] font-bold text-[10px]">
+                        {tr(lang, 'Entire Vehicle', 'پوری گاڑی')}
+                      </span>
+                    )}
                   </div>
-                  <div className="flex justify-between text-xs text-zinc-300 font-mono tabular-nums">
-                    <span>{tr(lang, 'Rate', 'ریٹ')}</span>
-                    <span>Rs {selectedVehicle ? calculateVehiclePrice(selectedVehicle).ratePerKm : 25}/km</span>
-                  </div>
+
+                  {bookingMode === 'go_now' ? (
+                    <>
+                      <div className="flex justify-between text-xs text-zinc-300 font-mono tabular-nums">
+                        <span>{tr(lang, 'Trip distance', 'سفر کا فاصلہ')}</span>
+                        <span>{route?.distanceKm || 18.4} km</span>
+                      </div>
+                      <div className="flex justify-between text-xs text-zinc-300 font-mono tabular-nums">
+                        <span>{tr(lang, 'Vehicle rate per km', 'گاڑی ریٹ فی کلومیٹر')}</span>
+                        <span>Rs {selectedVehicle ? calculateVehiclePrice(selectedVehicle).ratePerKm : 55}/km</span>
+                      </div>
+                      <div className="flex justify-between text-xs text-zinc-300 font-mono tabular-nums">
+                        <span>{tr(lang, 'Automatic calculation', 'خودکار حساب کتاب')}</span>
+                        <span>
+                          {route?.distanceKm || 18.4} km × Rs {selectedVehicle ? calculateVehiclePrice(selectedVehicle).ratePerKm : 55} = Rs {referenceFare.toLocaleString()}
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex justify-between text-xs text-zinc-300 font-mono tabular-nums">
+                        <span>{tr(lang, 'Monthly distance', 'ماہانہ فاصلہ')}</span>
+                        <span>
+                          {route?.distanceKm || 18.4} km × {returnJourney ? 2 : 1} × {selectedPackageDays}{tr(lang, 'd', 'دن')} ={' '}
+                          {Math.round((route?.distanceKm || 18.4) * (returnJourney ? 2 : 1) * selectedPackageDays * 10) / 10}{' '}
+                          km
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-xs text-zinc-300 font-mono tabular-nums">
+                        <span>{tr(lang, 'Rate', 'ریٹ')}</span>
+                        <span>Rs {selectedVehicle ? calculateVehiclePrice(selectedVehicle).ratePerKm : 25}/km</span>
+                      </div>
+                    </>
+                  )}
+
                   <div className="border-t border-zinc-800 pt-3 flex items-baseline justify-between">
-                    <span className="text-sm font-semibold">{tr(lang, 'Reference fare', 'مقررہ کرایہ')}</span>
+                    <span className="text-sm font-semibold">
+                      {bookingMode === 'go_now'
+                        ? tr(lang, 'Total Trip Fare', 'کل سفر کا کرایہ')
+                        : tr(lang, 'Reference monthly fare', 'مقررہ ماہانہ کرایہ')}
+                    </span>
                     <span className="font-display text-2xl font-bold text-[#F4C430] tabular-nums">
                       Rs {referenceFare.toLocaleString()}
                     </span>
@@ -1367,7 +1747,7 @@ PRO RIDER AI — Travel with Trust`;
                   <div className="flex items-center justify-between pt-1">
                     <button
                       type="button"
-                      onClick={() => setOfferedFare((f) => Math.max(minOfferFare, f - 250))}
+                      onClick={() => setOfferedFare((f) => Math.max(minOfferFare, f - (bookingMode === 'go_now' ? 50 : 250)))}
                       className="w-11 h-11 rounded-full bg-white border border-zinc-300 flex items-center justify-center text-zinc-800 hover:bg-zinc-100"
                     >
                       <Minus className="w-4 h-4" />
@@ -1386,7 +1766,7 @@ PRO RIDER AI — Travel with Trust`;
                     </div>
                     <button
                       type="button"
-                      onClick={() => setOfferedFare((f) => f + 250)}
+                      onClick={() => setOfferedFare((f) => f + (bookingMode === 'go_now' ? 50 : 250))}
                       className="w-11 h-11 rounded-full bg-white border border-zinc-300 flex items-center justify-center text-zinc-800 hover:bg-zinc-100"
                     >
                       <Plus className="w-4 h-4" />

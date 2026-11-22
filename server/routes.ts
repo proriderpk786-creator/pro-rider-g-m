@@ -96,8 +96,8 @@ export function registerAppRoutes(app: Express) {
         ratePerKm: Number(getSetting('schedule_rate_per_km', '38')),
       },
       themeConfig: {
-        themeId: getSetting('app_theme', 'classic-ivory'),
-        homeLayout: getSetting('home_layout', 'classic'),
+        themeId: getSetting('app_theme', 'obsidian-gold'),
+        homeLayout: getSetting('home_layout', 'sovereign'),
         authLayout: getSetting('auth_layout', 'hero-sheet'),
         forceGlobal: getSetting('theme_force_global', '0') === '1',
         updatedAt: Number(getSetting('theme_updated_at', '0')) || 0,

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Car, Download, Globe, WifiOff } from 'lucide-react';
+import { Car, Download, Globe, Moon, Sun, WifiOff } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 import { tr } from '../i18n/translations';
 import economyImg from '../assets/images/fleet_economy_1794584047757.jpg';
@@ -42,6 +42,41 @@ export const BrandLogo: React.FC<{ dark?: boolean; compact?: boolean; lang?: Lan
         )}
       </div>
     </div>
+  );
+};
+
+export const ThemeModeToggle: React.FC<{
+  dark?: boolean;
+  lang?: Language;
+}> = ({ dark, lang = 'en' }) => {
+  const { isDark, setThemeId } = useTheme();
+  const effectiveDark = dark ?? isDark;
+
+  const toggleTheme = () => {
+    if (isDark) {
+      setThemeId('classic-ivory');
+    } else {
+      setThemeId('obsidian-gold');
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={toggleTheme}
+      title={isDark ? tr(lang, 'Switch to Light Ivory Gold mode', 'لائٹ گولڈ موڈ آن کریں') : tr(lang, 'Switch to Dark Gold mode', 'ڈارک گولڈ موڈ آن کریں')}
+      aria-label={isDark ? tr(lang, 'Switch to Light Ivory Gold mode', 'لائٹ گولڈ موڈ آن کریں') : tr(lang, 'Switch to Dark Gold mode', 'ڈارک گولڈ موڈ آن کریں')}
+      className={`pr-preserve-light inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-semibold shrink-0 transition-all ${
+        effectiveDark
+          ? 'bg-zinc-900 border-zinc-700 text-[#F4C430] hover:bg-zinc-800'
+          : 'bg-zinc-100 border-zinc-200 text-[#0D0D10] hover:bg-zinc-200'
+      }`}
+    >
+      {isDark ? <Sun className="w-3.5 h-3.5 text-[#F4C430]" /> : <Moon className="w-3.5 h-3.5 text-zinc-700" />}
+      <span className="text-[11px] font-bold">
+        {isDark ? tr(lang, 'Light', 'لائٹ') : tr(lang, 'Dark', 'ڈارک')}
+      </span>
+    </button>
   );
 };
 

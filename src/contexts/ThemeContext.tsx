@@ -184,8 +184,8 @@ export const ThemeProvider: React.FC<{
 }> = ({ config, children }) => {
   const adminDefault = useMemo(
     () => ({
-      themeId: isValidTheme(config.themeConfig?.themeId) ? config.themeConfig!.themeId : 'classic-ivory',
-      homeLayout: isValidHome(config.themeConfig?.homeLayout) ? config.themeConfig!.homeLayout : 'classic',
+      themeId: isValidTheme(config.themeConfig?.themeId) ? config.themeConfig!.themeId : 'obsidian-gold',
+      homeLayout: isValidHome(config.themeConfig?.homeLayout) ? config.themeConfig!.homeLayout : 'sovereign',
       authLayout: isValidAuth(config.themeConfig?.authLayout) ? config.themeConfig!.authLayout : 'hero-sheet',
       forceGlobal: Boolean(config.themeConfig?.forceGlobal),
       updatedAt: Number(config.themeConfig?.updatedAt || 0),
@@ -196,9 +196,9 @@ export const ThemeProvider: React.FC<{
   const [themeId, setThemeState] = useState<AppThemeId>(() => {
     try {
       const saved = localStorage.getItem(LS_THEME);
-      return isValidTheme(saved) ? saved : adminDefault.themeId;
+      return isValidTheme(saved) ? saved : 'obsidian-gold';
     } catch {
-      return adminDefault.themeId;
+      return 'obsidian-gold';
     }
   });
 

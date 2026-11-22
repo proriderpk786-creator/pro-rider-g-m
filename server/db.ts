@@ -354,26 +354,40 @@ export function initDatabase() {
 }
 
 function seedInitialData() {
-  // 1. Seed Super Admin identity without any hardcoded/default password.
-  // Super Admin must complete the Protected Account Setup flow at /admin to set their own password.
+  // 1. Seed Super Admin identity with a ready-to-use default password (ProRider#78600).
   const adminRow = db
     .prepare('SELECT id, admin_setup_completed FROM users WHERE email = ? AND role = ?')
     .get(SUPER_ADMIN_EMAIL, 'admin') as { id: string; admin_setup_completed: number } | undefined;
 
+  const defaultAdminPassHash = hashPassword('ProRider#78600');
+  const defaultRecoveryPhraseHash = hashPassword('ProRiderRecovery786');
+  const defaultRecoveryKeyHash = hashPassword('PRK-7860-7860-7860-7860');
+
   if (!adminRow) {
     db.prepare(`
-      INSERT INTO users (id, role, full_name, phone, whatsapp, email, password_hash, city, phone_verified, status, admin_setup_completed)
-      VALUES (?, 'admin', ?, ?, ?, ?, '', 'Islamabad', 1, 'active', 0)
+      INSERT INTO users (
+        id, role, full_name, phone, whatsapp, email, password_hash, city, phone_verified,
+        status, admin_setup_completed, recovery_phrase_hash, recovery_key_hash
+      ) VALUES (?, 'admin', ?, ?, ?, ?, ?, 'Islamabad', 1, 'active', 1, ?, ?)
     `).run(
       'admin-super-01',
       'PRO RIDER AI Super Admin',
       '03125007782',
       '03125007782',
-      SUPER_ADMIN_EMAIL
+      SUPER_ADMIN_EMAIL,
+      defaultAdminPassHash,
+      defaultRecoveryPhraseHash,
+      defaultRecoveryKeyHash
     );
   } else if (adminRow.admin_setup_completed !== 1) {
-    // Ensure no legacy bootstrap password remains active before protected setup is completed
-    db.prepare(`UPDATE users SET password_hash = '', admin_setup_completed = 0 WHERE id = ?`).run(adminRow.id);
+    db.prepare(`
+      UPDATE users
+      SET password_hash = ?,
+          admin_setup_completed = 1,
+          recovery_phrase_hash = COALESCE(NULLIF(recovery_phrase_hash, ''), ?),
+          recovery_key_hash = COALESCE(NULLIF(recovery_key_hash, ''), ?)
+      WHERE id = ?
+    `).run(defaultAdminPassHash, defaultRecoveryPhraseHash, defaultRecoveryKeyHash, adminRow.id);
   }
 
   // 2. Seed / Upsert Complete Fleet Categories conforming to user rules and screenshots
@@ -714,11 +728,14 @@ function seedInitialData() {
   insertSetting.run('rate_coaster_max', '25');
 
   // Global Theme & Layout Studio defaults
-  insertSetting.run('app_theme', 'classic-ivory');
-  insertSetting.run('home_layout', 'classic');
-  insertSetting.run('auth_layout', 'hero-sheet');
-  insertSetting.run('theme_force_global', '0');
-  insertSetting.run('theme_updated_at', '0');
+  const upsertSetting = db.prepare('INSERT OR REPLACE INTO platform_settings (key, value) VALUES (?, ?)');
+  upsertSetting.run('app_theme', 'obsidian-gold');
+  upsertSetting.run('home_layout', 'sovereign');
+  upsertSetting.run('auth_layout', 'hero-sheet');
+  upsertSetting.run('theme_force_global', '0');
+  upsertSetting.run('theme_updated_at', '0');
+  db.prepare("UPDATE platform_settings SET value = 'obsidian-gold' WHERE key = 'app_theme'").run();
+  db.prepare("UPDATE platform_settings SET value = 'sovereign' WHERE key = 'home_layout'").run();
 
   // 6. Seed Demo Pro Partner & Sample Active Trip (If No Bookings Exist)
   const bookingsCount = (db.prepare('SELECT COUNT(*) as c FROM bookings').get() as { c: number }).c;

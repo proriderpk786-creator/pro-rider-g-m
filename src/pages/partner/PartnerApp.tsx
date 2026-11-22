@@ -15,7 +15,7 @@ import {
   User as UserIcon,
   Wallet as WalletIcon,
 } from 'lucide-react';
-import { BrandLogo, LanguageToggle, PWAInstallButton } from '../../components/BrandMark';
+import { BrandLogo, LanguageToggle, PWAInstallButton, ThemeModeToggle } from '../../components/BrandMark';
 import { ProRiderAiCopilot } from '../../components/ProRiderAiCopilot';
 import { useFirebase } from '../../contexts/FirebaseContext';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -580,7 +580,8 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
               </span>
               <span className="tracking-wide">{tr(lang, 'AI', 'اے آئی')}</span>
             </button>
-            <div className="scale-90 sm:scale-100 origin-right shrink-0">
+            <div className="scale-90 sm:scale-100 origin-right shrink-0 flex items-center gap-1.5">
+              <ThemeModeToggle lang={lang} dark={isDark} />
               <LanguageToggle lang={lang} onChange={onChangeLang} dark={isDark} />
             </div>
             <PWAInstallButton />
