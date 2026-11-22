@@ -1,44 +1,29 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowLeft,
   Calendar,
-  CalendarClock,
-  Car,
   Check,
-  CheckCircle2,
   ChevronDown,
-  ChevronRight,
   Clock,
   Download,
   Edit2,
-  Flame,
-  Fuel,
-  Info,
   Loader2,
   MapPin,
   Minus,
-  Navigation,
   Phone,
   Plus,
-  Radio,
   Share2,
-  Sparkles,
-  Users,
-  X,
-  Zap,
 } from 'lucide-react';
 import { AnalogClockPicker } from '../../components/AnalogClockPicker';
 import { VehicleImage } from '../../components/BrandMark';
-import { LocationAutocomplete } from '../../components/LocationAutocomplete';
+import { LocationAutocomplete, reverseGeocodePakistan } from '../../components/LocationAutocomplete';
 import { ShareTripStatusModal } from '../../components/ShareTripStatusModal';
-import { StreetMap, type MapFocusTarget } from '../../components/StreetMap';
+import { StreetMap } from '../../components/StreetMap';
 import { DEFAULT_PUBLIC_CONFIG } from '../../config/defaultConfig';
 import { useFirebase } from '../../contexts/FirebaseContext';
-import { t } from '../../i18n/translations';
 import type {
   Booking,
-  DemandHotspot,
   DemandMapData,
   FleetCategory,
   Language,
@@ -48,7 +33,7 @@ import type {
   ServiceType,
 } from '../../types';
 import { apiRequest, isBackendOfflineError } from '../../utils/api';
-import { downloadBookingPdf, shareBookingPdf } from '../../utils/pdfGenerator';
+import { downloadBookingPdf } from '../../utils/pdfGenerator';
 
 const LOCAL_PASSENGER_BOOKINGS_KEY = 'pr_local_bookings_passenger';
 
@@ -75,13 +60,21 @@ interface PassengerBookingFlowProps {
 
 const WEEK_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-export type BookingStep = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+export type BookingStep = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+
+const NUMBERED_STEPS: Array<{ step: BookingStep; title: string; short: string }> = [
+  { step: 1, title: 'Select pickup', short: 'Pickup' },
+  { step: 2, title: 'Select drop-off', short: 'Drop-off' },
+  { step: 3, title: 'Pickup & drop-off time', short: 'Time' },
+  { step: 4, title: 'Date, package & days', short: 'Days' },
+  { step: 5, title: 'Choose fleet vehicle', short: 'Fleet' },
+  { step: 6, title: 'Billing & confirmation', short: 'Billing' },
+];
 
 export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
   lang,
   config,
   bookings,
-  demandData = null,
   passengerName,
   livePartnerLocations,
   onRefreshBookings,
@@ -89,33 +82,31 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
 }) => {
   const { firebaseUser, syncBookingSummary } = useFirebase();
 
-  // Wizard Step (1 to 9)
+  // Clean 6-step booking flow + Step 7 confirmed receipt
   const [currentStep, setCurrentStep] = useState<BookingStep>(1);
 
-  // Step 1: Mode & Service Type
-  const [bookingMode, setBookingMode] = useState<'go_now' | 'schedule'>('schedule');
+  // Service Mode (default Pick & Drop, switchable smoothly without adding a blocker screen)
+  const bookingMode: 'go_now' | 'schedule' = 'schedule';
   const [serviceType, setServiceType] = useState<ServiceType>('pick_and_drop');
 
-  // Step 2: Pickup
+  // Step 1: Pickup
   const [pickup, setPickup] = useState<MapPoint | null>({
-    label: 'Partal, Panjguran, Zone IV, Islamabad',
+    label: 'Faizabad Interchange, Islamabad / Rawalpindi',
     lat: 33.664963,
     lng: 73.087013,
   });
-  const [tempPickupQuery, setTempPickupQuery] = useState('');
 
-  // Step 3: Drop-off
+  // Step 2: Drop-off
   const [dropoff, setDropoff] = useState<MapPoint | null>({
     label: 'Ameer-e-Millat Road, E-11, Islamabad',
     lat: 33.7025,
     lng: 72.9785,
   });
-  const [tempDropoffQuery, setTempDropoffQuery] = useState('');
 
   // Routing State
   const [route, setRoute] = useState<RouteResult | null>({
-    distanceKm: 30.4,
-    durationMin: 31,
+    distanceKm: 18.4,
+    durationMin: 21,
     coordinates: [
       [33.664963, 73.087013],
       [33.682, 73.045],
@@ -123,14 +114,13 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
     ],
   });
   const [routeLoading, setRouteLoading] = useState(false);
-  const [routeError, setRouteError] = useState<string | null>(null);
 
-  // Step 4: Time Selection
+  // Step 3: Time Selection
   const [pickupTime, setPickupTime] = useState('9:15 AM');
   const [dropoffTime, setDropoffTime] = useState('6:00 PM');
   const [activeClockTarget, setActiveClockTarget] = useState<'pickup' | 'dropoff' | null>(null);
 
-  // Step 5: Schedule (22 days vs 26 days packages, travel days, passenger count)
+  // Step 4: Date, Package & Travel Days
   const [startDate, setStartDate] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() + 1);
@@ -141,27 +131,87 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
   const [passengersCount, setPassengersCount] = useState<number>(1);
   const [returnJourney, setReturnJourney] = useState<boolean>(true);
 
-  // Step 6: Vehicle Selection
+  // Step 5: Fleet Vehicle Selection
   const [selectedVehicleId, setSelectedVehicleId] = useState<string>('fleet-economy');
 
-  // Step 7: Fare Breakdown & Counter Offer
-  const [offeredFare, setOfferedFare] = useState<number>(33440);
-
-  // Step 8: Review & Payment
+  // Step 6: Billing & Confirmation
+  const [offeredFare, setOfferedFare] = useState<number>(20240);
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'wallet' | 'jazzcash_easypaisa'>('cash');
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  // Step 9: Confirmed Booking Details
+  // Step 7: Confirmed Receipt
   const [confirmedBooking, setConfirmedBooking] = useState<Booking | null>(null);
 
-  // Secondary State
-  const [focusTarget, setFocusTarget] = useState<MapFocusTarget | null>(null);
+  // Secondary Active Trip Drawer State
   const [shareModalBooking, setShareModalBooking] = useState<Booking | null>(null);
   const [viewActiveTripTab, setViewActiveTripTab] = useState(false);
-  const [actionBusy, setActionBusy] = useState<string | null>(null);
-  const [counterDrafts, setCounterDrafts] = useState<Record<string, string>>({});
+
+  // Real-time drag-to-pin geocode state
+  const [resolvingAddress, setResolvingAddress] = useState<'pickup' | 'dropoff' | null>(null);
+  const geocodeTimerRef = useRef<number | null>(null);
+  const userTouchedPickupRef = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      if (geocodeTimerRef.current) {
+        window.clearTimeout(geocodeTimerRef.current);
+      }
+    };
+  }, []);
+
+  // Capture live current GPS location automatically on open when browser grants permission
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        if (userTouchedPickupRef.current) return;
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        setPickup({ label: 'Finding address...', lat, lng });
+        setResolvingAddress('pickup');
+        try {
+          const resolved = await reverseGeocodePakistan(lat, lng);
+          if (!userTouchedPickupRef.current) {
+            setPickup({ label: resolved || `${lat.toFixed(5)}, ${lng.toFixed(5)}`, lat, lng });
+          }
+        } finally {
+          setResolvingAddress((curr) => (curr === 'pickup' ? null : curr));
+        }
+      },
+      () => {
+        // Ignore silently if permission not yet granted; manual GPS button remains ready
+      },
+      { enableHighAccuracy: true, timeout: 7000 }
+    );
+  }, []);
+
+  const handleLiveMapCenterChange = (target: 'pickup' | 'dropoff', lat: number, lng: number) => {
+    const fallbackCoords = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+    if (target === 'pickup') {
+      userTouchedPickupRef.current = true;
+      setPickup({ label: 'Finding address...', lat, lng });
+    } else {
+      setDropoff({ label: 'Finding address...', lat, lng });
+    }
+    setResolvingAddress(target);
+    if (geocodeTimerRef.current) {
+      window.clearTimeout(geocodeTimerRef.current);
+    }
+    geocodeTimerRef.current = window.setTimeout(async () => {
+      try {
+        const resolved = await reverseGeocodePakistan(lat, lng);
+        if (target === 'pickup') {
+          setPickup({ label: resolved || fallbackCoords, lat, lng });
+        } else {
+          setDropoff({ label: resolved || fallbackCoords, lat, lng });
+        }
+      } finally {
+        setResolvingAddress((curr) => (curr === target ? null : curr));
+      }
+    }, 300);
+  };
 
   // Active ongoing booking if any
   const activeBooking = useMemo(
@@ -172,7 +222,7 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
     [bookings]
   );
 
-  // Compute road route when pickup & dropoff change (with direct OSRM + Haversine fallback on static hosting)
+  // Compute road route whenever pickup or dropoff coordinates change
   useEffect(() => {
     if (!pickup || !dropoff) {
       return;
@@ -180,7 +230,6 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
     let cancelled = false;
     (async () => {
       setRouteLoading(true);
-      setRouteError(null);
       try {
         const res = await apiRequest<RouteResult>(
           `/api/map/route?fromLat=${pickup.lat}&fromLng=${pickup.lng}&toLat=${dropoff.lat}&toLng=${dropoff.lng}`
@@ -190,7 +239,7 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
           return;
         }
       } catch {
-        // Fallback to direct OSRM browser query on static Vercel hosting
+        // Fallback to direct OSRM browser query on static hosting
       }
 
       try {
@@ -202,7 +251,10 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
           if (!cancelled && firstRoute) {
             const coords = Array.isArray(firstRoute.geometry?.coordinates)
               ? firstRoute.geometry.coordinates.map(([lng, lat]: [number, number]) => [lat, lng] as [number, number])
-              : [[pickup.lat, pickup.lng] as [number, number], [dropoff.lat, dropoff.lng] as [number, number]];
+              : [
+                  [pickup.lat, pickup.lng] as [number, number],
+                  [dropoff.lat, dropoff.lng] as [number, number],
+                ];
             setRoute({
               distanceKm: Math.max(1, Math.round((firstRoute.distance / 1000) * 10) / 10),
               durationMin: Math.max(3, Math.round(firstRoute.duration / 60)),
@@ -212,7 +264,7 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
           }
         }
       } catch {
-        // Fallback to Haversine geodesic distance with 1.25x road factor
+        // Fallback to Haversine road estimate
       }
 
       if (!cancelled) {
@@ -228,46 +280,43 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
           ],
         });
       }
-      if (!cancelled) setRouteLoading(false);
     })().finally(() => {
       if (!cancelled) setRouteLoading(false);
     });
     return () => {
       cancelled = true;
     };
-  }, [pickup, dropoff]);
+  }, [pickup?.lat, pickup?.lng, dropoff?.lat, dropoff?.lng]);
 
-  // Dynamic cross-calculation rate resolver for each vehicle
+  // Dynamic rate resolver per fleet vehicle
   const calculateVehiclePrice = (v: FleetCategory) => {
-    const dist = route?.distanceKm || 30.4;
+    const dist = route?.distanceKm || 18.4;
     const dailyTrips = returnJourney ? 2 : 1;
     const totalKm = dist * dailyTrips * selectedPackageDays;
 
-    // Use admin-configured min/max rates or defaults matching the formula
     let ratePerKm = (v.per_km_min_pkr + v.per_km_max_pkr) / 2;
 
-    // Base discount for monthly package commitments
     if (bookingMode === 'schedule') {
       if (v.slug.includes('economy')) {
         ratePerKm = serviceType === 'pick_and_drop' ? 25 : serviceType === 'ride_sharing' ? 20 : 18;
       } else if (v.slug.includes('comfort-plus')) {
         ratePerKm = 40;
       } else if (v.slug === 'comfort') {
-        ratePerKm = 30; // +5 Rs/km over economy monthly
+        ratePerKm = 30;
       } else if (v.slug.includes('sedan') || v.slug.includes('suv')) {
-        ratePerKm = 60; // +20 Rs/km tier
+        ratePerKm = 60;
       } else if (v.slug.includes('premium')) {
         ratePerKm = 75;
       } else if (v.slug.includes('luxury')) {
-        ratePerKm = 100; // +10% luxury markup tier
+        ratePerKm = 100;
       } else if (v.slug.includes('van-7')) {
-        ratePerKm = 22.5; // in 20-30 range
+        ratePerKm = 22.5;
       } else if (v.slug.includes('van-12')) {
         ratePerKm = 21.25;
       } else if (v.slug.includes('van-15')) {
-        ratePerKm = 20.5; // in 15-25 range
+        ratePerKm = 20.5;
       } else if (v.slug.includes('coaster')) {
-        ratePerKm = 17.25; // in 12-25 range
+        ratePerKm = 17.25;
       } else if (v.slug.includes('bike')) {
         ratePerKm = 12;
       } else if (v.slug.includes('rickshaw')) {
@@ -283,7 +332,6 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
     };
   };
 
-  // Eligible vehicles from config or static DEFAULT_PUBLIC_CONFIG fallback
   const vehiclesList = useMemo<FleetCategory[]>(() => {
     const sourceFleet = config?.fleet?.length ? config.fleet : DEFAULT_PUBLIC_CONFIG.fleet;
     return sourceFleet.filter((f) => f.is_active === 1);
@@ -293,33 +341,18 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
     return vehiclesList.find((v) => v.id === selectedVehicleId) || vehiclesList[0] || null;
   }, [vehiclesList, selectedVehicleId]);
 
-  // Reference Fare calculation
   const referenceFare = useMemo(() => {
-    if (!selectedVehicle) return 33440;
-    const calc = calculateVehiclePrice(selectedVehicle);
-    return calc.totalPrice;
-  }, [selectedVehicle, route?.distanceKm, returnJourney, selectedPackageDays, serviceType, bookingMode]);
+    if (!selectedVehicle) return 20240;
+    return calculateVehiclePrice(selectedVehicle).totalPrice;
+  }, [selectedVehicle, route?.distanceKm, returnJourney, selectedPackageDays, serviceType]);
 
-  // Keep offered fare synced with reference fare by default
   useEffect(() => {
     setOfferedFare(referenceFare);
   }, [referenceFare]);
 
-  // Min allowable offer (10% below reference fare)
   const minOfferFare = Math.round(referenceFare * 0.9);
 
-  // Stepper label progression
-  const stepperLabels = [
-    { step: 2, label: 'Pickup' },
-    { step: 3, label: 'Drop-off' },
-    { step: 4, label: 'Time' },
-    { step: 5, label: 'Schedule' },
-    { step: 6, label: 'Vehicle' },
-    { step: 7, label: 'Fare' },
-    { step: 8, label: 'Confirm...' },
-  ];
-
-  // Submit Booking to Backend (or local+Firestore when static Vercel hosting is active)
+  // Confirm & Submit Booking
   const handleConfirmBooking = async () => {
     if (!pickup || !dropoff || !selectedVehicle) {
       setSubmitError('Please complete all booking steps.');
@@ -341,8 +374,8 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
           dropoffAddress: dropoff.label,
           dropoffLat: dropoff.lat,
           dropoffLng: dropoff.lng,
-          distanceKm: route?.distanceKm || 30.4,
-          durationMin: route?.durationMin || 31,
+          distanceKm: route?.distanceKm || 18.4,
+          durationMin: route?.durationMin || 21,
           vehicleCategoryId: selectedVehicle.id,
           seatsRequested: passengersCount,
           pickupDate: startDate,
@@ -358,7 +391,7 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
 
       if (res?.booking) {
         setConfirmedBooking(res.booking);
-        setCurrentStep(9);
+        setCurrentStep(7);
         if (firebaseUser?.emailVerified) {
           void syncBookingSummary({
             bookingCode: res.booking.id,
@@ -366,7 +399,7 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
             serviceType,
             pickupAddress: pickup.label,
             dropoffAddress: dropoff.label,
-            distanceKm: route?.distanceKm || 30.4,
+            distanceKm: route?.distanceKm || 18.4,
             farePkr: offeredFare,
             status: res.booking.status || 'searching',
           }).catch(() => {});
@@ -391,8 +424,8 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
           dropoff_address: dropoff.label,
           dropoff_lat: dropoff.lat,
           dropoff_lng: dropoff.lng,
-          distance_km: route?.distanceKm || 30.4,
-          duration_min: route?.durationMin || 31,
+          distance_km: route?.distanceKm || 18.4,
+          duration_min: route?.durationMin || 21,
           vehicle_category_id: selectedVehicle.id,
           vehicle_category_name: selectedVehicle.name,
           seats_requested: passengersCount,
@@ -438,7 +471,7 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
           }).catch(() => {});
         }
         setConfirmedBooking(localBooking);
-        setCurrentStep(9);
+        setCurrentStep(7);
         await onRefreshBookings();
         return;
       }
@@ -448,7 +481,6 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
     }
   };
 
-  // WhatsApp Share Generator
   const handleShareWhatsApp = () => {
     const booking = confirmedBooking || activeBooking;
     if (!booking) return;
@@ -460,7 +492,7 @@ Service: ${serviceType === 'pick_and_drop' ? 'Monthly Pick & Drop' : serviceType
 Pickup: ${booking.pickup_address}
 Drop-off: ${booking.dropoff_address}
 Distance: ${booking.distance_km} km
-Schedule: ${selectedPackageDays} days (${pickupTime} → ${dropoffTime})
+Schedule: ${selectedPackageDays} days (${pickupTime} -> ${dropoffTime})
 Travel Days: ${travelDays.join(', ')}
 Vehicle: ${selectedVehicle?.name || 'Standard Economy'}
 Seats: ${passengersCount}
@@ -474,279 +506,262 @@ PRO RIDER AI — Travel with Trust`;
     window.open(url, '_blank');
   };
 
+  const activeStepMeta = NUMBERED_STEPS.find((s) => s.step === currentStep) || NUMBERED_STEPS[0];
+  const isFullMapStep = !viewActiveTripTab && (currentStep === 1 || currentStep === 2);
+
   return (
-    <div className="max-w-2xl mx-auto space-y-4">
-      {/* Active Trip Banner if user has ongoing ride */}
-      {activeBooking && (
-        <div className="rounded-2xl bg-[#0D0D10] text-white p-4 border border-[#D4A017]/40 flex items-center justify-between shadow-md">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-[#D4A017] text-[#0D0D10] flex items-center justify-center font-bold">
-              <Car className="w-5 h-5" />
-            </div>
-            <div>
-              <p className="text-xs font-bold text-[#D4A017] uppercase tracking-wider">
-                Active Booking: {activeBooking.id}
-              </p>
-              <p className="text-xs text-zinc-300">
-                {activeBooking.status.replaceAll('_', ' ').toUpperCase()} · Rs.{' '}
-                {(activeBooking.agreed_fare_pkr || activeBooking.proposed_fare_pkr).toLocaleString()}
-              </p>
-            </div>
+    <div className={isFullMapStep ? 'flex-1 flex flex-col w-full bg-white' : 'flex-1 flex flex-col w-full'}>
+      {/* COMPACT NUMBERED STEP BAR (Shown cleanly on Steps 3-6 after map picking) */}
+      {!viewActiveTripTab && currentStep >= 3 && currentStep <= 6 && (
+        <div className="bg-[#0D0D10] text-white px-3.5 sm:px-6 h-11 flex items-center justify-between gap-2 shrink-0 border-b border-zinc-800">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <button
+              type="button"
+              onClick={() => setCurrentStep((s) => (s - 1) as BookingStep)}
+              aria-label="Go to previous step"
+              className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-zinc-800 text-zinc-200 shrink-0"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+            <span className="w-6 h-6 rounded-full bg-[#F4C430] text-[#0D0D10] font-mono font-bold text-xs flex items-center justify-center shrink-0 tabular-nums">
+              {currentStep}
+            </span>
+            <h1 className="font-display text-sm sm:text-base font-bold text-white truncate">
+              {activeStepMeta.title}
+            </h1>
           </div>
-          <button
-            type="button"
-            onClick={() => setViewActiveTripTab(!viewActiveTripTab)}
-            className="px-3 py-1.5 rounded-lg bg-zinc-800 text-xs font-semibold hover:bg-zinc-700 text-[#D4A017] transition-colors"
-          >
-            {viewActiveTripTab ? 'New Booking' : 'Track Active'}
-          </button>
+
+          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+            {NUMBERED_STEPS.map((item) => {
+              const isCurrent = currentStep === item.step;
+              const isDone = currentStep > item.step;
+              const canJump = isDone;
+              return (
+                <button
+                  key={item.step}
+                  type="button"
+                  disabled={!canJump}
+                  onClick={() => canJump && setCurrentStep(item.step)}
+                  title={`Step ${item.step}: ${item.short}`}
+                  aria-label={`Step ${item.step}: ${item.short}`}
+                  className={`w-6 h-6 rounded-full text-[11px] font-mono font-bold flex items-center justify-center transition-colors tabular-nums ${
+                    isCurrent
+                      ? 'bg-[#F4C430] text-[#0D0D10]'
+                      : isDone
+                      ? 'bg-zinc-700 text-[#F4C430] hover:bg-zinc-600 cursor-pointer'
+                      : 'bg-zinc-900 text-zinc-500 border border-zinc-800 cursor-default'
+                  }`}
+                >
+                  {isDone ? <Check className="w-3 h-3" /> : item.step}
+                </button>
+              );
+            })}
+
+            {activeBooking && (
+              <button
+                type="button"
+                onClick={() => setViewActiveTripTab(true)}
+                className="ml-1.5 px-2.5 py-1 rounded-full bg-zinc-800 border border-[#D4A017]/50 text-[#F4C430] text-[11px] font-semibold whitespace-nowrap shrink-0 hover:bg-zinc-700"
+              >
+                Active Ride
+              </button>
+            )}
+          </div>
         </div>
       )}
 
       {/* VIEW ACTIVE TRIP PANEL */}
       {viewActiveTripTab && activeBooking && (
-        <div className="rounded-3xl border border-zinc-200 bg-white p-5 space-y-4 shadow-sm animate-in fade-in">
-          <div className="flex items-center justify-between border-b pb-3">
-            <h2 className="font-display text-lg font-bold text-[#0D0D10]">Live Trip Tracking</h2>
-            <button
-              type="button"
-              onClick={() => setShareModalBooking(activeBooking)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#D4A017] text-[#0D0D10] text-xs font-bold"
-            >
-              <Share2 className="w-3.5 h-3.5" />
-              Share Status
-            </button>
-          </div>
-          <div className="grid grid-cols-2 gap-3 text-xs">
-            <div className="p-3 rounded-xl bg-zinc-50 border">
-              <span className="text-zinc-500 block">Pickup</span>
-              <span className="font-semibold">{activeBooking.pickup_address}</span>
+        <div className="max-w-3xl w-full mx-auto p-4 sm:p-6">
+          <div className="rounded-3xl border border-zinc-200 bg-white p-5 space-y-4 shadow-sm">
+            <div className="flex items-center justify-between border-b pb-3">
+              <div>
+                <h2 className="font-display text-lg font-bold text-[#0D0D10]">
+                  Active Booking · {activeBooking.id}
+                </h2>
+                <p className="text-xs text-zinc-500">
+                  {activeBooking.status.replaceAll('_', ' ')} · Rs.{' '}
+                  {(activeBooking.agreed_fare_pkr || activeBooking.proposed_fare_pkr).toLocaleString()}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShareModalBooking(activeBooking)}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#D4A017] text-[#0D0D10] text-xs font-bold"
+              >
+                <Share2 className="w-3.5 h-3.5" />
+                Share
+              </button>
             </div>
-            <div className="p-3 rounded-xl bg-zinc-50 border">
-              <span className="text-zinc-500 block">Drop-off</span>
-              <span className="font-semibold">{activeBooking.dropoff_address}</span>
-            </div>
-          </div>
-          <div className="flex items-center justify-between pt-2">
-            <button
-              type="button"
-              onClick={() => downloadBookingPdf(activeBooking, 'passenger', passengerName)}
-              className="px-4 py-2 rounded-xl bg-[#0D0D10] text-white text-xs font-semibold inline-flex items-center gap-1.5"
-            >
-              <Download className="w-3.5 h-3.5 text-[#D4A017]" />
-              Download PDF Bill
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewActiveTripTab(false)}
-              className="px-4 py-2 rounded-xl border text-xs font-semibold"
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* TOP HEADER & STEPPER BAR (matching screenshots 2, 3, 5, 7, 10, 12) */}
-      {!viewActiveTripTab && (
-        <div className="rounded-3xl bg-[#0D0D10] text-white p-5 sm:p-6 shadow-xl border border-zinc-800">
-          <div className="flex items-center justify-between mb-4">
-            <h1 className="font-display text-xl sm:text-2xl font-bold text-[#F4C430] flex items-center gap-2">
-              Book a ride
-            </h1>
-            <button
-              type="button"
-              onClick={() => {
-                if (currentStep > 1 && currentStep < 9) setCurrentStep((s) => (s - 1) as BookingStep);
-                else onGoToBookings();
-              }}
-              className="p-1.5 rounded-full hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors"
-              title="Close or Back"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-
-          {/* 7-Segment Progress Stepper */}
-          <div className="space-y-2">
-            <div className="grid grid-cols-7 gap-1.5">
-              {stepperLabels.map((item) => {
-                const isPassed = currentStep >= item.step;
-                return (
-                  <div key={item.step} className="flex flex-col gap-1">
-                    <div
-                      className={`h-1.5 rounded-full transition-all duration-300 ${
-                        isPassed ? 'bg-[#F4C430]' : 'bg-zinc-800'
-                      }`}
-                    />
-                    <span
-                      className={`text-[10px] text-center truncate ${
-                        isPassed ? 'text-[#F4C430] font-semibold' : 'text-zinc-500'
-                      }`}
-                    >
-                      {item.label}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* STEP 1: SERVICE & MODE SELECTION (matching screenshot 01_725cfdbc.jpeg) */}
-      {!viewActiveTripTab && currentStep === 1 && (
-        <div className="bg-white rounded-3xl border border-zinc-200 p-6 sm:p-8 space-y-6 shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-[#F4C430] text-[#0D0D10] flex items-center justify-center font-bold">
-              <Car className="w-6 h-6" />
-            </div>
-            <div>
-              <h2 className="font-display text-xl font-bold text-[#0D0D10]">
-                {serviceType === 'pick_and_drop'
-                  ? 'Pick & Drop Service'
-                  : serviceType === 'ride_sharing'
-                  ? 'Ride Sharing'
-                  : 'Carpooling / Fuel Sharing'}
-              </h2>
-              <p className="text-xs text-zinc-500">Share a drive on the same route</p>
-            </div>
-          </div>
-
-          {/* Speech bubble card (matching screenshot 01) */}
-          <div className="relative rounded-2xl bg-[#F8F8FA] border border-zinc-200 p-5 shadow-xs">
-            <p className="text-sm text-zinc-700 leading-relaxed font-medium">
-              Carpooling lets you share a car with people going on the same route. The fare is shared among riders.
-            </p>
-          </div>
-
-          {/* Mode Selector Chips */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {[
-              {
-                id: 'pick_and_drop',
-                title: 'Pick & Drop',
-                desc: 'Dedicated daily office / university route',
-                icon: CalendarClock,
-              },
-              {
-                id: 'ride_sharing',
-                title: 'Ride Sharing',
-                desc: 'Verified commuters heading the same way',
-                icon: Users,
-              },
-              {
-                id: 'fuel_sharing',
-                title: 'Fuel Sharing',
-                desc: 'Split fuel costs with verified car owners',
-                icon: Fuel,
-              },
-            ].map((m) => {
-              const Icon = m.icon;
-              const active = serviceType === m.id;
-              return (
-                <button
-                  key={m.id}
-                  type="button"
-                  onClick={() => setServiceType(m.id as ServiceType)}
-                  className={`p-4 rounded-2xl border text-left transition-all ${
-                    active
-                      ? 'border-[#F4C430] bg-[#FFFBEB] shadow-sm ring-2 ring-[#F4C430]/40'
-                      : 'border-zinc-200 bg-white hover:bg-zinc-50'
-                  }`}
-                >
-                  <Icon className={`w-5 h-5 mb-2 ${active ? 'text-[#B45309]' : 'text-zinc-500'}`} />
-                  <p className="font-bold text-sm text-[#0D0D10]">{m.title}</p>
-                  <p className="text-[11px] text-zinc-500 mt-1 leading-normal">{m.desc}</p>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* CTA Yellow Button */}
-          <button
-            type="button"
-            onClick={() => setCurrentStep(2)}
-            className="w-full py-4 rounded-2xl bg-[#F4C430] text-[#0D0D10] font-bold text-base hover:bg-[#E5B520] transition-colors shadow-md flex items-center justify-center gap-2"
-          >
-            <Car className="w-5 h-5" />
-            Book a ride
-          </button>
-        </div>
-      )}
-
-      {/* STEP 2: SELECT PICKUP LOCATION (matching screenshot 1_85f0b054.jpeg) */}
-      {!viewActiveTripTab && currentStep === 2 && (
-        <div className="bg-white rounded-3xl border border-zinc-200 overflow-hidden shadow-sm space-y-0">
-          <div className="p-4 sm:p-5 border-b border-zinc-100 flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => setCurrentStep(1)}
-              className="p-2 rounded-xl hover:bg-zinc-100 text-zinc-700"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </button>
-            <h2 className="font-display text-lg font-bold text-[#0D0D10]">Select pickup</h2>
-          </div>
-
-          {/* Search Box */}
-          <div className="p-4 bg-white border-b border-zinc-100">
-            <LocationAutocomplete
-              label="Pickup Location"
-              placeholder="Search area, sector, block, phase, street..."
-              value={pickup}
-              pinColor="green"
-              onSelect={(pt) => {
-                setPickup(pt);
-              }}
-            />
-          </div>
-
-          {/* Interactive Map with Center Pin */}
-          <div className="relative">
             <StreetMap
-              pickup={pickup}
-              dropoff={null}
-              route={null}
-              heightClass="h-[320px] sm:h-[380px]"
-              onMapPick={(lat, lng) => {
-                setPickup({
-                  label: `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
-                  lat,
-                  lng,
-                });
-              }}
+              pickup={{ label: activeBooking.pickup_address, lat: activeBooking.pickup_lat, lng: activeBooking.pickup_lng }}
+              dropoff={{ label: activeBooking.dropoff_address, lat: activeBooking.dropoff_lat, lng: activeBooking.dropoff_lng }}
+              livePartner={livePartnerLocations[activeBooking.id] || null}
+              showDemandLayer={false}
+              controlsLayout="compact-picker"
+              heightClass="h-[240px]"
             />
-            {/* Centered Yellow Teardrop Pin */}
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center z-20 pb-8">
-              <div className="w-9 h-9 rounded-full bg-[#F4C430] border-2 border-black flex items-center justify-center shadow-lg">
-                <div className="w-3.5 h-3.5 rounded-full bg-black" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <div className="p-3 rounded-xl bg-zinc-50 border border-zinc-200">
+                <span className="text-zinc-500 block">Pickup</span>
+                <span className="font-semibold text-[#0D0D10]">{activeBooking.pickup_address}</span>
+              </div>
+              <div className="p-3 rounded-xl bg-zinc-50 border border-zinc-200">
+                <span className="text-zinc-500 block">Drop-off</span>
+                <span className="font-semibold text-[#0D0D10]">{activeBooking.dropoff_address}</span>
+              </div>
+            </div>
+            <div className="flex items-center justify-between pt-2">
+              <button
+                type="button"
+                onClick={() => downloadBookingPdf(activeBooking, 'passenger', passengerName)}
+                className="px-4 py-2.5 rounded-xl bg-[#0D0D10] text-white text-xs font-semibold inline-flex items-center gap-1.5"
+              >
+                <Download className="w-3.5 h-3.5 text-[#D4A017]" />
+                Download PDF Bill
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewActiveTripTab(false)}
+                className="px-4 py-2.5 rounded-xl border border-zinc-300 text-xs font-semibold text-zinc-800 hover:bg-zinc-50"
+              >
+                Back to Map Booking
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* STEP 1: CLEAN FULL-OPEN MAP PICKUP (Matches reference layout directly) */}
+      {!viewActiveTripTab && currentStep === 1 && (
+        <div className="flex-1 flex flex-col min-h-[calc(100dvh-6.25rem)] md:min-h-[calc(100vh-3.5rem)] bg-white">
+          {/* Clean Top Row: Small Step Circle 1 + Search Bar + Optional Active Ride */}
+          <div className="px-3 py-2 bg-white border-b border-zinc-100 flex items-center gap-2 z-30 shrink-0">
+            <span className="w-7 h-7 rounded-full bg-[#F4C430] text-[#0D0D10] font-mono font-bold text-xs flex items-center justify-center shrink-0 tabular-nums shadow-xs">
+              1
+            </span>
+            <div className="flex-1 min-w-0">
+              <LocationAutocomplete
+                compactBar
+                placeholder="Search area, sector, block, phase, street..."
+                value={pickup}
+                pinColor="green"
+                onSelect={(pt) => {
+                  if (pt) {
+                    userTouchedPickupRef.current = true;
+                    setPickup(pt);
+                    setResolvingAddress(null);
+                  }
+                }}
+              />
+            </div>
+            {activeBooking && (
+              <button
+                type="button"
+                onClick={() => setViewActiveTripTab(true)}
+                className="px-2.5 py-1.5 rounded-xl bg-[#0D0D10] text-[#F4C430] text-[11px] font-bold whitespace-nowrap shrink-0"
+              >
+                Active
+              </button>
+            )}
+          </div>
+
+          {/* Full-Height Open Map Canvas (absolute inset-0 prevents 0px collapse!) */}
+          <div className="relative flex-1 min-h-[380px]">
+            <div className="absolute inset-0">
+              <StreetMap
+                center={pickup ? [pickup.lat, pickup.lng] : [33.664963, 73.087013]}
+                zoom={15}
+                pickup={pickup}
+                dropoff={null}
+                route={null}
+                showDemandLayer={false}
+                centerPinMode
+                hideMarkers
+                fullBleed
+                controlsLayout="compact-picker"
+                heightClass="h-full"
+                onCenterChange={(lat, lng) => handleLiveMapCenterChange('pickup', lat, lng)}
+                onLocateUser={(lat, lng) => handleLiveMapCenterChange('pickup', lat, lng)}
+              />
+            </div>
+            {/* Centered Gold Pin */}
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center z-20 pb-7">
+              <div className="flex flex-col items-center">
+                <div className="w-9 h-9 rounded-full bg-[#F4C430] border-[3px] border-[#0D0D10] flex items-center justify-center shadow-lg">
+                  <div className="w-3 h-3 rounded-full bg-[#0D0D10]" />
+                </div>
+                <div className="w-0.5 h-3 bg-[#0D0D10] rounded-full -mt-0.5" />
               </div>
             </div>
           </div>
 
-          {/* Bottom Card (matching screenshot 1) */}
-          <div className="p-5 bg-white space-y-4">
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">PICKUP LOCATION</p>
-              <p className="font-bold text-sm text-[#0D0D10] mt-0.5">{pickup?.label || 'Finding address...'}</p>
-              <p className="text-xs text-zinc-400 font-mono mt-0.5">
-                {pickup ? `${pickup.lat.toFixed(6)}, ${pickup.lng.toFixed(6)}` : '33.664963, 73.087013'}
-              </p>
+          {/* Clean Bottom Sheet matching reference Cancel / Select */}
+          <div className="px-4 py-3.5 sm:px-6 bg-white border-t border-zinc-200 space-y-3 shrink-0">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">
+                    PICKUP LOCATION
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setServiceType((prev) =>
+                        prev === 'pick_and_drop'
+                          ? 'ride_sharing'
+                          : prev === 'ride_sharing'
+                          ? 'fuel_sharing'
+                          : 'pick_and_drop'
+                      )
+                    }
+                    className="text-[11px] font-semibold text-[#B8860B] hover:text-[#0D0D10] whitespace-nowrap"
+                  >
+                    {serviceType === 'pick_and_drop'
+                      ? 'Pick & Drop ▾'
+                      : serviceType === 'ride_sharing'
+                      ? 'Ride Share ▾'
+                      : 'Fuel Share ▾'}
+                  </button>
+                </div>
+                <p className="font-bold text-sm sm:text-base text-[#0D0D10] leading-snug flex items-center gap-2 truncate mt-0.5">
+                  {resolvingAddress === 'pickup' && (
+                    <Loader2 className="w-3.5 h-3.5 text-[#D4A017] animate-spin shrink-0" />
+                  )}
+                  <span className="truncate">{pickup?.label || 'Finding address...'}</span>
+                </p>
+                <p className="text-[11px] text-zinc-400 font-mono tabular-nums mt-0.5">
+                  {pickup ? `${pickup.lat.toFixed(6)}, ${pickup.lng.toFixed(6)}` : '33.664963, 73.087013'}
+                </p>
+              </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 pt-2">
+            <div className="grid grid-cols-2 gap-3">
               <button
                 type="button"
-                onClick={() => setCurrentStep(1)}
-                className="py-3 px-4 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50"
+                onClick={() => {
+                  userTouchedPickupRef.current = false;
+                  if (navigator.geolocation) {
+                    navigator.geolocation.getCurrentPosition(
+                      (pos) => handleLiveMapCenterChange('pickup', pos.coords.latitude, pos.coords.longitude),
+                      () =>
+                        setPickup({
+                          label: 'Faizabad Interchange, Islamabad / Rawalpindi',
+                          lat: 33.664963,
+                          lng: 73.087013,
+                        })
+                    );
+                  }
+                }}
+                className="py-3.5 px-4 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50 transition-colors"
               >
-                Cancel
+                Reset GPS
               </button>
               <button
                 type="button"
-                onClick={() => setCurrentStep(3)}
-                className="py-3 px-4 rounded-2xl bg-[#F4C430] text-[#0D0D10] font-bold text-sm hover:bg-[#E5B520] shadow-sm"
+                disabled={!pickup || resolvingAddress === 'pickup'}
+                onClick={() => setCurrentStep(2)}
+                className="py-3.5 px-4 rounded-2xl bg-[#F4C430] text-[#0D0D10] font-bold text-sm hover:bg-[#E5B520] shadow-sm disabled:opacity-60 transition-colors"
               >
                 Select
               </button>
@@ -755,677 +770,730 @@ PRO RIDER AI — Travel with Trust`;
         </div>
       )}
 
-      {/* STEP 3: DROP-OFF LOCATION & ROUTE (matching screenshot 2_3bc3de51.jpeg) */}
-      {!viewActiveTripTab && currentStep === 3 && (
-        <div className="bg-white rounded-3xl border border-zinc-200 p-5 sm:p-6 space-y-5 shadow-sm">
-          {/* Pickup and Drop-off Cards with Edit Pencil */}
-          <div className="space-y-3">
-            <div className="p-4 rounded-2xl border border-zinc-200 bg-white flex items-center justify-between gap-3 shadow-xs">
-              <div className="flex items-start gap-3 min-w-0">
-                <div className="w-6 h-6 rounded-full bg-[#F4C430] flex items-center justify-center shrink-0 mt-0.5">
-                  <div className="w-2.5 h-2.5 rounded-full bg-black" />
+      {/* STEP 2: FULL-OPEN MAP DROP-OFF (Auto-converts from Step 1 Select) */}
+      {!viewActiveTripTab && currentStep === 2 && (
+        <div className="flex-1 flex flex-col min-h-[calc(100dvh-6.25rem)] md:min-h-[calc(100vh-3.5rem)] bg-white">
+          <div className="px-3 py-2 bg-white border-b border-zinc-100 z-30 space-y-1.5 shrink-0">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setCurrentStep(1)}
+                aria-label="Back to Pickup"
+                className="w-8 h-8 rounded-full border border-zinc-200 flex items-center justify-center text-zinc-700 hover:bg-zinc-50 shrink-0"
+              >
+                <ArrowLeft className="w-4 h-4" />
+              </button>
+              <span className="w-7 h-7 rounded-full bg-red-600 text-white font-mono font-bold text-xs flex items-center justify-center shrink-0 tabular-nums shadow-xs">
+                2
+              </span>
+              <div className="flex-1 min-w-0">
+                <LocationAutocomplete
+                  compactBar
+                  placeholder="Search drop-off area, sector, plaza, road..."
+                  value={dropoff}
+                  pinColor="red"
+                  onSelect={(pt) => {
+                    if (pt) {
+                      setDropoff(pt);
+                      setResolvingAddress(null);
+                    }
+                  }}
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-between text-xs px-1 text-zinc-500">
+              <button
+                type="button"
+                onClick={() => setCurrentStep(1)}
+                className="truncate max-w-[65%] text-left hover:text-[#0D0D10] transition-colors"
+              >
+                <span className="font-semibold text-[#0D0D10]">A:</span> {pickup?.label}
+              </button>
+              <span className="font-mono font-bold text-[#0D0D10] tabular-nums shrink-0">
+                {routeLoading ? 'Calculating...' : `${route?.distanceKm || 18.4} km · ~${route?.durationMin || 21} min`}
+              </span>
+            </div>
+          </div>
+
+          <div className="relative flex-1 min-h-[380px]">
+            <div className="absolute inset-0">
+              <StreetMap
+                center={dropoff ? [dropoff.lat, dropoff.lng] : [33.7025, 72.9785]}
+                zoom={14}
+                pickup={pickup}
+                dropoff={dropoff}
+                route={route}
+                showDemandLayer={false}
+                centerPinMode
+                hideMarkers={false}
+                fullBleed
+                controlsLayout="compact-picker"
+                heightClass="h-full"
+                onCenterChange={(lat, lng) => handleLiveMapCenterChange('dropoff', lat, lng)}
+                onLocateUser={(lat, lng) => handleLiveMapCenterChange('dropoff', lat, lng)}
+              />
+            </div>
+            {/* Centered Red Drop-off Pin */}
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center z-20 pb-7">
+              <div className="flex flex-col items-center">
+                <div className="w-9 h-9 rounded-full bg-red-600 border-[3px] border-white flex items-center justify-center shadow-lg text-white">
+                  <MapPin className="w-4 h-4" />
                 </div>
-                <div className="min-w-0">
-                  <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">PICKUP</p>
-                  <p className="text-sm font-bold text-[#0D0D10] truncate">{pickup?.label}</p>
+                <div className="w-0.5 h-3 bg-red-700 rounded-full -mt-0.5" />
+              </div>
+            </div>
+          </div>
+
+          <div className="px-4 py-3.5 sm:px-6 bg-white border-t border-zinc-200 space-y-3 shrink-0">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">DROP-OFF LOCATION</p>
+                <p className="font-bold text-sm sm:text-base text-[#0D0D10] leading-snug flex items-center gap-2 truncate mt-0.5">
+                  {resolvingAddress === 'dropoff' && (
+                    <Loader2 className="w-3.5 h-3.5 text-red-600 animate-spin shrink-0" />
+                  )}
+                  <span className="truncate">{dropoff?.label || 'Finding address...'}</span>
+                </p>
+                <p className="text-[11px] text-zinc-400 font-mono tabular-nums mt-0.5">
+                  {dropoff ? `${dropoff.lat.toFixed(6)}, ${dropoff.lng.toFixed(6)}` : '33.702500, 72.978500'}
+                </p>
+              </div>
+
+              <div className="text-right shrink-0 bg-[#0D0D10] text-white px-3 py-1.5 rounded-xl">
+                <span className="block text-[10px] text-zinc-400">Distance</span>
+                <span className="font-mono font-bold text-xs text-[#F4C430] tabular-nums">
+                  {routeLoading ? '...' : `${route?.distanceKm || 18.4} km`}
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setCurrentStep(1)}
+                className="py-3.5 px-4 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50"
+              >
+                Back
+              </button>
+              <button
+                type="button"
+                disabled={!dropoff || resolvingAddress === 'dropoff' || routeLoading}
+                onClick={() => setCurrentStep(3)}
+                className="py-3.5 px-4 rounded-2xl bg-[#F4C430] text-[#0D0D10] font-bold text-sm hover:bg-[#E5B520] shadow-sm disabled:opacity-60 transition-colors"
+              >
+                Select
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* STEP 3: PICKUP & DROP-OFF TIME */}
+      {!viewActiveTripTab && currentStep === 3 && (
+        <div className="max-w-3xl w-full mx-auto p-4 sm:p-8 space-y-5">
+          {/* Clean Unboxed Route Strip */}
+          <div className="rounded-2xl bg-[#0D0D10] text-white p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="min-w-0 space-y-1 text-xs">
+              <p className="truncate">
+                <span className="text-[#F4C430] font-bold">A:</span> {pickup?.label}
+              </p>
+              <p className="truncate">
+                <span className="text-red-400 font-bold">B:</span> {dropoff?.label}
+              </p>
+            </div>
+            <div className="flex items-center gap-3 shrink-0 font-mono text-xs tabular-nums">
+              <span className="text-[#F4C430] font-bold">{route?.distanceKm || 18.4} km</span>
+              <span className="text-zinc-500">·</span>
+              <span className="text-zinc-200">~{route?.durationMin || 21} min</span>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-3xl border border-zinc-200 p-5 sm:p-7 space-y-5 shadow-sm">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="w-6 h-6 rounded-full bg-[#F4C430] text-[#0D0D10] font-mono font-bold text-xs flex items-center justify-center">
+                  3
+                </span>
+                <h2 className="font-display text-xl sm:text-2xl font-bold text-[#0D0D10]">
+                  Pickup &amp; drop-off time
+                </h2>
+              </div>
+              <p className="text-xs text-zinc-500 mt-1">
+                Select morning pickup and evening return times for your daily schedule.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div
+                onClick={() => setActiveClockTarget('pickup')}
+                className="p-4 sm:p-5 rounded-2xl border-2 border-[#F4C430] bg-white cursor-pointer hover:bg-amber-50/20 transition-all"
+              >
+                <div className="flex items-center justify-between text-xs font-bold text-zinc-800 mb-2">
+                  <span className="flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-[#D4A017]" /> Pickup time
+                  </span>
+                  <ChevronDown className="w-4 h-4 text-zinc-400" />
+                </div>
+                <div className="h-11 px-4 rounded-xl bg-zinc-100 flex items-center font-display text-lg font-bold text-[#0D0D10] tabular-nums">
+                  {pickupTime}
                 </div>
               </div>
+
+              <div
+                onClick={() => setActiveClockTarget('dropoff')}
+                className="p-4 sm:p-5 rounded-2xl border-2 border-zinc-200 bg-white cursor-pointer hover:bg-zinc-50 transition-all"
+              >
+                <div className="flex items-center justify-between text-xs font-bold text-zinc-800 mb-2">
+                  <span className="flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-[#D4A017]" /> Drop-off time
+                  </span>
+                  <ChevronDown className="w-4 h-4 text-zinc-400" />
+                </div>
+                <div className="h-11 px-4 rounded-xl bg-zinc-100 flex items-center font-display text-lg font-bold text-[#0D0D10] tabular-nums">
+                  {dropoffTime}
+                </div>
+              </div>
+            </div>
+
+            {activeClockTarget && (
+              <AnalogClockPicker
+                value={activeClockTarget === 'pickup' ? pickupTime : dropoffTime}
+                onChange={(newTime) => {
+                  if (activeClockTarget === 'pickup') setPickupTime(newTime);
+                  else setDropoffTime(newTime);
+                }}
+                onClose={() => setActiveClockTarget(null)}
+              />
+            )}
+
+            <div className="grid grid-cols-2 gap-3 pt-2">
               <button
                 type="button"
                 onClick={() => setCurrentStep(2)}
-                className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-800 hover:bg-zinc-100"
+                className="py-3.5 px-4 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50"
               >
-                <Edit2 className="w-4 h-4" />
+                Back
+              </button>
+              <button
+                type="button"
+                onClick={() => setCurrentStep(4)}
+                className="py-3.5 px-4 rounded-2xl bg-[#F4C430] text-[#0D0D10] font-bold text-sm hover:bg-[#E5B520] shadow-sm"
+              >
+                Confirm Time &amp; Next
               </button>
             </div>
+          </div>
+        </div>
+      )}
 
-            <div className="p-4 rounded-2xl border border-zinc-200 bg-white flex items-center justify-between gap-3 shadow-xs">
-              <div className="flex items-start gap-3 min-w-0 flex-1">
-                <div className="w-6 h-6 rounded-full bg-red-600 flex items-center justify-center text-white shrink-0 mt-0.5">
-                  <MapPin className="w-3.5 h-3.5" />
+      {/* STEP 4: DATE, PACKAGE & TRAVEL DAYS */}
+      {!viewActiveTripTab && currentStep === 4 && (
+        <div className="max-w-4xl w-full mx-auto p-4 sm:p-8">
+          <div className="bg-white rounded-3xl border border-zinc-200 p-5 sm:p-7 space-y-6 shadow-sm">
+            <div className="flex items-center gap-2">
+              <span className="w-6 h-6 rounded-full bg-[#F4C430] text-[#0D0D10] font-mono font-bold text-xs flex items-center justify-center">
+                4
+              </span>
+              <h2 className="font-display text-xl sm:text-2xl font-bold text-[#0D0D10]">
+                Start date, package &amp; days
+              </h2>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              {/* Left: Start date + Package */}
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-zinc-800 mb-2">Start date</label>
+                  <div className="relative">
+                    <input
+                      type="date"
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
+                      className="w-full px-4 py-3 rounded-2xl border border-zinc-200 font-semibold text-sm focus:outline-none focus:ring-2 focus:ring-[#F4C430]"
+                    />
+                    <Calendar className="w-5 h-5 text-zinc-400 absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  </div>
                 </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">DROP-OFF</p>
-                  <LocationAutocomplete
-                    label="Drop-off Destination"
-                    placeholder="Search drop-off destination..."
-                    value={dropoff}
-                    pinColor="red"
-                    onSelect={(pt) => setDropoff(pt)}
+
+                <div>
+                  <label className="block text-xs font-bold text-zinc-800 mb-2">Monthly package</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedPackageDays(22);
+                        setTravelDays(['Mon', 'Tue', 'Wed', 'Thu', 'Fri']);
+                      }}
+                      className={`p-3.5 rounded-2xl border text-center transition-all ${
+                        selectedPackageDays === 22
+                          ? 'border-[#F4C430] bg-[#F4C430] text-[#0D0D10] font-bold shadow-sm'
+                          : 'border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700'
+                      }`}
+                    >
+                      <span className="block text-lg font-display font-bold tabular-nums">22 days</span>
+                      <span className="text-xs opacity-80">Mon – Fri</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedPackageDays(26);
+                        setTravelDays(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
+                      }}
+                      className={`p-3.5 rounded-2xl border text-center transition-all ${
+                        selectedPackageDays === 26
+                          ? 'border-[#F4C430] bg-[#F4C430] text-[#0D0D10] font-bold shadow-sm'
+                          : 'border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700'
+                      }`}
+                    >
+                      <span className="block text-lg font-display font-bold tabular-nums">26 days</span>
+                      <span className="text-xs opacity-80">Mon – Sat</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Right: Travel Days + Return + Passengers */}
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-zinc-800 mb-2">Travel days</label>
+                  <div className="flex flex-wrap gap-2">
+                    {WEEK_DAYS.map((day) => {
+                      const active = travelDays.includes(day);
+                      return (
+                        <button
+                          key={day}
+                          type="button"
+                          onClick={() => {
+                            if (active) {
+                              if (travelDays.length > 1) setTravelDays(travelDays.filter((d) => d !== day));
+                            } else {
+                              setTravelDays([...travelDays, day]);
+                            }
+                          }}
+                          className={`px-3 py-2 rounded-xl text-xs font-bold transition-all ${
+                            active ? 'bg-[#F4C430] text-[#0D0D10]' : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200'
+                          }`}
+                        >
+                          {day}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-4 pt-1">
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-800">Trip direction</label>
+                    <div className="flex items-center gap-1 p-1 bg-zinc-100 rounded-xl mt-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setReturnJourney(true)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold ${
+                          returnJourney ? 'bg-[#0D0D10] text-[#F4C430]' : 'text-zinc-600'
+                        }`}
+                      >
+                        Return (2-Way)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setReturnJourney(false)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold ${
+                          !returnJourney ? 'bg-[#0D0D10] text-[#F4C430]' : 'text-zinc-600'
+                        }`}
+                      >
+                        One-Way
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-800">Passengers</label>
+                    <div className="flex items-center gap-3 mt-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setPassengersCount((c) => Math.max(1, c - 1))}
+                        className="w-10 h-10 rounded-full border border-zinc-300 flex items-center justify-center text-zinc-700 hover:bg-zinc-100"
+                      >
+                        <Minus className="w-4 h-4" />
+                      </button>
+                      <span className="font-display text-xl font-bold text-[#0D0D10] w-6 text-center tabular-nums">
+                        {passengersCount}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setPassengersCount((c) => Math.min(28, c + 1))}
+                        className="w-10 h-10 rounded-full border border-zinc-300 flex items-center justify-center text-zinc-700 hover:bg-zinc-100"
+                      >
+                        <Plus className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setCurrentStep(3)}
+                className="py-3.5 px-4 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50"
+              >
+                Back
+              </button>
+              <button
+                type="button"
+                onClick={() => setCurrentStep(5)}
+                className="py-3.5 px-4 rounded-2xl bg-[#F4C430] text-[#0D0D10] font-bold text-sm hover:bg-[#E5B520] shadow-sm"
+              >
+                Choose Fleet Vehicle
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* STEP 5: CHOOSE FLEET VEHICLE */}
+      {!viewActiveTripTab && currentStep === 5 && (
+        <div className="max-w-5xl w-full mx-auto p-4 sm:p-8">
+          <div className="bg-white rounded-3xl border border-zinc-200 p-5 sm:p-7 space-y-5 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="w-6 h-6 rounded-full bg-[#F4C430] text-[#0D0D10] font-mono font-bold text-xs flex items-center justify-center">
+                  5
+                </span>
+                <div>
+                  <h2 className="font-display text-xl sm:text-2xl font-bold text-[#0D0D10]">
+                    Choose your vehicle class
+                  </h2>
+                  <p className="text-xs text-zinc-500">
+                    {route?.distanceKm || 18.4} km · {selectedPackageDays} days ·{' '}
+                    {returnJourney ? 'Return trip' : 'One-way'}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[540px] overflow-y-auto pr-1">
+              {vehiclesList.map((vehicle) => {
+                const active = selectedVehicleId === vehicle.id;
+                const pricing = calculateVehiclePrice(vehicle);
+
+                return (
+                  <div
+                    key={vehicle.id}
+                    onClick={() => setSelectedVehicleId(vehicle.id)}
+                    className={`p-4 rounded-2xl border-2 transition-all cursor-pointer flex items-center justify-between gap-3 ${
+                      active
+                        ? 'border-[#F4C430] bg-[#FFFBEB] shadow-sm'
+                        : 'border-zinc-200 bg-white hover:border-zinc-300'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <VehicleImage
+                        src={vehicle.image_url}
+                        alt={vehicle.name}
+                        className="w-20 h-14 rounded-xl object-cover bg-zinc-100 shrink-0 border"
+                      />
+                      <div className="min-w-0">
+                        <p className="font-display font-bold text-sm text-[#0D0D10] truncate">{vehicle.name}</p>
+                        <p className="text-xs text-zinc-500 mt-0.5 truncate">
+                          {vehicle.tagline || `${vehicle.seating_capacity} seats`}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="text-right shrink-0">
+                      <p className="font-display font-bold text-base text-[#0D0D10] tabular-nums">
+                        Rs {pricing.totalPrice.toLocaleString()}
+                      </p>
+                      <p className="text-[10px] text-zinc-400">
+                        Rs {pricing.ratePerKm}/km
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setCurrentStep(4)}
+                className="py-3.5 px-4 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50"
+              >
+                Back
+              </button>
+              <button
+                type="button"
+                onClick={() => setCurrentStep(6)}
+                className="py-3.5 px-4 rounded-2xl bg-[#F4C430] text-[#0D0D10] font-bold text-sm hover:bg-[#E5B520] shadow-sm"
+              >
+                Continue to Billing
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* STEP 6: BILLING, OFFER FARE & FINAL CONFIRMATION */}
+      {!viewActiveTripTab && currentStep === 6 && (
+        <div className="max-w-5xl w-full mx-auto p-4 sm:p-8">
+          <div className="bg-white rounded-3xl border border-zinc-200 p-5 sm:p-7 space-y-6 shadow-sm">
+            <div className="flex items-center gap-2">
+              <span className="w-6 h-6 rounded-full bg-[#F4C430] text-[#0D0D10] font-mono font-bold text-xs flex items-center justify-center">
+                6
+              </span>
+              <h2 className="font-display text-xl sm:text-2xl font-bold text-[#0D0D10]">
+                Billing &amp; Final Confirmation
+              </h2>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+              {/* Left Column: Summary + Fare Breakdown */}
+              <div className="space-y-4">
+                <div className="divide-y divide-zinc-100 text-xs text-zinc-700 border border-zinc-200 rounded-2xl px-4">
+                  <div className="py-2.5 flex justify-between items-center gap-2">
+                    <span className="text-zinc-500">Service</span>
+                    <span className="font-semibold">
+                      {serviceType === 'pick_and_drop'
+                        ? 'Monthly Pick & Drop'
+                        : serviceType === 'ride_sharing'
+                        ? 'Ride Sharing'
+                        : 'Fuel Sharing'}
+                    </span>
+                  </div>
+                  <div className="py-2.5 flex justify-between items-center gap-3">
+                    <span className="text-zinc-500 shrink-0">Pickup</span>
+                    <button
+                      type="button"
+                      onClick={() => setCurrentStep(1)}
+                      className="font-semibold text-right truncate max-w-[230px] inline-flex items-center gap-1 hover:text-[#B8860B]"
+                    >
+                      <span className="truncate">{pickup?.label}</span>
+                      <Edit2 className="w-3 h-3 shrink-0 text-zinc-400" />
+                    </button>
+                  </div>
+                  <div className="py-2.5 flex justify-between items-center gap-3">
+                    <span className="text-zinc-500 shrink-0">Drop-off</span>
+                    <button
+                      type="button"
+                      onClick={() => setCurrentStep(2)}
+                      className="font-semibold text-right truncate max-w-[230px] inline-flex items-center gap-1 hover:text-[#B8860B]"
+                    >
+                      <span className="truncate">{dropoff?.label}</span>
+                      <Edit2 className="w-3 h-3 shrink-0 text-zinc-400" />
+                    </button>
+                  </div>
+                  <div className="py-2.5 flex justify-between">
+                    <span className="text-zinc-500">Route</span>
+                    <span className="font-semibold font-mono tabular-nums">
+                      {route?.distanceKm || 18.4} km · ~{route?.durationMin || 21} min
+                    </span>
+                  </div>
+                  <div className="py-2.5 flex justify-between">
+                    <span className="text-zinc-500">Timing</span>
+                    <span className="font-semibold font-mono tabular-nums">
+                      {pickupTime} → {dropoffTime}
+                    </span>
+                  </div>
+                  <div className="py-2.5 flex justify-between">
+                    <span className="text-zinc-500">Schedule</span>
+                    <span className="font-semibold">
+                      {startDate} · {selectedPackageDays}d ({travelDays.join(', ')})
+                    </span>
+                  </div>
+                  <div className="py-2.5 flex justify-between">
+                    <span className="text-zinc-500">Fleet</span>
+                    <span className="font-semibold">
+                      {selectedVehicle?.name || 'Economy'} ({passengersCount} pax)
+                    </span>
+                  </div>
+                </div>
+
+                {/* Obsidian Fare Breakdown */}
+                <div className="rounded-2xl bg-[#0D0D10] text-white p-5 space-y-2.5">
+                  <p className="text-xs font-bold text-[#F4C430] uppercase tracking-wider">Fare breakdown</p>
+                  <div className="flex justify-between text-xs text-zinc-300 font-mono tabular-nums">
+                    <span>Monthly distance</span>
+                    <span>
+                      {route?.distanceKm || 18.4} km × {returnJourney ? 2 : 1} × {selectedPackageDays}d ={' '}
+                      {Math.round((route?.distanceKm || 18.4) * (returnJourney ? 2 : 1) * selectedPackageDays * 10) / 10}{' '}
+                      km
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-xs text-zinc-300 font-mono tabular-nums">
+                    <span>Rate</span>
+                    <span>Rs {selectedVehicle ? calculateVehiclePrice(selectedVehicle).ratePerKm : 25}/km</span>
+                  </div>
+                  <div className="border-t border-zinc-800 pt-3 flex items-baseline justify-between">
+                    <span className="text-sm font-semibold">Reference fare</span>
+                    <span className="font-display text-2xl font-bold text-[#F4C430] tabular-nums">
+                      Rs {referenceFare.toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Column: Offer Fare + Payment Method + Notes */}
+              <div className="space-y-4">
+                <div className="p-4 rounded-2xl border border-zinc-200 bg-zinc-50/60 space-y-3">
+                  <div>
+                    <p className="font-bold text-sm text-[#0D0D10]">Offer your fare · کرایہ پیشکش</p>
+                    <p className="text-xs text-zinc-500">Up to 10% below reference fare.</p>
+                  </div>
+                  <div className="flex items-center justify-between pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setOfferedFare((f) => Math.max(minOfferFare, f - 250))}
+                      className="w-11 h-11 rounded-full bg-white border border-zinc-300 flex items-center justify-center text-zinc-800 hover:bg-zinc-100"
+                    >
+                      <Minus className="w-4 h-4" />
+                    </button>
+                    <div className="text-center">
+                      <span className="font-display text-2xl font-bold text-[#0D0D10] tabular-nums">
+                        Rs {offeredFare.toLocaleString()}
+                      </span>
+                      <span className="block text-[11px] text-zinc-500">
+                        {offeredFare === referenceFare
+                          ? 'Standard rate'
+                          : offeredFare < referenceFare
+                          ? `-Rs ${(referenceFare - offeredFare).toLocaleString()} discount`
+                          : `+Rs ${(offeredFare - referenceFare).toLocaleString()} bonus`}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setOfferedFare((f) => f + 250)}
+                      className="w-11 h-11 rounded-full bg-white border border-zinc-300 flex items-center justify-center text-zinc-800 hover:bg-zinc-100"
+                    >
+                      <Plus className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold text-zinc-800">Payment Method</label>
+                  {[
+                    { id: 'cash', label: 'Cash on Pickup / Monthly' },
+                    { id: 'wallet', label: 'PRO RIDER Digital Wallet' },
+                    { id: 'jazzcash_easypaisa', label: 'JazzCash / EasyPaisa / Bank' },
+                  ].map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => setPaymentMethod(p.id as any)}
+                      className={`w-full text-left px-4 py-3 rounded-xl border text-xs font-bold transition-colors ${
+                        paymentMethod === p.id
+                          ? 'border-[#F4C430] bg-[#FFFBEB] text-[#0D0D10]'
+                          : 'border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50'
+                      }`}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-zinc-800 mb-1">
+                    Landmark or Driver Instructions (Optional)
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    placeholder="e.g. Gate 2 near main road..."
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-zinc-200 text-xs focus:outline-none focus:ring-2 focus:ring-[#F4C430]"
                   />
                 </div>
               </div>
             </div>
-          </div>
 
-          {/* Map Polyline Route */}
-          <div className="rounded-2xl overflow-hidden border border-zinc-200">
-            <StreetMap
-              pickup={pickup}
-              dropoff={dropoff}
-              route={route}
-              heightClass="h-[240px] sm:h-[280px]"
-            />
-          </div>
+            {submitError && (
+              <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>{submitError}</span>
+              </div>
+            )}
 
-          {/* Stats: Distance & Drive Time (matching screenshot 2) */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="p-4 rounded-2xl bg-[#0D0D10] text-white">
-              <span className="text-[11px] text-zinc-400 block font-medium">Distance</span>
-              <span className="font-display text-2xl font-bold text-[#F4C430] mt-0.5 block">
-                {route?.distanceKm ? `${route.distanceKm} km` : '30.4 km'}
-              </span>
+            <div className="grid grid-cols-2 gap-3 pt-1">
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => setCurrentStep(5)}
+                className="py-3.5 px-4 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50"
+              >
+                Back
+              </button>
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={handleConfirmBooking}
+                className="py-3.5 px-4 rounded-2xl bg-[#F4C430] text-[#0D0D10] font-bold text-sm hover:bg-[#E5B520] shadow-md flex items-center justify-center gap-2"
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Confirming...
+                  </>
+                ) : (
+                  'Confirm Booking'
+                )}
+              </button>
             </div>
-            <div className="p-4 rounded-2xl bg-[#0D0D10] text-white">
-              <span className="text-[11px] text-zinc-400 block font-medium">Drive time</span>
-              <span className="font-display text-2xl font-bold text-[#F4C430] mt-0.5 block">
-                {route?.durationMin ? `~${route.durationMin} min` : '~31 min'}
-              </span>
-            </div>
-          </div>
-
-          {/* Bottom Nav Buttons */}
-          <div className="grid grid-cols-2 gap-3 pt-2">
-            <button
-              type="button"
-              onClick={() => setCurrentStep(2)}
-              className="py-3 px-4 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50"
-            >
-              Back
-            </button>
-            <button
-              type="button"
-              onClick={() => setCurrentStep(4)}
-              className="py-3 px-4 rounded-2xl bg-[#0D0D10] text-white font-bold text-sm hover:bg-zinc-800 shadow-sm"
-            >
-              Continue
-            </button>
           </div>
         </div>
       )}
 
-      {/* STEP 4: PICKUP & DROP-OFF TIME (matching screenshots 3 & 4) */}
-      {!viewActiveTripTab && currentStep === 4 && (
-        <div className="bg-white rounded-3xl border border-zinc-200 p-6 sm:p-8 space-y-6 shadow-sm">
-          <div>
-            <h2 className="font-display text-2xl font-bold text-[#0D0D10]">Pickup &amp; drop-off time</h2>
-            <p className="text-xs text-zinc-500 mt-1">Set daily morning pickup and evening return times.</p>
-          </div>
-
-          {/* Inputs for Pickup and Drop-off Time */}
-          <div className="space-y-4">
-            <div
-              onClick={() => setActiveClockTarget('pickup')}
-              className="p-5 rounded-3xl border-2 border-[#F4C430] bg-white cursor-pointer hover:bg-amber-50/20 transition-all shadow-xs"
-            >
-              <div className="flex items-center justify-between text-xs font-bold text-zinc-800 mb-2">
-                <span className="flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-[#D4A017]" /> Pickup time
-                </span>
-                <ChevronDown className="w-4 h-4 text-zinc-400" />
-              </div>
-              <div className="h-10 px-4 rounded-xl bg-zinc-100 flex items-center font-display text-lg font-bold text-[#0D0D10]">
-                {pickupTime}
-              </div>
-            </div>
-
-            <div
-              onClick={() => setActiveClockTarget('dropoff')}
-              className="p-5 rounded-3xl border-2 border-zinc-200 bg-white cursor-pointer hover:bg-zinc-50 transition-all shadow-xs"
-            >
-              <div className="flex items-center justify-between text-xs font-bold text-zinc-800 mb-2">
-                <span className="flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-[#D4A017]" /> Drop-off time
-                </span>
-                <ChevronDown className="w-4 h-4 text-zinc-400" />
-              </div>
-              <div className="h-10 px-4 rounded-xl bg-zinc-100 flex items-center font-display text-lg font-bold text-[#0D0D10]">
-                {dropoffTime}
-              </div>
-            </div>
-          </div>
-
-          <p className="text-xs text-zinc-500">
-            This route takes about {route?.durationMin || 22} min by road.
-          </p>
-
-          {/* Analog Clock Picker Modal (matching screenshot 4) */}
-          {activeClockTarget && (
-            <AnalogClockPicker
-              value={activeClockTarget === 'pickup' ? pickupTime : dropoffTime}
-              onChange={(newTime) => {
-                if (activeClockTarget === 'pickup') setPickupTime(newTime);
-                else setDropoffTime(newTime);
-              }}
-              onClose={() => setActiveClockTarget(null)}
-            />
-          )}
-
-          {/* Bottom Nav Buttons */}
-          <div className="grid grid-cols-2 gap-3 pt-4">
-            <button
-              type="button"
-              onClick={() => setCurrentStep(3)}
-              className="py-3.5 px-4 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50"
-            >
-              Back
-            </button>
-            <button
-              type="button"
-              onClick={() => setCurrentStep(5)}
-              className="py-3.5 px-4 rounded-2xl bg-zinc-700 text-white font-bold text-sm hover:bg-zinc-800 shadow-sm"
-            >
-              Continue
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* STEP 5: SCHEDULE, PACKAGES & PASSENGERS (matching screenshots 5 & 6) */}
-      {!viewActiveTripTab && currentStep === 5 && (
-        <div className="bg-white rounded-3xl border border-zinc-200 p-6 sm:p-8 space-y-6 shadow-sm">
-          {/* Start Date */}
-          <div>
-            <label className="block text-xs font-bold text-zinc-800 mb-2">Start date</label>
-            <div className="relative">
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="w-full px-4 py-3 rounded-2xl border border-zinc-200 font-semibold text-sm focus:outline-none focus:ring-2 focus:ring-[#F4C430]"
-              />
-              <Calendar className="w-5 h-5 text-zinc-400 absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none" />
-            </div>
-          </div>
-
-          {/* Package Toggle Chips (22 days vs 26 days) */}
-          <div>
-            <label className="block text-xs font-bold text-zinc-800 mb-2">Package</label>
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedPackageDays(22);
-                  setTravelDays(['Mon', 'Tue', 'Wed', 'Thu', 'Fri']);
-                }}
-                className={`p-4 rounded-2xl border text-center transition-all ${
-                  selectedPackageDays === 22
-                    ? 'border-[#F4C430] bg-[#F4C430] text-[#0D0D10] font-bold shadow-sm'
-                    : 'border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700'
-                }`}
-              >
-                <span className="block text-lg font-display font-bold">22 days</span>
-                <span className="text-xs opacity-80">Mon – Fri</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedPackageDays(26);
-                  setTravelDays(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
-                }}
-                className={`p-4 rounded-2xl border text-center transition-all ${
-                  selectedPackageDays === 26
-                    ? 'border-[#F4C430] bg-[#F4C430] text-[#0D0D10] font-bold shadow-sm'
-                    : 'border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700'
-                }`}
-              >
-                <span className="block text-lg font-display font-bold">26 days</span>
-                <span className="text-xs opacity-80">Mon – Sat</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Travel Days Pills */}
-          <div>
-            <label className="block text-xs font-bold text-zinc-800 mb-2">Travel days</label>
-            <div className="flex flex-wrap gap-2">
-              {WEEK_DAYS.map((day) => {
-                const active = travelDays.includes(day);
-                return (
-                  <button
-                    key={day}
-                    type="button"
-                    onClick={() => {
-                      if (active) {
-                        if (travelDays.length > 1) setTravelDays(travelDays.filter((d) => d !== day));
-                      } else {
-                        setTravelDays([...travelDays, day]);
-                      }
-                    }}
-                    className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
-                      active
-                        ? 'bg-[#F4C430] text-[#0D0D10] shadow-xs'
-                        : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200'
-                    }`}
-                  >
-                    {day}
-                  </button>
-                );
-              })}
-            </div>
-            <p className="text-xs text-zinc-500 mt-2 font-medium">
-              {travelDays.join(', ')} · {pickupTime} → {dropoffTime} · about {selectedPackageDays} trips a month
-            </p>
-          </div>
-
-          {/* Passengers Counter */}
-          <div>
-            <label className="block text-xs font-bold text-zinc-800 mb-2">Passengers</label>
-            <div className="flex items-center gap-4">
-              <button
-                type="button"
-                onClick={() => setPassengersCount((c) => Math.max(1, c - 1))}
-                className="w-10 h-10 rounded-full border border-zinc-300 flex items-center justify-center text-zinc-700 hover:bg-zinc-100 font-bold"
-              >
-                <Minus className="w-4 h-4" />
-              </button>
-              <span className="font-display text-2xl font-bold text-[#0D0D10] w-8 text-center">
-                {passengersCount}
-              </span>
-              <button
-                type="button"
-                onClick={() => setPassengersCount((c) => Math.min(28, c + 1))}
-                className="w-10 h-10 rounded-full border border-zinc-300 flex items-center justify-center text-zinc-700 hover:bg-zinc-100 font-bold"
-              >
-                <Plus className="w-4 h-4" />
-              </button>
-            </div>
-            <p className="text-xs text-zinc-500 mt-2 leading-relaxed">
-              Cars are booked whole. In 7+ seat vans and coasters each passenger pays a lower per-passenger fare.
-            </p>
-          </div>
-
-          {/* Bottom Nav Buttons */}
-          <div className="grid grid-cols-2 gap-3 pt-4">
-            <button
-              type="button"
-              onClick={() => setCurrentStep(4)}
-              className="py-3.5 px-4 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50"
-            >
-              Back
-            </button>
-            <button
-              type="button"
-              onClick={() => setCurrentStep(6)}
-              className="py-3.5 px-4 rounded-2xl bg-zinc-700 text-white font-bold text-sm hover:bg-zinc-800 shadow-sm"
-            >
-              Continue
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* STEP 6: CHOOSE VEHICLE CLASS (matching screenshots 7, 8 & 9) */}
-      {!viewActiveTripTab && currentStep === 6 && (
-        <div className="bg-white rounded-3xl border border-zinc-200 p-6 sm:p-8 space-y-5 shadow-sm">
-          <div>
-            <h2 className="font-display text-2xl font-bold text-[#0D0D10]">Choose your vehicle class</h2>
-            <p className="text-xs text-zinc-500 mt-1 leading-relaxed">
-              Monthly package for {selectedPackageDays} travel days, return trip. 7+ seaters are priced per passenger.
-            </p>
-          </div>
-
-          {/* Vehicle Cards List */}
-          <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
-            {vehiclesList.map((vehicle) => {
-              const active = selectedVehicleId === vehicle.id;
-              const pricing = calculateVehiclePrice(vehicle);
-
-              return (
-                <div
-                  key={vehicle.id}
-                  onClick={() => setSelectedVehicleId(vehicle.id)}
-                  className={`p-4 rounded-2xl border-2 transition-all cursor-pointer flex items-center justify-between gap-4 ${
-                    active
-                      ? 'border-[#F4C430] bg-[#FFFBEB] shadow-sm ring-1 ring-[#F4C430]'
-                      : 'border-zinc-200 bg-white hover:border-zinc-300'
-                  }`}
-                >
-                  <div className="flex items-center gap-3.5 min-w-0">
-                    <VehicleImage
-                      src={vehicle.image_url}
-                      alt={vehicle.name}
-                      className="w-20 h-14 rounded-xl object-cover bg-zinc-100 shrink-0 border"
-                    />
-                    <div className="min-w-0">
-                      <p className="font-display font-bold text-sm text-[#0D0D10] truncate">
-                        {vehicle.name}
-                      </p>
-                      <p className="text-xs text-zinc-500 mt-0.5 truncate">
-                        {vehicle.tagline || `${vehicle.seating_capacity} seats`}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="text-right shrink-0">
-                    <p className="font-display font-bold text-base text-[#0D0D10]">
-                      Rs {pricing.totalPrice.toLocaleString()}
-                    </p>
-                    <p className="text-[10px] text-zinc-400">per month · {passengersCount} passenger</p>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Bottom Nav Buttons */}
-          <div className="grid grid-cols-2 gap-3 pt-3">
-            <button
-              type="button"
-              onClick={() => setCurrentStep(5)}
-              className="py-3.5 px-4 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50"
-            >
-              Back
-            </button>
-            <button
-              type="button"
-              onClick={() => setCurrentStep(7)}
-              className="py-3.5 px-4 rounded-2xl bg-zinc-700 text-white font-bold text-sm hover:bg-zinc-800 shadow-sm"
-            >
-              Continue
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* STEP 7: FARE BREAKDOWN & NEGOTIATION (matching screenshots 10 & 11) */}
+      {/* STEP 7: CONFIRMED RECEIPT & WHATSAPP / PDF */}
       {!viewActiveTripTab && currentStep === 7 && (
-        <div className="bg-white rounded-3xl border border-zinc-200 p-6 sm:p-8 space-y-6 shadow-sm">
-          <div>
-            <h2 className="font-display text-2xl font-bold text-[#0D0D10]">Review &amp; confirm</h2>
-          </div>
+        <div className="max-w-xl w-full mx-auto p-4 sm:p-8">
+          <div className="bg-white rounded-3xl border border-zinc-200 p-6 sm:p-8 space-y-5 shadow-sm text-center">
+            <div className="w-20 h-20 rounded-full border-4 border-[#F4C430] flex items-center justify-center mx-auto text-[#F4C430]">
+              <Check className="w-10 h-10 stroke-[3.5]" />
+            </div>
 
-          {/* Review Summary Card (matching screenshot 10) */}
-          <div className="divide-y divide-zinc-100 text-xs text-zinc-700">
-            <div className="py-2.5 flex justify-between">
-              <span className="text-zinc-500">Booking type</span>
-              <span className="font-semibold text-right">
-                {serviceType === 'pick_and_drop'
-                  ? 'Monthly Pick & Drop'
-                  : serviceType === 'ride_sharing'
-                  ? 'Ride Sharing'
-                  : 'Fuel Sharing'}
-              </span>
-            </div>
-            <div className="py-2.5 flex justify-between gap-4">
-              <span className="text-zinc-500 shrink-0">Pickup</span>
-              <span className="font-semibold text-right truncate max-w-[280px]">{pickup?.label}</span>
-            </div>
-            <div className="py-2.5 flex justify-between gap-4">
-              <span className="text-zinc-500 shrink-0">Drop-off</span>
-              <span className="font-semibold text-right truncate max-w-[280px]">{dropoff?.label}</span>
-            </div>
-            <div className="py-2.5 flex justify-between">
-              <span className="text-zinc-500">Distance</span>
-              <span className="font-semibold">{route?.distanceKm || 30.4} km · ~{route?.durationMin || 31} min</span>
-            </div>
-            <div className="py-2.5 flex justify-between">
-              <span className="text-zinc-500">Date</span>
-              <span className="font-semibold">{startDate}</span>
-            </div>
-            <div className="py-2.5 flex justify-between">
-              <span className="text-zinc-500">Pickup time</span>
-              <span className="font-semibold">{pickupTime}</span>
-            </div>
-            <div className="py-2.5 flex justify-between">
-              <span className="text-zinc-500">Drop-off time</span>
-              <span className="font-semibold">{dropoffTime}</span>
-            </div>
-            <div className="py-2.5 flex justify-between">
-              <span className="text-zinc-500">Package</span>
-              <span className="font-semibold">{selectedPackageDays} days / month</span>
-            </div>
-            <div className="py-2.5 flex justify-between">
-              <span className="text-zinc-500">Travel days</span>
-              <span className="font-semibold">{travelDays.join(', ')}</span>
-            </div>
-            <div className="py-2.5 flex justify-between">
-              <span className="text-zinc-500">Vehicle</span>
-              <span className="font-semibold">{selectedVehicle?.name || 'Economy'}</span>
-            </div>
-            <div className="py-2.5 flex justify-between">
-              <span className="text-zinc-500">Passengers</span>
-              <span className="font-semibold">{passengersCount}</span>
-            </div>
-          </div>
-
-          {/* Obsidian Black Fare Breakdown Card (matching screenshot 11) */}
-          <div className="rounded-3xl bg-[#0D0D10] text-white p-6 space-y-3 shadow-lg">
-            <p className="text-xs font-bold text-[#F4C430] uppercase tracking-wider">Fare breakdown</p>
-            <div className="space-y-2 text-xs text-zinc-300">
-              <div className="flex justify-between">
-                <span>Route</span>
-                <span className="font-mono">
-                  {route?.distanceKm || 30.4} km × {returnJourney ? 2 : 1} (return) × {selectedPackageDays} days ={' '}
-                  {Math.round((route?.distanceKm || 30.4) * (returnJourney ? 2 : 1) * selectedPackageDays * 10) / 10} km
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span>Pick &amp; Drop rate</span>
-                <span className="font-mono">
-                  Rs {selectedVehicle ? calculateVehiclePrice(selectedVehicle).ratePerKm : 25}/km
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span>Booking</span>
-                <span>{selectedVehicle && selectedVehicle.seating_capacity >= 7 ? 'Per passenger' : 'Whole vehicle'}</span>
-              </div>
-            </div>
-            <div className="border-t border-zinc-800 pt-3 flex items-baseline justify-between">
-              <span className="text-sm font-semibold">Reference fare (monthly)</span>
-              <span className="font-display text-2xl font-bold text-[#F4C430]">
-                Rs {referenceFare.toLocaleString()}
-              </span>
-            </div>
-          </div>
-
-          {/* Offer Your Fare Counter (matching screenshot 11) */}
-          <div className="p-5 rounded-3xl border border-zinc-200 bg-white space-y-3 shadow-xs">
             <div>
-              <p className="font-bold text-sm text-[#0D0D10]">Offer your fare · کرایہ پیشکش</p>
-              <p className="text-xs text-zinc-500 mt-0.5">
-                Up to 10% below the reference fare. The Pro Partner must accept it.
+              <h2 className="font-display text-2xl sm:text-3xl font-bold text-[#0D0D10]">Booking confirmed!</h2>
+              <p className="text-xs text-zinc-600 mt-2 max-w-md mx-auto leading-relaxed">
+                Your ride request is saved as <strong>Pending</strong>. Verified Pro Partners are notified immediately.
               </p>
             </div>
 
-            <div className="flex items-center justify-between pt-2">
+            <button
+              type="button"
+              onClick={handleShareWhatsApp}
+              className="w-full py-3.5 rounded-2xl bg-[#F4C430] text-[#0D0D10] font-bold text-sm hover:bg-[#E5B520] transition-colors shadow-sm flex items-center justify-center gap-2"
+            >
+              <Phone className="w-4 h-4 fill-current" />
+              Also send on WhatsApp
+            </button>
+
+            {confirmedBooking && (
               <button
                 type="button"
-                onClick={() => setOfferedFare((f) => Math.max(minOfferFare, f - 250))}
-                className="w-12 h-12 rounded-full border border-zinc-300 flex items-center justify-center text-zinc-800 hover:bg-zinc-100 font-bold"
+                onClick={() => downloadBookingPdf(confirmedBooking, 'passenger', passengerName)}
+                className="w-full py-3.5 rounded-2xl border border-zinc-200 text-zinc-800 font-semibold text-xs hover:bg-zinc-50 flex items-center justify-center gap-2"
               >
-                <Minus className="w-5 h-5" />
+                <Download className="w-4 h-4 text-[#D4A017]" />
+                Download Official Digital Bill (PDF)
               </button>
-              <div className="text-center">
-                <span className="font-display text-2xl font-bold text-[#0D0D10]">
-                  Rs {offeredFare.toLocaleString()}
-                </span>
-                <span className="block text-[11px] text-zinc-400 mt-0.5">
-                  {offeredFare === referenceFare
-                    ? 'Reference fare'
-                    : offeredFare < referenceFare
-                    ? `Discount: -Rs ${(referenceFare - offeredFare).toLocaleString()}`
-                    : `Added Tip: +Rs ${(offeredFare - referenceFare).toLocaleString()}`}
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setOfferedFare((f) => f + 250)}
-                className="w-12 h-12 rounded-full border border-zinc-300 flex items-center justify-center text-zinc-800 hover:bg-zinc-100 font-bold"
-              >
-                <Plus className="w-5 h-5" />
-              </button>
-            </div>
-          </div>
+            )}
 
-          {/* Bottom Nav Buttons */}
-          <div className="grid grid-cols-2 gap-3 pt-3">
             <button
               type="button"
-              onClick={() => setCurrentStep(6)}
-              className="py-3.5 px-4 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50"
+              onClick={() => {
+                setCurrentStep(1);
+                onGoToBookings();
+              }}
+              className="w-full py-3.5 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50"
             >
-              Back
-            </button>
-            <button
-              type="button"
-              onClick={() => setCurrentStep(8)}
-              className="py-3.5 px-4 rounded-2xl bg-[#F4C430] text-[#0D0D10] font-bold text-sm hover:bg-[#E5B520] shadow-sm"
-            >
-              Continue to Confirm
+              Done
             </button>
           </div>
         </div>
       )}
 
-      {/* STEP 8: FINAL REVIEW & PAYMENT (Pre-Confirmation) */}
-      {!viewActiveTripTab && currentStep === 8 && (
-        <div className="bg-white rounded-3xl border border-zinc-200 p-6 sm:p-8 space-y-6 shadow-sm">
-          <div>
-            <h2 className="font-display text-2xl font-bold text-[#0D0D10]">Payment &amp; Final Confirmation</h2>
-            <p className="text-xs text-zinc-500 mt-1">Select your preferred settlement method for the trip.</p>
-          </div>
-
-          {/* Payment Method Cards */}
-          <div className="space-y-3">
-            {[
-              {
-                id: 'cash',
-                label: 'Cash on Pickup / Trip Completion',
-                desc: 'Pay driver directly on daily or monthly basis',
-              },
-              {
-                id: 'wallet',
-                label: 'PRO RIDER Digital Wallet',
-                desc: 'Direct deduction from wallet balance with invoice receipt',
-              },
-              {
-                id: 'jazzcash_easypaisa',
-                label: 'JazzCash / EasyPaisa / Bank Transfer',
-                desc: 'Digital online settlement to driver or company',
-              },
-            ].map((p) => (
-              <div
-                key={p.id}
-                onClick={() => setPaymentMethod(p.id as any)}
-                className={`p-4 rounded-2xl border cursor-pointer transition-all ${
-                  paymentMethod === p.id
-                    ? 'border-[#F4C430] bg-[#FFFBEB] ring-1 ring-[#F4C430]'
-                    : 'border-zinc-200 bg-white hover:bg-zinc-50'
-                }`}
-              >
-                <p className="font-bold text-sm text-[#0D0D10]">{p.label}</p>
-                <p className="text-xs text-zinc-500 mt-0.5">{p.desc}</p>
-              </div>
-            ))}
-          </div>
-
-          {/* Driver Notes */}
-          <div>
-            <label className="block text-xs font-bold text-zinc-800 mb-1">
-              Instructions or Landmark for Driver (Optional)
-            </label>
-            <textarea
-              rows={2}
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="e.g. Near gate 2, please call before arriving..."
-              className="w-full px-4 py-2.5 rounded-xl border border-zinc-200 text-xs focus:ring-2 focus:ring-[#F4C430]"
-            />
-          </div>
-
-          {/* Submit Error */}
-          {submitError && (
-            <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700 flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 shrink-0" />
-              <span>{submitError}</span>
-            </div>
-          )}
-
-          {/* Bottom Nav Buttons */}
-          <div className="grid grid-cols-2 gap-3 pt-2">
-            <button
-              type="button"
-              disabled={submitting}
-              onClick={() => setCurrentStep(7)}
-              className="py-3.5 px-4 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50"
-            >
-              Back
-            </button>
-            <button
-              type="button"
-              disabled={submitting}
-              onClick={handleConfirmBooking}
-              className="py-3.5 px-4 rounded-2xl bg-[#F4C430] text-[#0D0D10] font-bold text-sm hover:bg-[#E5B520] shadow-md flex items-center justify-center gap-2"
-            >
-              {submitting ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Confirming...
-                </>
-              ) : (
-                'Confirm Booking'
-              )}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* STEP 9: BOOKING CONFIRMED & WHATSAPP BILL INVOICE (matching screenshot 12_d9881a32.jpeg) */}
-      {!viewActiveTripTab && currentStep === 9 && (
-        <div className="bg-white rounded-3xl border border-zinc-200 p-6 sm:p-8 space-y-6 shadow-sm text-center animate-in fade-in zoom-in-95">
-          {/* Yellow Circular Checkmark Badge */}
-          <div className="w-20 h-20 rounded-full border-4 border-[#F4C430] flex items-center justify-center mx-auto text-[#F4C430]">
-            <Check className="w-10 h-10 stroke-[3.5]" />
-          </div>
-
-          <div>
-            <h2 className="font-display text-2xl sm:text-3xl font-bold text-[#0D0D10]">
-              Booking confirmed!
-            </h2>
-            <p className="text-xs text-zinc-600 mt-2 max-w-md mx-auto leading-relaxed">
-              Your request is saved as <strong>Pending</strong>. Our team has been notified and will assign a driver.
-            </p>
-          </div>
-
-          {/* Action: Also send on WhatsApp (matching screenshot 12) */}
-          <button
-            type="button"
-            onClick={handleShareWhatsApp}
-            className="w-full py-4 rounded-2xl bg-[#F4C430] text-[#0D0D10] font-bold text-sm hover:bg-[#E5B520] transition-colors shadow-md flex items-center justify-center gap-2"
-          >
-            <Phone className="w-4 h-4 fill-current" />
-            Also send on WhatsApp
-          </button>
-
-          {/* Action: Download PDF Invoice */}
-          {confirmedBooking && (
-            <button
-              type="button"
-              onClick={() => downloadBookingPdf(confirmedBooking, 'passenger', passengerName)}
-              className="w-full py-3.5 rounded-2xl border border-zinc-200 text-zinc-800 font-semibold text-xs hover:bg-zinc-50 flex items-center justify-center gap-2"
-            >
-              <Download className="w-4 h-4 text-[#D4A017]" />
-              Download Official Digital Bill (PDF)
-            </button>
-          )}
-
-          {/* Action: Done Button */}
-          <button
-            type="button"
-            onClick={() => {
-              setCurrentStep(1);
-              onGoToBookings();
-            }}
-            className="w-full py-3.5 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50"
-          >
-            Done
-          </button>
-        </div>
-      )}
-
-      {/* Share Trip Status Modal */}
       {shareModalBooking && (
         <ShareTripStatusModal
           isOpen={Boolean(shareModalBooking)}

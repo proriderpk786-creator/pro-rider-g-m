@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { APIProvider } from '@vis.gl/react-google-maps';
 import { AlertTriangle, X } from 'lucide-react';
+import { AppPermissionsModal } from './components/AppPermissionsModal';
 import { OfflineIndicator } from './components/BrandMark';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { DEFAULT_PUBLIC_CONFIG } from './config/defaultConfig';
@@ -121,6 +122,7 @@ export default function App() {
         {path === '/track' && (
           <PublicTripTrackingPage config={config} lang={lang} onChangeLang={handleLanguageChange} onNavigate={navigate} />
         )}
+        <AppPermissionsModal lang={lang} activeRoute={path} />
         <OfflineIndicator />
       </ErrorBoundary>
     </FirebaseProvider>

@@ -550,7 +550,17 @@ export function registerAppRoutes(app: Express) {
   });
 
   app.post('/api/auth/partner/register', (req: Request, res: Response) => {
-    const { fullName, phone, whatsapp, email, password, city, operatingArea } = req.body || {};
+    const {
+      fullName,
+      phone,
+      whatsapp,
+      email,
+      password,
+      city,
+      operatingArea,
+      vehicleCategoryId,
+      seatingCapacity,
+    } = req.body || {};
     if (!fullName || !phone || !password || !city) {
       res.status(400).json({ error: 'Full name, mobile number, password, and city are required.' });
       return;
@@ -561,6 +571,8 @@ export function registerAppRoutes(app: Express) {
     }
     const cleanPhone = String(phone).trim();
     const cleanEmail = email ? String(email).trim().toLowerCase() : '';
+    const chosenCategory = vehicleCategoryId ? String(vehicleCategoryId).trim() : '';
+    const chosenSeats = seatingCapacity ? Number(seatingCapacity) : chosenCategory === 'fleet-van-7' ? 7 : 4;
 
     const existing = db
       .prepare('SELECT id FROM users WHERE phone = ? AND role = ?')
@@ -587,9 +599,9 @@ export function registerAppRoutes(app: Express) {
       );
 
       db.prepare(`
-        INSERT INTO partner_profiles (user_id, verification_status, operating_city)
-        VALUES (?, 'incomplete', ?)
-      `).run(id, String(city).trim());
+        INSERT INTO partner_profiles (user_id, verification_status, vehicle_category_id, seating_capacity, operating_city)
+        VALUES (?, 'incomplete', ?, ?, ?)
+      `).run(id, chosenCategory, chosenSeats, String(city).trim());
     })();
 
     const token = signAuthToken({ sub: id, role: 'partner', email: cleanEmail });
@@ -1799,18 +1811,10 @@ export function registerAppRoutes(app: Express) {
 
   app.get('/api/partner/requests', requireRole('partner'), (req: AuthedRequest, res: Response) => {
     const profile = db.prepare('SELECT * FROM partner_profiles WHERE user_id = ?').get(req.auth!.sub) as any;
-    if (!profile || profile.verification_status !== 'approved') {
-      res.json({
-        approved: false,
-        verificationStatus: profile?.verification_status || 'not_registered',
-        requests: [],
-      });
-      return;
-    }
+    const isApproved = Boolean(profile && profile.verification_status === 'approved');
+    const eligibleServices = profile ? (JSON.parse(profile.service_eligibility || '[]') as string[]) : [];
 
-    const eligibleServices = JSON.parse(profile.service_eligibility || '[]') as string[];
-
-    // Only real open bookings matching vehicle category (or any if unset) & not skipped by this partner
+    // Return real open bookings so drivers can preview demand/requests, while keeping Accept/Offer/Online strictly gated until approved.
     // Protect passenger private contact info (do NOT select passenger phone/email here!)
     const rows = db
       .prepare(`
@@ -1840,8 +1844,8 @@ export function registerAppRoutes(app: Express) {
     `);
 
     const filtered = rows
-      .filter((r) => !profile.vehicle_category_id || r.vehicle_category_id === profile.vehicle_category_id)
-      .filter((r) => eligibleServices.length === 0 || eligibleServices.includes(r.service_type))
+      .filter((r) => !isApproved || !profile?.vehicle_category_id || r.vehicle_category_id === profile.vehicle_category_id)
+      .filter((r) => !isApproved || eligibleServices.length === 0 || eligibleServices.includes(r.service_type))
       .map((r) => ({
         ...r,
         passenger_display: String(r.passenger_first_label || 'Passenger').split(' ')[0],
@@ -1849,8 +1853,8 @@ export function registerAppRoutes(app: Express) {
       }));
 
     res.json({
-      approved: true,
-      verificationStatus: profile.verification_status,
+      approved: isApproved,
+      verificationStatus: profile?.verification_status || 'not_registered',
       requests: filtered,
     });
   });
@@ -2235,10 +2239,16 @@ export function registerAppRoutes(app: Express) {
           );
 
           if (targetRole === 'partner') {
+            const reqCategory = req.body?.vehicleCategoryId ? String(req.body.vehicleCategoryId).trim() : '';
+            const reqSeats = req.body?.seatingCapacity
+              ? Number(req.body.seatingCapacity)
+              : reqCategory === 'fleet-van-7'
+              ? 7
+              : 4;
             db.prepare(`
-              INSERT INTO partner_profiles (user_id, verification_status, operating_city)
-              VALUES (?, 'incomplete', ?)
-            `).run(newId, chosenCity);
+              INSERT INTO partner_profiles (user_id, verification_status, vehicle_category_id, seating_capacity, operating_city)
+              VALUES (?, 'incomplete', ?, ?, ?)
+            `).run(newId, reqCategory, reqSeats, chosenCity);
           }
         })();
 

@@ -138,6 +138,12 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages, open, activeTab]);
 
+  useEffect(() => {
+    const onOpen = () => setOpen(true);
+    window.addEventListener('open-prorider-ai-copilot', onOpen);
+    return () => window.removeEventListener('open-prorider-ai-copilot', onOpen);
+  }, []);
+
   const stopPlaybackQueue = () => {
     for (const src of activeSourcesRef.current) {
       try {
@@ -438,12 +444,12 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
 
   return (
     <>
-      {/* Floating Launcher Button */}
+      {/* Floating Launcher Button (Desktop; mobile triggers from header to avoid covering action buttons) */}
       <button
         type="button"
         onClick={() => setOpen(true)}
         aria-label="Open PRO RIDER AI Copilot"
-        className="fixed bottom-20 md:bottom-6 right-4 md:right-6 z-40 inline-flex items-center gap-2.5 px-4 py-3 rounded-2xl bg-[#0D0D10] text-white border border-[#D4A017]/70 shadow-xl hover:bg-zinc-900 transition-transform active:scale-95"
+        className="hidden md:inline-flex fixed bottom-6 right-6 z-40 items-center gap-2.5 px-4 py-3 rounded-2xl bg-[#0D0D10] text-white border border-[#D4A017]/70 shadow-xl hover:bg-zinc-900 transition-transform active:scale-95"
       >
         <Sparkles className="w-4 h-4 text-[#D4A017]" />
         <span className="text-xs font-bold tracking-wide">AI Concierge &amp; Voice</span>

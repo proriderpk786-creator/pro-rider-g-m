@@ -51,7 +51,7 @@ export const PartnerFinanceView: React.FC<{
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 w-full min-w-0 overflow-x-hidden">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="font-display text-2xl font-bold text-[#0D0D10]">
           {mode === 'earnings' ? 'Pro Partner Earnings' : 'Pro Partner Digital Wallet'}

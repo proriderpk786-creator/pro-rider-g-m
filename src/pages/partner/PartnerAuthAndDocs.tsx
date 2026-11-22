@@ -10,7 +10,8 @@ import {
   Upload,
   User as UserIcon,
 } from 'lucide-react';
-import { BrandLogo, LanguageToggle } from '../../components/BrandMark';
+import { BrandLogo, LanguageToggle, VehicleImage } from '../../components/BrandMark';
+import { DEFAULT_PUBLIC_CONFIG } from '../../config/defaultConfig';
 import { formatFirebaseAuthError, useFirebase } from '../../contexts/FirebaseContext';
 import { apiRequest, isBackendOfflineError, setRoleToken, setStoredRoleUser } from '../../utils/api';
 import type {
@@ -52,6 +53,7 @@ export const PartnerAuth: React.FC<{
   const [email, setEmail] = useState('');
   const [city, setCity] = useState('Islamabad');
   const [operatingArea, setOperatingArea] = useState('');
+  const [vehicleCategoryId, setVehicleCategoryId] = useState('fleet-sedan');
   const [password, setPassword] = useState('');
   const [otpCode, setOtpCode] = useState('');
   const [phoneStep, setPhoneStep] = useState<'input' | 'verify'>('input');
@@ -81,6 +83,8 @@ export const PartnerAuth: React.FC<{
       status: 'active',
       created_at: new Date().toISOString(),
     };
+    const selectedRegisterFleet =
+      DEFAULT_PUBLIC_CONFIG.fleet.find((f) => f.id === vehicleCategoryId) || DEFAULT_PUBLIC_CONFIG.fleet[3];
     const profile: PartnerProfile = {
       user_id: fbUser.uid,
       verification_status: 'incomplete',
@@ -88,10 +92,10 @@ export const PartnerAuth: React.FC<{
       cnic_expiry: '',
       licence_number: '',
       licence_expiry: '',
-      vehicle_category_id: 'fleet-sedan',
+      vehicle_category_id: selectedRegisterFleet.id,
       vehicle_name: '',
       vehicle_number: '',
-      seating_capacity: 4,
+      seating_capacity: selectedRegisterFleet.seating_capacity || 4,
       fuel_type: 'Petrol',
       operating_city: city,
       service_eligibility: ['pick_and_drop'],
@@ -109,10 +113,21 @@ export const PartnerAuth: React.FC<{
     fbUser: { uid: string; displayName: string | null; email: string | null; phoneNumber: string | null },
     fallbackName?: string
   ) => {
+    const selectedRegisterFleet =
+      DEFAULT_PUBLIC_CONFIG.fleet.find((f) => f.id === vehicleCategoryId) || DEFAULT_PUBLIC_CONFIG.fleet[3];
     try {
       const res = await apiRequest<{ token: string; user: User; partnerProfile: PartnerProfile }>(
         '/api/auth/google/firebase',
-        { method: 'POST', body: { idToken, role: 'partner', city } }
+        {
+          method: 'POST',
+          body: {
+            idToken,
+            role: 'partner',
+            city,
+            vehicleCategoryId: selectedRegisterFleet.id,
+            seatingCapacity: selectedRegisterFleet.seating_capacity,
+          },
+        }
       );
       setRoleToken('partner', res.token);
       setStoredRoleUser('partner', res.user);
@@ -329,9 +344,21 @@ export const PartnerAuth: React.FC<{
           city,
           lang,
         });
+        const selectedRegisterFleet =
+          DEFAULT_PUBLIC_CONFIG.fleet.find((f) => f.id === vehicleCategoryId) || DEFAULT_PUBLIC_CONFIG.fleet[3];
         void apiRequest('/api/auth/partner/register', {
           method: 'POST',
-          body: { fullName, phone, whatsapp, email, city, operatingArea, password },
+          body: {
+            fullName,
+            phone,
+            whatsapp,
+            email,
+            city,
+            operatingArea,
+            password,
+            vehicleCategoryId: selectedRegisterFleet.id,
+            seatingCapacity: selectedRegisterFleet.seating_capacity,
+          },
         }).catch(() => {});
 
         if (fbRes.emailVerified) {
@@ -349,15 +376,17 @@ export const PartnerAuth: React.FC<{
   };
 
   return (
-    <div dir={lang === 'ur' ? 'rtl' : 'ltr'} className="min-h-screen bg-[#0D0D10] text-white flex flex-col">
-      <header className="border-b border-zinc-800 bg-[#0D0D10] px-4 sm:px-8 h-16 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <button type="button" onClick={onBackWelcome} className="p-2 rounded-lg hover:bg-zinc-900 text-zinc-400">
+    <div dir={lang === 'ur' ? 'rtl' : 'ltr'} className="min-h-screen w-full max-w-full overflow-x-clip bg-[#0D0D10] text-white flex flex-col">
+      <header className="border-b border-zinc-800 bg-[#0D0D10] px-3 sm:px-8 h-14 sm:h-16 flex items-center justify-between gap-2 w-full">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          <button type="button" onClick={onBackWelcome} className="p-2 rounded-lg hover:bg-zinc-900 text-zinc-400 shrink-0">
             <ArrowLeft className="w-4 h-4" />
           </button>
           <BrandLogo dark compact />
         </div>
-        <LanguageToggle lang={lang} onChange={onChangeLang} dark />
+        <div className="shrink-0 scale-90 sm:scale-100 origin-right">
+          <LanguageToggle lang={lang} onChange={onChangeLang} dark />
+        </div>
       </header>
 
       <main className="flex-1 flex items-center justify-center p-4 py-10">
@@ -602,6 +631,22 @@ export const PartnerAuth: React.FC<{
                       />
                     </div>
                   </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                      {lang === 'ur' ? 'گاڑی کی کیٹگری (سیون سیٹر سمیت)' : 'Vehicle Category (incl. 7-Seater Van)'}
+                    </label>
+                    <select
+                      value={vehicleCategoryId}
+                      onChange={(e) => setVehicleCategoryId(e.target.value)}
+                      className="w-full px-3 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
+                    >
+                      {DEFAULT_PUBLIC_CONFIG.fleet.map((f) => (
+                        <option key={f.id} value={f.id}>
+                          {f.name} ({f.seating_capacity} Seats)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </>
               )}
 
@@ -668,11 +713,17 @@ export const PartnerVerificationAndVehicleView: React.FC<{
   config: PublicConfig | null;
   onRefresh: () => Promise<void>;
 }> = ({ mode, profile, documents, config, onRefresh }) => {
+  const fleetCategories = (
+    config?.fleet?.length ? config.fleet : DEFAULT_PUBLIC_CONFIG.fleet
+  ).filter((f) => f.is_active === 1);
+
   const [cnicNumber, setCnicNumber] = useState(profile.cnic_number || '');
   const [cnicExpiry, setCnicExpiry] = useState(profile.cnic_expiry || '');
   const [licenceNumber, setLicenceNumber] = useState(profile.licence_number || '');
   const [licenceExpiry, setLicenceExpiry] = useState(profile.licence_expiry || '');
-  const [vehicleCategoryId, setVehicleCategoryId] = useState(profile.vehicle_category_id || config?.fleet?.[0]?.id || 'fleet-sedan');
+  const [vehicleCategoryId, setVehicleCategoryId] = useState(
+    profile.vehicle_category_id || fleetCategories[0]?.id || 'fleet-sedan'
+  );
   const [vehicleName, setVehicleName] = useState(profile.vehicle_name || '');
   const [vehicleNumber, setVehicleNumber] = useState(profile.vehicle_number || '');
   const [seatingCapacity, setSeatingCapacity] = useState(profile.seating_capacity || 4);
@@ -681,6 +732,17 @@ export const PartnerVerificationAndVehicleView: React.FC<{
   const [services, setServices] = useState<ServiceType[]>(
     profile.service_eligibility?.length ? profile.service_eligibility : ['pick_and_drop']
   );
+
+  const selectedFleetCategory =
+    fleetCategories.find((f) => f.id === vehicleCategoryId) || fleetCategories[0] || null;
+
+  const handleSelectCategory = (catId: string) => {
+    setVehicleCategoryId(catId);
+    const matched = fleetCategories.find((f) => f.id === catId);
+    if (matched?.seating_capacity) {
+      setSeatingCapacity(matched.seating_capacity);
+    }
+  };
 
   const [expiryDrafts, setExpiryDrafts] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -756,7 +818,7 @@ export const PartnerVerificationAndVehicleView: React.FC<{
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 w-full min-w-0 overflow-x-hidden">
       {/* Verification Status Banner */}
       <div className="rounded-2xl border border-zinc-200 bg-white p-5 flex flex-wrap items-center justify-between gap-4">
         <div className="space-y-1">
@@ -820,17 +882,53 @@ export const PartnerVerificationAndVehicleView: React.FC<{
           </div>
         </div>
 
+        <div className="space-y-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <label className="block text-xs font-semibold text-zinc-600">
+              Select Vehicle Category (including Van · 7-seater · وین)
+            </label>
+            {selectedFleetCategory && (
+              <span className="text-[11px] font-mono font-bold text-[#B8860B]">
+                {selectedFleetCategory.seating_capacity} Seats
+              </span>
+            )}
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5 max-h-60 overflow-y-auto pr-1">
+            {fleetCategories.map((f) => {
+              const active = vehicleCategoryId === f.id;
+              return (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => handleSelectCategory(f.id)}
+                  className={`p-2 rounded-xl border text-left transition-all flex items-center gap-2.5 min-w-0 ${
+                    active
+                      ? 'border-[#D4A017] bg-[#FFFBEB] shadow-xs ring-1 ring-[#D4A017]'
+                      : 'border-zinc-200 bg-white hover:border-zinc-300'
+                  }`}
+                >
+                  <VehicleImage src={f.image_url} alt={f.name} className="w-14 h-10 rounded-lg border shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[11px] font-bold text-[#0D0D10] truncate">{f.name}</div>
+                    <div className="text-[10px] text-zinc-500 font-mono">{f.seating_capacity} Seats</div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <div>
             <label className="block text-xs font-semibold text-zinc-600 mb-1">Vehicle Category</label>
             <select
               value={vehicleCategoryId}
-              onChange={(e) => setVehicleCategoryId(e.target.value)}
+              onChange={(e) => handleSelectCategory(e.target.value)}
               className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm bg-white"
             >
-              {(config?.fleet || []).map((f) => (
+              {fleetCategories.map((f) => (
                 <option key={f.id} value={f.id}>
-                  {f.name}
+                  {f.name} ({f.seating_capacity} seats)
                 </option>
               ))}
             </select>
@@ -841,7 +939,7 @@ export const PartnerVerificationAndVehicleView: React.FC<{
               required
               value={vehicleName}
               onChange={(e) => setVehicleName(e.target.value)}
-              placeholder="e.g. Toyota Corolla GLi 2022"
+              placeholder="e.g. Suzuki Every 7-Seater / Corolla GLi"
               className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm"
             />
           </div>
@@ -860,7 +958,7 @@ export const PartnerVerificationAndVehicleView: React.FC<{
             <input
               type="number"
               min={1}
-              max={20}
+              max={30}
               value={seatingCapacity}
               onChange={(e) => setSeatingCapacity(Number(e.target.value))}
               className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm font-mono"

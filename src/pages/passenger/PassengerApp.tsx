@@ -6,6 +6,8 @@ import {
   Home,
   LogOut,
   MapPin,
+  ShieldCheck,
+  Sparkles,
   User as UserIcon,
   Wallet as WalletIcon,
 } from 'lucide-react';
@@ -260,6 +262,14 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
           </div>
           <button
             type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent('open-prorider-permissions'))}
+            className="w-full flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold text-zinc-300 hover:text-white hover:bg-zinc-900"
+          >
+            <ShieldCheck className="w-4 h-4 text-[#D4A017]" />
+            {lang === 'ur' ? 'ایپ پرمیشنز' : 'App Permissions'}
+          </button>
+          <button
+            type="button"
             onClick={handleLogout}
             className="w-full flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold text-zinc-400 hover:text-white hover:bg-zinc-900"
           >
@@ -270,11 +280,18 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
       </aside>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 pb-20 md:pb-6">
-        <header className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b border-zinc-200 px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="md:hidden">
-              <BrandLogo compact />
+      <div className={`flex-1 flex flex-col min-w-0 ${tab === 'home' ? 'pb-14 md:pb-0' : 'pb-20 md:pb-6'}`}>
+        <header className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b border-zinc-200 px-3 sm:px-6 h-11 sm:h-14 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0 shrink">
+            <div className="md:hidden flex items-center gap-1.5 min-w-0">
+              <img
+                src="/assets/aistudio/pmg_3_88102afb.png"
+                alt="PRO RIDER"
+                className="w-6 h-6 rounded-full object-contain bg-black border border-[#D4A017]/50 shrink-0"
+              />
+              <span className="font-display font-bold text-xs tracking-tight text-[#0D0D10] truncate">
+                PRO RIDER <span className="text-[#D4A017]">AI</span>
+              </span>
             </div>
             <div className="hidden sm:flex items-center gap-1.5 text-xs font-semibold text-zinc-600">
               <MapPin className="w-3.5 h-3.5 text-[#D4A017]" />
@@ -282,18 +299,38 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-2.5 shrink-0">
-            <LanguageToggle lang={lang} onChange={onChangeLang} />
+          <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent('open-prorider-ai-copilot'))}
+              aria-label="Open AI Voice & Concierge"
+              className="md:hidden inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-[#0D0D10] text-[#D4A017] text-[10px] font-bold border border-[#D4A017]/50 whitespace-nowrap shrink-0"
+            >
+              <Sparkles className="w-3 h-3" />
+              <span>AI</span>
+            </button>
+            <div className="scale-90 sm:scale-100 origin-right shrink-0">
+              <LanguageToggle lang={lang} onChange={onChangeLang} />
+            </div>
             <PWAInstallButton />
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent('open-prorider-permissions'))}
+              title={lang === 'ur' ? 'ایپ پرمیشنز' : 'App Permissions'}
+              aria-label="App Permissions"
+              className="p-1.5 sm:p-2 rounded-lg border border-zinc-200 hover:bg-zinc-50 shrink-0"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-700" />
+            </button>
             <button
               type="button"
               onClick={() => setTab('notifications')}
               aria-label="Notifications"
-              className="relative p-2 rounded-xl border border-zinc-200 hover:bg-zinc-50"
+              className="relative p-1.5 sm:p-2 rounded-lg border border-zinc-200 hover:bg-zinc-50 shrink-0"
             >
-              <Bell className="w-4 h-4 text-[#0D0D10]" />
+              <Bell className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#0D0D10]" />
               {unreadCount > 0 && (
-                <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-600 text-white text-[10px] font-bold flex items-center justify-center">
+                <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-red-600 text-white text-[9px] font-bold flex items-center justify-center">
                   {unreadCount}
                 </span>
               )}
@@ -301,7 +338,8 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
             <button
               type="button"
               onClick={() => setTab('profile')}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#0D0D10] text-white text-xs font-semibold"
+              aria-label="Profile"
+              className="flex items-center gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg bg-[#0D0D10] text-white text-xs font-semibold shrink-0"
             >
               <UserIcon className="w-3.5 h-3.5 text-[#D4A017]" />
               <span className="hidden sm:inline max-w-[110px] truncate">{user.full_name}</span>
@@ -309,7 +347,7 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
           </div>
         </header>
 
-        <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6">
+        <main className={tab === 'home' ? 'flex-1 w-full flex flex-col' : 'flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6'}>
           {tab === 'home' && (
             <PassengerBookingFlow
               lang={lang}
@@ -376,7 +414,7 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
       </div>
 
       {/* Mobile Thumb-Zone Bottom Tab Bar */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-30 bg-white/95 backdrop-blur border-t border-zinc-200 grid grid-cols-4 h-16 pb-safe">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-30 bg-white/95 backdrop-blur border-t border-zinc-200 grid grid-cols-4 h-14 pb-safe">
         {[
           { id: 'home' as PassengerTab, label: t(lang, 'home'), icon: Home },
           { id: 'bookings' as PassengerTab, label: 'Rides', icon: CarFront },

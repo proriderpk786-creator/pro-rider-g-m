@@ -5,9 +5,12 @@ import {
   ClipboardList,
   FileCheck,
   HelpCircle,
+  Home,
   LogOut,
   Navigation,
   Power,
+  ShieldCheck,
+  Sparkles,
   TrendingUp,
   User as UserIcon,
   Wallet as WalletIcon,
@@ -38,6 +41,13 @@ import {
   setStoredRoleUser,
   useRoleWebSocket,
 } from '../../utils/api';
+import {
+  getSavedRideBellSound,
+  playRideBell,
+  saveRideBellSound,
+  sendRideBrowserNotification,
+  type RideBellSoundId,
+} from '../../utils/rideBell';
 import { NotificationsView, SupportView } from '../passenger/PassengerSecondaryViews';
 import { PartnerAuth, PartnerVerificationAndVehicleView } from './PartnerAuthAndDocs';
 import { PartnerFinanceView, PartnerProfileView } from './PartnerFinanceAndProfile';
@@ -112,7 +122,12 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
   const [demandData, setDemandData] = useState<DemandMapData | null>(null);
   const [availabilityError, setAvailabilityError] = useState<string | null>(null);
   const [gpsSharing, setGpsSharing] = useState(false);
+  const [bellSound, setBellSound] = useState<RideBellSoundId>(() => getSavedRideBellSound());
+  const [incomingRideNotice, setIncomingRideNotice] = useState<Booking | null>(null);
   const watchIdRef = useRef<number | null>(null);
+  const seenRequestIdsRef = useRef<Set<string> | null>(null);
+  const bellSoundRef = useRef(bellSound);
+  bellSoundRef.current = bellSound;
 
   const loadDemand = useCallback(async () => {
     try {
@@ -172,7 +187,20 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
     } catch (err) {
       if (isBackendOfflineError(err) || token.startsWith('pr_fb_')) {
         setUser((prev) => prev || getStoredRoleUser<User>('partner'));
-        setProfile((prev) => prev || readStoredPartnerProfile());
+        const localProfile = profile || readStoredPartnerProfile();
+        setProfile((prev) => prev || localProfile);
+        setApproved(Boolean(localProfile && localProfile.verification_status === 'approved'));
+        try {
+          const raw = localStorage.getItem('pr_local_bookings_passenger');
+          if (raw) {
+            const parsed = JSON.parse(raw) as Booking[];
+            if (Array.isArray(parsed)) {
+              setRequests(parsed.filter((b) => ['searching', 'negotiating'].includes(b.status)));
+            }
+          }
+        } catch {
+          // ignore
+        }
         return;
       }
       if (err instanceof ApiRequestError && (err.status === 401 || err.status === 403)) {
@@ -196,7 +224,34 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
     return () => clearInterval(timer);
   }, [token, loadDemand]);
 
+  // Trigger audible Ride Bell + browser notification when new passenger requests arrive
+  useEffect(() => {
+    if (!token) {
+      seenRequestIdsRef.current = null;
+      return;
+    }
+    if (seenRequestIdsRef.current === null) {
+      seenRequestIdsRef.current = new Set(requests.map((r) => r.id));
+      return;
+    }
+    const newlyArrived = requests.filter((r) => !seenRequestIdsRef.current!.has(r.id));
+    if (newlyArrived.length > 0) {
+      newlyArrived.forEach((r) => seenRequestIdsRef.current!.add(r.id));
+      const latest = newlyArrived[0];
+      setIncomingRideNotice(latest);
+      playRideBell(bellSoundRef.current);
+      sendRideBrowserNotification(
+        `New Ride Request · Rs. ${Number(latest.proposed_fare_pkr || 0).toLocaleString()}`,
+        `${latest.pickup_address} → ${latest.dropoff_address}`
+      );
+    }
+  }, [requests, token]);
+
   const wsRef = useRoleWebSocket('partner', token, (event) => {
+    if (event === 'booking:created') {
+      playRideBell(bellSoundRef.current);
+      sendRideBrowserNotification('New Passenger Request', 'Open PRO RIDER Driver Home to view ride details.');
+    }
     if (
       ['booking:created', 'booking:offer', 'booking:updated', 'partner:verification_updated', 'notification:new'].includes(
         event
@@ -241,6 +296,13 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
 
   const handleToggleOnline = async () => {
     if (!profile) return;
+    if (profile.verification_status !== 'approved' && !profile.is_online) {
+      setAvailabilityError(
+        'Document verification required before going Online. Please upload your CNIC, Driving Licence & Vehicle details.'
+      );
+      setTab('documents');
+      return;
+    }
     setAvailabilityError(null);
     try {
       await apiRequest('/api/partner/availability', {
@@ -252,7 +314,7 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
     } catch (err: any) {
       setAvailabilityError(
         isBackendOfflineError(err)
-          ? 'Document & online dispatch verification requires live backend API connection.'
+          ? 'Please complete document verification and connect to Admin approval before going Online.'
           : err.message
       );
       setTab('documents');
@@ -302,7 +364,7 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
   const unreadCount = safeNotifications.filter((n) => n.is_read === 0).length;
 
   const navItems: Array<{ id: PartnerTab; label: string; icon: any; badge?: number }> = [
-    { id: 'requests', label: t(lang, 'requests'), icon: ClipboardList, badge: requests.length || undefined },
+    { id: 'requests', label: lang === 'ur' ? 'ہوم' : 'Home', icon: Home, badge: requests.length || undefined },
     { id: 'trips', label: t(lang, 'myTrips'), icon: Navigation },
     { id: 'earnings', label: t(lang, 'earnings'), icon: TrendingUp },
     { id: 'wallet', label: t(lang, 'wallet'), icon: WalletIcon },
@@ -314,7 +376,7 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
   ];
 
   return (
-    <div dir={lang === 'ur' ? 'rtl' : 'ltr'} className="min-h-screen bg-[#F8F8FA] flex flex-col md:flex-row">
+    <div dir={lang === 'ur' ? 'rtl' : 'ltr'} className="min-h-screen w-full max-w-full overflow-x-clip bg-[#F8F8FA] flex flex-col md:flex-row">
       {/* Strictly Pro Partner Obsidian Black Sidebar — Zero Passenger Booking Forms */}
       <aside className="hidden md:flex md:w-64 bg-[#0D0D10] text-white flex-col justify-between p-5 shrink-0 sticky top-0 h-screen">
         <div className="space-y-5 overflow-y-auto">
@@ -375,6 +437,14 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
           </div>
           <button
             type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent('open-prorider-permissions'))}
+            className="w-full flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold text-zinc-300 hover:text-white hover:bg-zinc-900"
+          >
+            <ShieldCheck className="w-4 h-4 text-[#D4A017]" />
+            {lang === 'ur' ? 'ایپ پرمیشنز' : 'App Permissions'}
+          </button>
+          <button
+            type="button"
             onClick={handleLogout}
             className="w-full flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold text-zinc-400 hover:text-white hover:bg-zinc-900"
           >
@@ -385,46 +455,80 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
       </aside>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col min-w-0 pb-20 md:pb-6">
-        <header className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b border-zinc-200 px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="md:hidden">
-              <BrandLogo compact />
+      <div className="flex-1 flex flex-col min-w-0 w-full pb-20 md:pb-6">
+        <header className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b border-zinc-200 px-2.5 sm:px-6 h-12 sm:h-16 flex items-center justify-between gap-2 w-full">
+          <div className="flex items-center gap-1.5 sm:gap-3 min-w-0 shrink">
+            <div className="md:hidden flex items-center gap-1.5 min-w-0">
+              <img
+                src="/assets/aistudio/pmg_3_88102afb.png"
+                alt="PRO RIDER"
+                className="w-6 h-6 rounded-full object-contain bg-black border border-[#D4A017]/50 shrink-0"
+              />
             </div>
             <button
               type="button"
               onClick={handleToggleOnline}
-              className={`md:hidden inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold ${
+              className={`md:hidden inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap shrink-0 ${
                 profile.is_online ? 'bg-emerald-700 text-white' : 'bg-zinc-200 text-zinc-800'
               }`}
             >
-              <Power className="w-3.5 h-3.5" />
+              <Power className="w-3 h-3" />
               {profile.is_online ? 'Online' : 'Offline'}
             </button>
-            <span className="hidden sm:inline text-xs font-semibold text-zinc-600">
-              Pro Partner Workspace · {profile.vehicle_name || 'Complete Vehicle Setup'}
+            <span className="hidden sm:inline text-xs font-semibold text-zinc-600 truncate">
+              Pro Partner · {profile.vehicle_name || 'Complete Vehicle Setup'}
             </span>
           </div>
 
-          <div className="flex items-center gap-2.5">
-            <LanguageToggle lang={lang} onChange={onChangeLang} />
+          <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent('open-prorider-ai-copilot'))}
+              aria-label="Open AI Voice & Concierge"
+              className="md:hidden inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-[#0D0D10] text-[#D4A017] text-[10px] font-bold border border-[#D4A017]/50 whitespace-nowrap shrink-0"
+            >
+              <Sparkles className="w-3 h-3" />
+              <span>AI</span>
+            </button>
+            <div className="scale-90 sm:scale-100 origin-right shrink-0">
+              <LanguageToggle lang={lang} onChange={onChangeLang} />
+            </div>
             <PWAInstallButton />
             <button
               type="button"
-              onClick={() => setTab('notifications')}
-              className="relative p-2 rounded-xl border border-zinc-200 hover:bg-zinc-50"
+              onClick={() => window.dispatchEvent(new CustomEvent('open-prorider-permissions'))}
+              title={lang === 'ur' ? 'ایپ پرمیشنز' : 'App Permissions'}
+              aria-label="App Permissions"
+              className="p-1.5 sm:p-2 rounded-lg border border-zinc-200 hover:bg-zinc-50 shrink-0"
             >
-              <Bell className="w-4 h-4 text-[#0D0D10]" />
+              <ShieldCheck className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-700" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab('notifications')}
+              aria-label="Notifications"
+              className="relative p-1.5 sm:p-2 rounded-lg border border-zinc-200 hover:bg-zinc-50 shrink-0"
+            >
+              <Bell className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#0D0D10]" />
               {unreadCount > 0 && (
-                <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-600 text-white text-[10px] font-bold flex items-center justify-center">
+                <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-red-600 text-white text-[9px] font-bold flex items-center justify-center">
                   {unreadCount}
                 </span>
               )}
             </button>
+            <button
+              type="button"
+              onClick={handleLogout}
+              title="Sign Out"
+              aria-label="Sign Out"
+              className="md:hidden p-1.5 rounded-lg border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 shrink-0"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+            </button>
           </div>
         </header>
 
-        <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-4">
+        <main className="flex-1 max-w-7xl w-full min-w-0 overflow-x-clip mx-auto p-3 sm:p-6 space-y-4">
           {availabilityError && (
             <div className="rounded-xl bg-amber-50 border border-amber-300 px-4 py-3 text-xs font-semibold text-amber-900">
               {availabilityError}
@@ -433,11 +537,21 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
 
           {tab === 'requests' && (
             <PartnerRequestsView
+              lang={lang}
               approved={approved}
               profile={profile}
               requests={Array.isArray(requests) ? requests : []}
               demandData={demandData}
               zones={config?.zones || []}
+              bellSound={bellSound}
+              onChangeBellSound={(next) => {
+                setBellSound(next);
+                saveRideBellSound(next);
+                if (next !== 'muted') playRideBell(next);
+              }}
+              onTestBell={() => playRideBell(bellSound)}
+              incomingRideNotice={incomingRideNotice}
+              onDismissIncomingNotice={() => setIncomingRideNotice(null)}
               onRefresh={loadAll}
               onGoToDocs={() => setTab('documents')}
             />
@@ -497,12 +611,13 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
       </div>
 
       {/* Mobile Bottom Navigation */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-30 bg-[#0D0D10] text-white border-t border-zinc-800 grid grid-cols-4 h-16 pb-safe">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-30 bg-[#0D0D10] text-white border-t border-zinc-800 grid grid-cols-5 h-16 pb-safe">
         {[
-          { id: 'requests' as PartnerTab, label: 'Requests', icon: ClipboardList },
+          { id: 'requests' as PartnerTab, label: lang === 'ur' ? 'ہوم' : 'Home', icon: Home },
           { id: 'trips' as PartnerTab, label: 'Trips', icon: Navigation },
           { id: 'earnings' as PartnerTab, label: 'Earnings', icon: TrendingUp },
           { id: 'documents' as PartnerTab, label: 'Docs', icon: FileCheck },
+          { id: 'profile' as PartnerTab, label: 'Profile', icon: UserIcon },
         ].map((item) => {
           const Icon = item.icon;
           const active = tab === item.id;
@@ -515,7 +630,7 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
                 active ? 'text-[#D4A017]' : 'text-zinc-400'
               }`}
             >
-              <Icon className="w-5 h-5" />
+              <Icon className="w-4 h-4" />
               <span>{item.label}</span>
             </button>
           );
