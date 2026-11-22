@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { APIProvider } from '@vis.gl/react-google-maps';
 import { AlertTriangle, X } from 'lucide-react';
 import { AppPermissionsModal } from './components/AppPermissionsModal';
 import { OfflineIndicator } from './components/BrandMark';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { DEFAULT_PUBLIC_CONFIG } from './config/defaultConfig';
-import { FirebaseProvider } from './contexts/FirebaseContext';
+import { ThemeProvider } from './contexts/ThemeContext';
+import { tr } from './i18n/translations';
 import { AdminPortal } from './pages/admin/AdminPortal';
 import { PartnerApp } from './pages/partner/PartnerApp';
 import { PassengerApp } from './pages/passenger/PassengerApp';
@@ -47,6 +48,11 @@ export default function App() {
   };
 
   useEffect(() => {
+    document.documentElement.dir = lang === 'ur' ? 'rtl' : 'ltr';
+    document.documentElement.lang = lang;
+  }, [lang]);
+
+  useEffect(() => {
     const onPop = () => setPath(normalizePath(window.location.pathname));
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
@@ -58,7 +64,7 @@ export default function App() {
     return () => window.removeEventListener('gmp-quota-exceeded', onQuota);
   }, []);
 
-  useEffect(() => {
+  const fetchConfig = useCallback(() => {
     apiRequest<PublicConfig>('/api/public/config')
       .then((res) => {
         if (res && Array.isArray(res.fleet) && res.fleet.length > 0) {
@@ -69,6 +75,13 @@ export default function App() {
         // Keep DEFAULT_PUBLIC_CONFIG safely on static/offline hosting
       });
   }, []);
+
+  useEffect(() => {
+    fetchConfig();
+    const onRefresh = () => fetchConfig();
+    window.addEventListener('pr:refresh-config', onRefresh);
+    return () => window.removeEventListener('pr:refresh-config', onRefresh);
+  }, [fetchConfig]);
 
   const handleLanguageChange = (nextLang: Language) => {
     setLang(nextLang);
@@ -83,49 +96,19 @@ export default function App() {
   const hasMapsKey = mapsApiKey.length > 10;
 
   const content = (
-    <FirebaseProvider>
-      <ErrorBoundary>
-        {quotaExceeded && hasMapsKey && (
-          <div className="sticky top-0 z-50 bg-amber-50 border-b border-amber-300 text-amber-950 px-4 py-2.5 flex items-center justify-between gap-3 text-xs">
-            <div className="flex items-center gap-2 max-w-5xl mx-auto">
-              <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0" />
-              <span>
-                <strong>Google Maps Demo API Quota Reached:</strong> Fallback interactive OpenStreetMap view is active.
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setQuotaExceeded(false)}
-              aria-label="Dismiss quota banner"
-              className="p-1 rounded hover:bg-amber-200/60"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        )}
-
-        {path === '/' && (
-          <WelcomePage lang={lang} onChangeLang={handleLanguageChange} onNavigate={navigate} />
-        )}
-        {path === '/website' && (
-          <PublicWebsitePage config={config} lang={lang} onChangeLang={handleLanguageChange} onNavigate={navigate} />
-        )}
-        {path === '/passenger' && (
-          <PassengerApp config={config} lang={lang} onChangeLang={handleLanguageChange} onNavigate={navigate} />
-        )}
-        {path === '/partner' && (
-          <PartnerApp config={config} lang={lang} onChangeLang={handleLanguageChange} onNavigate={navigate} />
-        )}
-        {(path === '/admin' || path === '/admin/login') && (
-          <AdminPortal currentPath={path} onNavigate={navigate} />
-        )}
-        {path === '/track' && (
-          <PublicTripTrackingPage config={config} lang={lang} onChangeLang={handleLanguageChange} onNavigate={navigate} />
-        )}
-        <AppPermissionsModal lang={lang} activeRoute={path} />
-        <OfflineIndicator />
-      </ErrorBoundary>
-    </FirebaseProvider>
+    <ThemeProvider config={config}>
+      <FirebaseProviderOrChildren
+        quotaExceeded={quotaExceeded}
+        hasMapsKey={hasMapsKey}
+        onDismissQuota={() => setQuotaExceeded(false)}
+        lang={lang}
+        path={path}
+        config={config}
+        onChangeLang={handleLanguageChange}
+        onNavigate={navigate}
+        onRefreshConfig={fetchConfig}
+      />
+    </ThemeProvider>
   );
 
   return hasMapsKey ? (
@@ -136,3 +119,78 @@ export default function App() {
     content
   );
 }
+
+import { FirebaseProvider } from './contexts/FirebaseContext';
+
+const FirebaseProviderOrChildren: React.FC<{
+  quotaExceeded: boolean;
+  hasMapsKey: boolean;
+  onDismissQuota: () => void;
+  lang: Language;
+  path: string;
+  config: PublicConfig;
+  onChangeLang: (l: Language) => void;
+  onNavigate: (p: string) => void;
+  onRefreshConfig: () => void;
+}> = ({
+  quotaExceeded,
+  hasMapsKey,
+  onDismissQuota,
+  lang,
+  path,
+  config,
+  onChangeLang,
+  onNavigate,
+  onRefreshConfig,
+}) => (
+  <FirebaseProvider>
+    <ErrorBoundary>
+      {quotaExceeded && hasMapsKey && (
+        <div className="sticky top-0 z-50 bg-amber-50 border-b border-amber-300 text-amber-950 px-4 py-2.5 flex items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2 max-w-5xl mx-auto">
+            <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0" />
+            <span>
+              <strong>{tr(lang, 'Google Maps Demo API Quota Reached:', 'گوگل میپس ڈیمو کوٹہ مکمل ہو گیا:')}</strong>{' '}
+              {tr(lang, 'Fallback interactive OpenStreetMap view is active.', 'اس وقت انٹرایکٹو اوپن اسٹریٹ میپ فعال ہے۔')}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={onDismissQuota}
+            aria-label="Dismiss quota banner"
+            className="p-1 rounded hover:bg-amber-200/60"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {path === '/' && (
+        <WelcomePage lang={lang} onChangeLang={onChangeLang} onNavigate={onNavigate} />
+      )}
+      {path === '/website' && (
+        <PublicWebsitePage config={config} lang={lang} onChangeLang={onChangeLang} onNavigate={onNavigate} />
+      )}
+      {path === '/passenger' && (
+        <PassengerApp config={config} lang={lang} onChangeLang={onChangeLang} onNavigate={onNavigate} />
+      )}
+      {path === '/partner' && (
+        <PartnerApp config={config} lang={lang} onChangeLang={onChangeLang} onNavigate={onNavigate} />
+      )}
+      {(path === '/admin' || path === '/admin/login') && (
+        <AdminPortal
+          currentPath={path}
+          lang={lang}
+          onChangeLang={onChangeLang}
+          onNavigate={onNavigate}
+          onRefreshConfig={onRefreshConfig}
+        />
+      )}
+      {path === '/track' && (
+        <PublicTripTrackingPage config={config} lang={lang} onChangeLang={onChangeLang} onNavigate={onNavigate} />
+      )}
+      <AppPermissionsModal lang={lang} activeRoute={path} />
+      <OfflineIndicator lang={lang} />
+    </ErrorBoundary>
+  </FirebaseProvider>
+);

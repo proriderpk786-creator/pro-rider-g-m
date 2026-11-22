@@ -13,12 +13,14 @@ import {
   Users,
   X,
 } from 'lucide-react';
+import { tr } from '../../i18n/translations';
 import { apiRequest } from '../../utils/api';
-import type { FleetCategory } from '../../types';
+import type { FleetCategory, Language } from '../../types';
 
 interface FareManagementTabProps {
   fleet: FleetCategory[];
   settings: Record<string, string>;
+  lang?: Language;
   onReload: () => Promise<void>;
   onShowToast: (msg: string) => void;
 }
@@ -26,6 +28,7 @@ interface FareManagementTabProps {
 export const FareManagementTab: React.FC<FareManagementTabProps> = ({
   fleet,
   settings,
+  lang = 'en',
   onReload,
   onShowToast,
 }) => {
@@ -96,11 +99,17 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
           commission_pct: Number(editTariffForm.commission_pct),
         },
       });
-      onShowToast(`Fare tariff updated for ${editingFleet.name}.`);
+      onShowToast(
+        tr(
+          lang,
+          `Fare tariff updated for ${editingFleet.name}.`,
+          `${editingFleet.name} کا کرایہ ریٹ اپڈیٹ کر دیا گیا۔`
+        )
+      );
       setEditingFleet(null);
       await onReload();
     } catch (err: any) {
-      onShowToast(`Error saving tariff: ${err.message}`);
+      onShowToast(tr(lang, `Error saving tariff: ${err.message}`, `کرایہ محفوظ کرنے میں خرابی: ${err.message}`));
     } finally {
       setSavingTariff(false);
     }
@@ -115,10 +124,16 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
         role: 'admin',
         body: localSettings,
       });
-      onShowToast('Global fare rules and negotiation bounds saved successfully.');
+      onShowToast(
+        tr(
+          lang,
+          'Global fare rules and negotiation bounds saved successfully.',
+          'عالمی کرایہ قوانین اور بات چیت کی حدود کامیابی سے محفوظ ہو گئیں۔'
+        )
+      );
       await onReload();
     } catch (err: any) {
-      onShowToast(`Error saving fare rules: ${err.message}`);
+      onShowToast(tr(lang, `Error saving fare rules: ${err.message}`, `کرایہ قوانین محفوظ کرنے میں خرابی: ${err.message}`));
     } finally {
       setSavingSettings(false);
     }
@@ -131,14 +146,17 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
         <div>
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-lg bg-[#D4A017]/15 text-[#8F6400] text-xs font-bold uppercase tracking-wider mb-2">
             <Sliders className="w-3.5 h-3.5" />
-            Super Admin Fare Controls
+            {tr(lang, 'Super Admin Fare Controls', 'سپر ایڈمن کرایہ کنٹرول')}
           </div>
           <h1 className="font-display text-2xl font-bold text-[#0D0D10]">
-            Fare Structure &amp; Tariff Management
+            {tr(lang, 'Fare Structure & Tariff Management', 'کرایہ ڈھانچہ اور ریٹس کا انتظام')}
           </h1>
           <p className="text-xs text-zinc-500 mt-1 max-w-2xl">
-            Super Admin independently controls base fares, per-km rates, extra stops, waiting charges,
-            commissions, and passenger offer negotiation bounds. Zero hardcoded tariffs.
+            {tr(
+              lang,
+              'Super Admin independently controls base fares, per-km rates, extra stops, waiting charges, commissions, and passenger offer negotiation bounds.',
+              'سپر ایڈمن بنیادی کرایہ، فی کلومیٹر ریٹ، اضافی اسٹاپس، انتظار چارجز، کمیشن اور مسافر آفر کی حدود خود کنٹرول کرتا ہے۔'
+            )}
           </p>
         </div>
         <button
@@ -147,7 +165,7 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
           className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-zinc-200 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 shrink-0"
         >
           <RefreshCw className="w-3.5 h-3.5" />
-          Refresh Fares
+          {tr(lang, 'Refresh Fares', 'کرایے تازہ کریں')}
         </button>
       </div>
 
@@ -156,14 +174,14 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
         <div className="p-5 border-b border-zinc-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div>
             <h2 className="font-display font-bold text-base text-[#0D0D10]">
-              Vehicle Category Tariff Matrix
+              {tr(lang, 'Vehicle Category Tariff Matrix', 'گاڑی کی اقسام کا کرایہ چارٹ')}
             </h2>
             <p className="text-xs text-zinc-500">
-              Live rates used to compute OSRM distance-based fares across Pakistan.
+              {tr(lang, 'Live rates used to compute distance-based fares across Pakistan.', 'پاکستان بھر میں فاصلے کے مطابق کرایہ حساب کرنے کے لائیو ریٹس۔')}
             </p>
           </div>
           <span className="text-xs font-mono font-bold text-zinc-600 bg-zinc-100 px-3 py-1 rounded-lg">
-            {fleet.length} Categories Configured
+            {fleet.length} {tr(lang, 'Categories Configured', 'اقسام شامل ہیں')}
           </span>
         </div>
 
@@ -171,15 +189,15 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
           <table className="w-full text-left text-xs">
             <thead className="bg-zinc-50 border-b border-zinc-200 text-zinc-500 uppercase tracking-wider text-[10px]">
               <tr>
-                <th className="px-5 py-3.5">Category</th>
-                <th className="px-4 py-3.5 text-right">Base Fare</th>
-                <th className="px-4 py-3.5 text-right">Min Rate/km</th>
-                <th className="px-4 py-3.5 text-right">Max Rate/km</th>
-                <th className="px-4 py-3.5 text-right">Wait / min</th>
-                <th className="px-4 py-3.5 text-right">Extra Stop</th>
-                <th className="px-4 py-3.5 text-right">Commission</th>
-                <th className="px-4 py-3.5 text-center">Status</th>
-                <th className="px-5 py-3.5 text-right">Action</th>
+                <th className="px-5 py-3.5">{tr(lang, 'Category', 'کیٹیگری')}</th>
+                <th className="px-4 py-3.5 text-right">{tr(lang, 'Base Fare', 'بنیادی کرایہ')}</th>
+                <th className="px-4 py-3.5 text-right">{tr(lang, 'Min Rate/km', 'کم از کم ریٹ/کلومیٹر')}</th>
+                <th className="px-4 py-3.5 text-right">{tr(lang, 'Max Rate/km', 'زیادہ سے زیادہ ریٹ/کلومیٹر')}</th>
+                <th className="px-4 py-3.5 text-right">{tr(lang, 'Wait / min', 'انتظار / منٹ')}</th>
+                <th className="px-4 py-3.5 text-right">{tr(lang, 'Extra Stop', 'اضافی اسٹاپ')}</th>
+                <th className="px-4 py-3.5 text-right">{tr(lang, 'Commission', 'کمیشن')}</th>
+                <th className="px-4 py-3.5 text-center">{tr(lang, 'Status', 'حالت')}</th>
+                <th className="px-5 py-3.5 text-right">{tr(lang, 'Action', 'کارروائی')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100">
@@ -188,7 +206,7 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                   <td className="px-5 py-4">
                     <div className="font-bold text-[#0D0D10] text-sm">{f.name}</div>
                     <div className="text-[11px] text-zinc-400 font-mono">
-                      {f.seating_capacity} Seats · Order #{f.sort_order ?? 10}
+                      {f.seating_capacity} {tr(lang, 'Seats', 'سیٹیں')} · {tr(lang, 'Order', 'ترتیب')} #{f.sort_order ?? 10}
                     </div>
                   </td>
                   <td className="px-4 py-4 text-right font-mono font-bold text-[#0D0D10]">
@@ -217,7 +235,7 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                           : 'bg-zinc-200 text-zinc-600'
                       }`}
                     >
-                      {f.is_active === 1 ? 'Active' : 'Disabled'}
+                      {f.is_active === 1 ? tr(lang, 'Active', 'فعال') : tr(lang, 'Disabled', 'بند')}
                     </span>
                   </td>
                   <td className="px-5 py-4 text-right">
@@ -227,7 +245,7 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                       className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-[#0D0D10] hover:bg-zinc-800 text-white font-bold text-xs transition-colors"
                     >
                       <Edit3 className="w-3 h-3 text-[#D4A017]" />
-                      Edit Tariff
+                      {tr(lang, 'Edit Tariff', 'کرایہ ترمیم')}
                     </button>
                   </td>
                 </tr>
@@ -239,13 +257,17 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
 
       {/* SECTION 2: GLOBAL FARE RULES, PASSENGER NEGOTIATION & COMMUTE MULTIPLIERS */}
       <form onSubmit={handleSaveSettings} className="bg-white rounded-3xl border border-zinc-200 shadow-sm p-6 space-y-6">
-        <div className="flex items-center justify-between pb-4 border-b border-zinc-100">
+        <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-zinc-100">
           <div>
             <h2 className="font-display font-bold text-lg text-[#0D0D10]">
-              Global Multipliers, Commute Tariffs &amp; Offer Bounds
+              {tr(lang, 'Global Multipliers, Commute Tariffs & Offer Bounds', 'عالمی ریٹس، کمیوٹ قوانین اور آفر کی حدود')}
             </h2>
             <p className="text-xs text-zinc-500 mt-0.5">
-              Rules governing Passenger price counter-offers, shared seating splits, and round trips.
+              {tr(
+                lang,
+                'Rules governing Passenger price counter-offers, shared seating splits, and round trips.',
+                'مسافر کرایہ آفر، شیئرڈ سیٹوں اور دو طرفہ سفر کے قوانین۔'
+              )}
             </p>
           </div>
           <button
@@ -254,7 +276,7 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
             className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#D4A017] hover:bg-[#EAB308] text-[#0D0D10] font-bold text-xs shadow-sm transition-colors min-h-[40px]"
           >
             <Save className="w-4 h-4" />
-            {savingSettings ? 'Saving Settings...' : 'Save All Rules'}
+            {savingSettings ? tr(lang, 'Saving Settings...', 'محفوظ ہو رہا ہے...') : tr(lang, 'Save All Rules', 'تمام قوانین محفوظ کریں')}
           </button>
         </div>
 
@@ -263,11 +285,11 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
           <div className="p-4 rounded-2xl bg-zinc-50 border border-zinc-200 space-y-3">
             <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#8F6400]">
               <DollarSign className="w-4 h-4" />
-              Passenger Offer Bounds
+              {tr(lang, 'Passenger Offer Bounds', 'مسافر آفر کی حدود')}
             </div>
             <div>
               <label className="block text-zinc-600 font-semibold mb-1">
-                Go Now Min Offer (% of base fare)
+                {tr(lang, 'Go Now Min Offer (% of base fare)', 'گو ناؤ کم از کم آفر (بنیادی کرایہ کا ٪)')}
               </label>
               <input
                 type="number"
@@ -280,12 +302,12 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                 className="w-full px-3 py-2 rounded-xl border border-zinc-200 font-mono font-bold text-xs"
               />
               <span className="text-[10px] text-zinc-400 mt-1 block">
-                Default: 80% (Prevents unfair under-bidding)
+                {tr(lang, 'Default: 80% (Prevents unfair under-bidding)', 'ڈیفالٹ: 80% (بہت کم کرایہ روکنے کے لیے)')}
               </span>
             </div>
             <div>
               <label className="block text-zinc-600 font-semibold mb-1">
-                Go Now Max Offer (% of base fare)
+                {tr(lang, 'Go Now Max Offer (% of base fare)', 'گو ناؤ زیادہ سے زیادہ آفر (بنیادی کرایہ کا ٪)')}
               </label>
               <input
                 type="number"
@@ -298,7 +320,7 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                 className="w-full px-3 py-2 rounded-xl border border-zinc-200 font-mono font-bold text-xs"
               />
               <span className="text-[10px] text-zinc-400 mt-1 block">
-                Default: 135% (Max passenger tip/surge cap)
+                {tr(lang, 'Default: 135% (Max passenger tip/surge cap)', 'ڈیفالٹ: 135% (زیادہ سے زیادہ آفر کی حد)')}
               </span>
             </div>
           </div>
@@ -307,11 +329,11 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
           <div className="p-4 rounded-2xl bg-zinc-50 border border-zinc-200 space-y-3">
             <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#8F6400]">
               <Percent className="w-4 h-4" />
-              Service Multipliers
+              {tr(lang, 'Service Multipliers', 'سروس ملٹی پلائرز')}
             </div>
             <div>
               <label className="block text-zinc-600 font-semibold mb-1">
-                Return Journey Multiplier (Round Trip)
+                {tr(lang, 'Return Journey Multiplier (Round Trip)', 'دو طرفہ واپسی ملٹی پلائر')}
               </label>
               <input
                 type="text"
@@ -322,12 +344,12 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                 className="w-full px-3 py-2 rounded-xl border border-zinc-200 font-mono font-bold text-xs"
               />
               <span className="text-[10px] text-zinc-400 mt-1 block">
-                Default: 1.85x (15% discount vs two single trips)
+                {tr(lang, 'Default: 1.85x (15% discount vs two single trips)', 'ڈیفالٹ: 1.85x (دو الگ رائیڈز کے مقابلے 15% رعایت)')}
               </span>
             </div>
             <div>
               <label className="block text-zinc-600 font-semibold mb-1">
-                Ride Sharing Per-Seat Discount (%)
+                {tr(lang, 'Ride Sharing Per-Seat Discount (%)', 'رائیڈ شیئرنگ فی سیٹ رعایت (%)')}
               </label>
               <input
                 type="number"
@@ -340,7 +362,7 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                 className="w-full px-3 py-2 rounded-xl border border-zinc-200 font-mono font-bold text-xs"
               />
               <span className="text-[10px] text-zinc-400 mt-1 block">
-                Default: 20% discount for shared seats
+                {tr(lang, 'Default: 20% discount for shared seats', 'ڈیفالٹ: شیئرڈ سیٹوں کے لیے 20% رعایت')}
               </span>
             </div>
           </div>
@@ -349,11 +371,11 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
           <div className="p-4 rounded-2xl bg-zinc-50 border border-zinc-200 space-y-3">
             <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#8F6400]">
               <TrendingUp className="w-4 h-4" />
-              Schedule Commute Defaults
+              {tr(lang, 'Schedule Commute Defaults', 'شیڈول سفر کے ڈیفالٹ ریٹس')}
             </div>
             <div>
               <label className="block text-zinc-600 font-semibold mb-1">
-                Schedule Rate (PKR / km)
+                {tr(lang, 'Schedule Rate (PKR / km)', 'شیڈول ریٹ (روپے / کلومیٹر)')}
               </label>
               <input
                 type="number"
@@ -364,12 +386,12 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                 className="w-full px-3 py-2 rounded-xl border border-zinc-200 font-mono font-bold text-xs"
               />
               <span className="text-[10px] text-zinc-400 mt-1 block">
-                Default: Rs. 38/km for daily recurring rides
+                {tr(lang, 'Default: Rs. 38/km for daily recurring rides', 'ڈیفالٹ: روزانہ شیڈول سفر کے لیے 38 روپے/کلومیٹر')}
               </span>
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="block text-zinc-600 text-[11px] font-semibold mb-1">Pickup Time</label>
+                <label className="block text-zinc-600 text-[11px] font-semibold mb-1">{tr(lang, 'Pickup Time', 'پک اپ وقت')}</label>
                 <input
                   type="text"
                   value={localSettings.schedule_default_pickup}
@@ -380,7 +402,7 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                 />
               </div>
               <div>
-                <label className="block text-zinc-600 text-[11px] font-semibold mb-1">Drop Time</label>
+                <label className="block text-zinc-600 text-[11px] font-semibold mb-1">{tr(lang, 'Drop Time', 'ڈراپ وقت')}</label>
                 <input
                   type="text"
                   value={localSettings.schedule_default_drop}
@@ -393,19 +415,23 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
             </div>
           </div>
 
-          {/* CROSS-CALCULATION RULES: ECONOMY BASE MODES (USER FORMULA) */}
+          {/* CROSS-CALCULATION RULES: ECONOMY BASE MODES */}
           <div className="p-4 rounded-2xl bg-amber-50/60 border border-[#D4A017]/40 space-y-3">
             <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#8F6400]">
               <Car className="w-4 h-4 text-[#D4A017]" />
-              چھوٹی اکانومی گاڑی — سروس ریٹس
+              {tr(lang, 'Small Economy Car — Service Rates', 'چھوٹی اکانومی گاڑی — سروس ریٹس')}
             </div>
             <p className="text-[11px] text-zinc-600">
-              Economy Car (Alto / Mira) per-km rate ranges across all 3 mobility modes:
+              {tr(
+                lang,
+                'Economy Car (Alto / Mira) per-km rate ranges across all 3 mobility modes:',
+                'اکانومی گاڑی (آلٹو / میرا) کے تینوں سروس موڈز کے فی کلومیٹر ریٹس:'
+              )}
             </p>
             <div className="space-y-2">
               <div>
                 <label className="block text-zinc-700 font-semibold mb-1">
-                  Pick & Drop (پک اینڈ ڈراپ): PKR / km
+                  {tr(lang, 'Pick & Drop: PKR / km', 'پِک اینڈ ڈراپ: روپے / کلومیٹر')}
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   <input
@@ -414,7 +440,7 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                     onChange={(e) =>
                       setLocalSettings((s) => ({ ...s, rate_economy_pick_drop_min: e.target.value }))
                     }
-                    placeholder="Min 35"
+                    placeholder={tr(lang, 'Min 35', 'کم از کم 35')}
                     className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-200 font-mono text-xs"
                   />
                   <input
@@ -423,14 +449,14 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                     onChange={(e) =>
                       setLocalSettings((s) => ({ ...s, rate_economy_pick_drop_max: e.target.value }))
                     }
-                    placeholder="Max 45"
+                    placeholder={tr(lang, 'Max 45', 'زیادہ سے زیادہ 45')}
                     className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-200 font-mono text-xs"
                   />
                 </div>
               </div>
               <div>
                 <label className="block text-zinc-700 font-semibold mb-1">
-                  Ride Sharing (رائڈ شیئرنگ): PKR / km
+                  {tr(lang, 'Ride Sharing: PKR / km', 'رائیڈ شیئرنگ: روپے / کلومیٹر')}
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   <input
@@ -439,7 +465,7 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                     onChange={(e) =>
                       setLocalSettings((s) => ({ ...s, rate_economy_ride_share_min: e.target.value }))
                     }
-                    placeholder="Min 30"
+                    placeholder={tr(lang, 'Min 30', 'کم از کم 30')}
                     className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-200 font-mono text-xs"
                   />
                   <input
@@ -448,14 +474,14 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                     onChange={(e) =>
                       setLocalSettings((s) => ({ ...s, rate_economy_ride_share_max: e.target.value }))
                     }
-                    placeholder="Max 40"
+                    placeholder={tr(lang, 'Max 40', 'زیادہ سے زیادہ 40')}
                     className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-200 font-mono text-xs"
                   />
                 </div>
               </div>
               <div>
                 <label className="block text-zinc-700 font-semibold mb-1">
-                  Fuel Sharing (فیول شیئرنگ): PKR / km
+                  {tr(lang, 'Fuel Sharing: PKR / km', 'فیول شیئرنگ: روپے / کلومیٹر')}
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   <input
@@ -464,7 +490,7 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                     onChange={(e) =>
                       setLocalSettings((s) => ({ ...s, rate_economy_fuel_share_min: e.target.value }))
                     }
-                    placeholder="Min 20"
+                    placeholder={tr(lang, 'Min 20', 'کم از کم 20')}
                     className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-200 font-mono text-xs"
                   />
                   <input
@@ -473,7 +499,7 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                     onChange={(e) =>
                       setLocalSettings((s) => ({ ...s, rate_economy_fuel_share_max: e.target.value }))
                     }
-                    placeholder="Max 30"
+                    placeholder={tr(lang, 'Max 30', 'زیادہ سے زیادہ 30')}
                     className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-200 font-mono text-xs"
                   />
                 </div>
@@ -485,15 +511,15 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
           <div className="p-4 rounded-2xl bg-amber-50/60 border border-[#D4A017]/40 space-y-3">
             <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#8F6400]">
               <TrendingUp className="w-4 h-4 text-[#D4A017]" />
-              کیٹیگری اضافہ — Comfort / Sedan / Luxury
+              {tr(lang, 'Category Upgrades — Comfort / Sedan / Luxury', 'کیٹیگری اضافہ — کمفرٹ / سیڈان / لگژری')}
             </div>
             <p className="text-[11px] text-zinc-600">
-              Cross-calculation tier markups added on top of the base rate:
+              {tr(lang, 'Cross-calculation tier markups added on top of the base rate:', 'بنیادی ریٹ پر شامل ہونے والا کیٹیگری اضافہ:')}
             </p>
             <div className="space-y-3">
               <div>
                 <label className="block text-zinc-700 font-semibold mb-1">
-                  کمفرٹ کیٹیگری اضافہ (Comfort Add-on PKR/km)
+                  {tr(lang, 'Comfort Add-on (PKR/km)', 'کمفرٹ کیٹیگری اضافہ (روپے/کلومیٹر)')}
                 </label>
                 <div className="flex items-center gap-2">
                   <span className="font-bold text-zinc-500">+</span>
@@ -507,12 +533,12 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                   />
                   <span className="text-zinc-500 font-mono text-xs">PKR</span>
                 </div>
-                <span className="text-[10px] text-zinc-400 mt-0.5 block">Standard: +5 Rs/km</span>
+                <span className="text-[10px] text-zinc-400 mt-0.5 block">{tr(lang, 'Standard: +5 Rs/km', 'معیاری: +5 روپے/کلومیٹر')}</span>
               </div>
 
               <div>
                 <label className="block text-zinc-700 font-semibold mb-1">
-                  سیڈان کیٹیگری اضافہ (Sedan Add-on PKR/km)
+                  {tr(lang, 'Sedan Add-on (PKR/km)', 'سیڈان کیٹیگری اضافہ (روپے/کلومیٹر)')}
                 </label>
                 <div className="flex items-center gap-2">
                   <span className="font-bold text-zinc-500">+</span>
@@ -526,12 +552,12 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                   />
                   <span className="text-zinc-500 font-mono text-xs">PKR</span>
                 </div>
-                <span className="text-[10px] text-zinc-400 mt-0.5 block">Standard: +20 Rs/km</span>
+                <span className="text-[10px] text-zinc-400 mt-0.5 block">{tr(lang, 'Standard: +20 Rs/km', 'معیاری: +20 روپے/کلومیٹر')}</span>
               </div>
 
               <div>
                 <label className="block text-zinc-700 font-semibold mb-1">
-                  لگژری گاڑیوں پر فیصد اضافہ (Luxury Multiplier %)
+                  {tr(lang, 'Luxury Vehicle Multiplier (%)', 'لگژری گاڑیوں پر فیصد اضافہ (%)')}
                 </label>
                 <div className="flex items-center gap-2">
                   <span className="font-bold text-zinc-500">+</span>
@@ -545,7 +571,7 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                   />
                   <span className="text-zinc-500 font-mono text-xs">%</span>
                 </div>
-                <span className="text-[10px] text-zinc-400 mt-0.5 block">Standard: +10% over rate</span>
+                <span className="text-[10px] text-zinc-400 mt-0.5 block">{tr(lang, 'Standard: +10% over rate', 'معیاری: +10% اضافی')}</span>
               </div>
             </div>
           </div>
@@ -554,15 +580,15 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
           <div className="p-4 rounded-2xl bg-amber-50/60 border border-[#D4A017]/40 space-y-3">
             <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#8F6400]">
               <Users className="w-4 h-4 text-[#D4A017]" />
-              وین اور کوسٹر — وین ریٹس
+              {tr(lang, 'Vans & Coasters — Group Rates', 'وین اور کوسٹر — وین ریٹس')}
             </div>
             <p className="text-[11px] text-zinc-600">
-              Vans and Group Transport per-km calculations:
+              {tr(lang, 'Vans and Group Transport per-km calculations:', 'وین اور گروپ ٹرانسپورٹ کے فی کلومیٹر ریٹس:')}
             </p>
             <div className="space-y-2">
               <div>
                 <label className="block text-zinc-700 font-semibold mb-1">
-                  7-Seater Van (7 سیٹر وین): PKR / km
+                  {tr(lang, '7-Seater Van: PKR / km', '7 سیٹر وین: روپے / کلومیٹر')}
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   <input
@@ -571,7 +597,7 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                     onChange={(e) =>
                       setLocalSettings((s) => ({ ...s, rate_van_7_min: e.target.value }))
                     }
-                    placeholder="Min 20"
+                    placeholder={tr(lang, 'Min 20', 'کم از کم 20')}
                     className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-200 font-mono text-xs"
                   />
                   <input
@@ -580,7 +606,7 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                     onChange={(e) =>
                       setLocalSettings((s) => ({ ...s, rate_van_7_max: e.target.value }))
                     }
-                    placeholder="Max 30"
+                    placeholder={tr(lang, 'Max 30', 'زیادہ سے زیادہ 30')}
                     className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-200 font-mono text-xs"
                   />
                 </div>
@@ -588,7 +614,7 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
 
               <div>
                 <label className="block text-zinc-700 font-semibold mb-1">
-                  15-Seater Van (15 سیٹر وین): PKR / km
+                  {tr(lang, '15-Seater Van: PKR / km', '15 سیٹر وین: روپے / کلومیٹر')}
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   <input
@@ -597,7 +623,7 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                     onChange={(e) =>
                       setLocalSettings((s) => ({ ...s, rate_van_15_min: e.target.value }))
                     }
-                    placeholder="Min 15"
+                    placeholder={tr(lang, 'Min 15', 'کم از کم 15')}
                     className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-200 font-mono text-xs"
                   />
                   <input
@@ -606,7 +632,7 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                     onChange={(e) =>
                       setLocalSettings((s) => ({ ...s, rate_van_15_max: e.target.value }))
                     }
-                    placeholder="Max 25"
+                    placeholder={tr(lang, 'Max 25', 'زیادہ سے زیادہ 25')}
                     className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-200 font-mono text-xs"
                   />
                 </div>
@@ -614,7 +640,7 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
 
               <div>
                 <label className="block text-zinc-700 font-semibold mb-1">
-                  Coaster (کوسٹر 28 سیٹر): PKR / km
+                  {tr(lang, 'Coaster (28-Seater): PKR / km', 'کوسٹر (28 سیٹر): روپے / کلومیٹر')}
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   <input
@@ -623,7 +649,7 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                     onChange={(e) =>
                       setLocalSettings((s) => ({ ...s, rate_coaster_min: e.target.value }))
                     }
-                    placeholder="Min 12"
+                    placeholder={tr(lang, 'Min 12', 'کم از کم 12')}
                     className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-200 font-mono text-xs"
                   />
                   <input
@@ -632,7 +658,7 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                     onChange={(e) =>
                       setLocalSettings((s) => ({ ...s, rate_coaster_max: e.target.value }))
                     }
-                    placeholder="Max 25"
+                    placeholder={tr(lang, 'Max 25', 'زیادہ سے زیادہ 25')}
                     className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-200 font-mono text-xs"
                   />
                 </div>
@@ -653,10 +679,14 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                 </div>
                 <div>
                   <h3 className="font-display font-bold text-base">
-                    Edit Tariff: {editingFleet.name}
+                    {tr(lang, 'Edit Tariff:', 'کرایہ ترمیم:')} {editingFleet.name}
                   </h3>
                   <p className="text-[11px] text-zinc-400">
-                    Saves directly to database and takes effect immediately for new bookings.
+                    {tr(
+                      lang,
+                      'Saves directly to database and takes effect immediately for new bookings.',
+                      'براہِ راست ڈیٹا بیس میں محفوظ ہوتا ہے اور نئی بکنگز پر فوری لاگو ہوتا ہے۔'
+                    )}
                   </p>
                 </div>
               </div>
@@ -672,7 +702,7 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
             <form onSubmit={handleSaveTariff} className="p-6 space-y-4 text-xs">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block font-semibold text-zinc-700 mb-1">Base Fare (PKR)</label>
+                  <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'Base Fare (PKR)', 'بنیادی کرایہ (روپے)')}</label>
                   <input
                     type="number"
                     min={0}
@@ -686,7 +716,7 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                 </div>
 
                 <div>
-                  <label className="block font-semibold text-zinc-700 mb-1">Commission (%)</label>
+                  <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'Commission (%)', 'کمیشن (%)')}</label>
                   <input
                     type="number"
                     min={0}
@@ -701,7 +731,7 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                 </div>
 
                 <div>
-                  <label className="block font-semibold text-zinc-700 mb-1">Per-KM Min (PKR)</label>
+                  <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'Per-KM Min (PKR)', 'کم از کم ریٹ/کلومیٹر (روپے)')}</label>
                   <input
                     type="number"
                     min={0}
@@ -715,7 +745,7 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                 </div>
 
                 <div>
-                  <label className="block font-semibold text-zinc-700 mb-1">Per-KM Max (PKR)</label>
+                  <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'Per-KM Max (PKR)', 'زیادہ سے زیادہ ریٹ/کلومیٹر (روپے)')}</label>
                   <input
                     type="number"
                     min={0}
@@ -729,7 +759,7 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                 </div>
 
                 <div>
-                  <label className="block font-semibold text-zinc-700 mb-1">Waiting Charge / min (PKR)</label>
+                  <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'Waiting Charge / min (PKR)', 'انتظار چارجز / منٹ (روپے)')}</label>
                   <input
                     type="number"
                     min={0}
@@ -745,7 +775,7 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                 </div>
 
                 <div>
-                  <label className="block font-semibold text-zinc-700 mb-1">Extra Stop Charge (PKR)</label>
+                  <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'Extra Stop Charge (PKR)', 'اضافی اسٹاپ چارج (روپے)')}</label>
                   <input
                     type="number"
                     min={0}
@@ -764,14 +794,14 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
                   onClick={() => setEditingFleet(null)}
                   className="px-4 py-2.5 rounded-xl border border-zinc-300 font-bold text-zinc-700 hover:bg-zinc-50"
                 >
-                  Cancel
+                  {tr(lang, 'Cancel', 'منسوخ')}
                 </button>
                 <button
                   type="submit"
                   disabled={savingTariff}
                   className="px-6 py-2.5 rounded-xl bg-[#0D0D10] text-white font-bold hover:bg-zinc-800 disabled:opacity-50"
                 >
-                  {savingTariff ? 'Saving Tariff...' : 'Save Tariff Changes'}
+                  {savingTariff ? tr(lang, 'Saving Tariff...', 'محفوظ ہو رہا ہے...') : tr(lang, 'Save Tariff Changes', 'تبدیلیاں محفوظ کریں')}
                 </button>
               </div>
             </form>

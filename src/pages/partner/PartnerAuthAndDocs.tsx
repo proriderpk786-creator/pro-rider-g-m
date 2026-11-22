@@ -8,14 +8,19 @@ import {
   FileCheck2,
   Loader2,
   Lock,
+  Mail,
   Phone,
   ShieldAlert,
+  ShieldCheck,
   Upload,
   User as UserIcon,
 } from 'lucide-react';
+import heroMobilityImg from '../../assets/images/hero_mobility_pakistan_1794584048013.jpg';
 import { BrandLogo, LanguageToggle, VehicleImage } from '../../components/BrandMark';
 import { DEFAULT_PUBLIC_CONFIG } from '../../config/defaultConfig';
 import { formatFirebaseAuthError, useFirebase } from '../../contexts/FirebaseContext';
+import { useTheme } from '../../contexts/ThemeContext';
+import { tr, trService, trVerificationStatus } from '../../i18n/translations';
 import { apiRequest, isBackendOfflineError, setRoleToken, setStoredRoleUser } from '../../utils/api';
 import { compressAndReadUploadFile } from '../../utils/imageUpload';
 import type {
@@ -34,6 +39,7 @@ export const PartnerAuth: React.FC<{
   onAuthenticated: (token: string, user: User, profile: PartnerProfile) => void;
   onBackWelcome: () => void;
 }> = ({ lang, onChangeLang, onAuthenticated, onBackWelcome }) => {
+  const { authLayout } = useTheme();
   const {
     signInWithGooglePopup,
     registerWithFirebaseEmail,
@@ -55,6 +61,7 @@ export const PartnerAuth: React.FC<{
   const [operatingArea, setOperatingArea] = useState('');
   const [vehicleCategoryId, setVehicleCategoryId] = useState('fleet-sedan');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [emailVerificationPending, setEmailVerificationPending] = useState(false);
 
   const [loading, setLoading] = useState(false);
@@ -196,9 +203,7 @@ export const PartnerAuth: React.FC<{
     const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail || !cleanEmail.includes('@')) {
       setError(
-        lang === 'ur'
-          ? 'درست ای میل ایڈریس درج کریں۔'
-          : 'Please enter the email address associated with your Pro Partner account.'
+        tr(lang, 'Please enter the email address associated with your Pro Partner account.', 'درست ای میل ایڈریس درج کریں۔')
       );
       return;
     }
@@ -208,9 +213,11 @@ export const PartnerAuth: React.FC<{
       try {
         await sendFirebasePasswordReset(cleanEmail);
         setInfo(
-          lang === 'ur'
-            ? `پاس ورڈ ری سیٹ لنک ${cleanEmail} پر بھیجا گیا ہے۔`
-            : `Password reset link sent to ${cleanEmail}. Check your inbox and Spam folder.`
+          tr(
+            lang,
+            `Password reset link sent to ${cleanEmail}. Check your inbox and Spam folder.`,
+            `پاس ورڈ ری سیٹ لنک ${cleanEmail} پر بھیجا گیا ہے۔`
+          )
         );
       } catch (err: any) {
         try {
@@ -229,7 +236,7 @@ export const PartnerAuth: React.FC<{
     }
 
     if (!password || password.length < 6) {
-      setError(lang === 'ur' ? 'پاس ورڈ کم از کم 6 حروف کا ہونا ضروری ہے۔' : 'Password must be at least 6 characters.');
+      setError(tr(lang, 'Password must be at least 6 characters.', 'پاس ورڈ کم از کم 6 حروف کا ہونا ضروری ہے۔'));
       return;
     }
 
@@ -262,9 +269,11 @@ export const PartnerAuth: React.FC<{
           if (!fbRes.emailVerified) {
             setEmailVerificationPending(true);
             setInfo(
-              lang === 'ur'
-                ? `براہ کرم ${cleanEmail} کی تصدیق لنک کے ذریعے مکمل کریں۔`
-                : `Verification email sent to ${cleanEmail}. Please click the link and tap "I've Verified — Continue".`
+              tr(
+                lang,
+                `Verification email sent to ${cleanEmail}. Please click the link and tap "I've Verified — Continue".`,
+                `براہ کرم ${cleanEmail} کی تصدیق لنک کے ذریعے مکمل کریں۔`
+              )
             );
             return;
           }
@@ -303,9 +312,11 @@ export const PartnerAuth: React.FC<{
           } else {
             setEmailVerificationPending(true);
             setInfo(
-              lang === 'ur'
-                ? `تصدیقی لنک ${cleanEmail} پر بھیجا گیا ہے۔ ای میل میں لنک کھول کر نیچے بٹن دبائیں۔`
-                : `Verification email sent to ${cleanEmail}. Open your inbox and verify before continuing.`
+              tr(
+                lang,
+                `Verification email sent to ${cleanEmail}. Open your inbox and verify before continuing.`,
+                `تصدیقی لنک ${cleanEmail} پر بھیجا گیا ہے۔ ای میل میں لنک کھول کر نیچے بٹن دبائیں۔`
+              )
             );
           }
         } catch (fbErr: any) {
@@ -352,318 +363,439 @@ export const PartnerAuth: React.FC<{
     }
   };
 
-  return (
-    <div dir={lang === 'ur' ? 'rtl' : 'ltr'} className="min-h-screen w-full max-w-full overflow-x-clip bg-[#0D0D10] text-white flex flex-col">
-      <header className="border-b border-zinc-800 bg-[#0D0D10] px-3 sm:px-8 h-14 sm:h-16 flex items-center justify-between gap-2 w-full">
-        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-          <button type="button" onClick={onBackWelcome} className="p-2 rounded-lg hover:bg-zinc-900 text-zinc-400 shrink-0">
-            <ArrowLeft className="w-4 h-4" />
-          </button>
-          <BrandLogo dark compact />
-        </div>
-        <div className="shrink-0 scale-90 sm:scale-100 origin-right">
-          <LanguageToggle lang={lang} onChange={onChangeLang} dark />
-        </div>
-      </header>
+  const AuthCardBody = (
+    <div
+      className={`w-full border border-[#D4A017]/40 bg-white p-6 sm:p-8 shadow-xl space-y-5 ${
+        authLayout === 'hero-sheet' ? 'rounded-t-[32px] sm:rounded-3xl' : 'rounded-3xl'
+      }`}
+    >
+      {authLayout === 'hero-sheet' && (
+        <div className="w-12 h-1.5 rounded-full bg-[#D4A017]/50 mx-auto sm:hidden -mt-2" />
+      )}
 
-      <main className="flex-1 flex items-center justify-center p-4 py-10">
-        <div className="w-full max-w-md rounded-3xl bg-[#16171C] border border-zinc-800 p-6 sm:p-8 space-y-5">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-widest text-[#D4A017]">Pro Partner Portal</p>
-            <h1 className="font-display text-2xl font-bold mt-1">
-              {mode === 'login' ? 'Pro Partner Sign In' : mode === 'register' ? 'Become a Pro Partner' : 'Reset Password'}
-            </h1>
-            <p className="text-xs text-zinc-400 mt-1">
-              {lang === 'ur'
-                ? 'Google یا اپنے ای میل اور پاس ورڈ کے ذریعے ڈرائیور پورٹل میں داخل ہوں۔'
-                : 'Sign in with Google or your Email & Password.'}
-            </p>
+      <div className="text-center sm:text-start">
+        <p className="text-xs font-bold uppercase tracking-widest text-[#B8860B]">
+          {tr(lang, 'Pro Partner Portal', 'پرو پارٹنر پورٹل')}
+        </p>
+        <h1 className="font-display text-2xl font-bold mt-1 text-[#0D0D10]">
+          {mode === 'login'
+            ? tr(lang, 'Pro Partner Sign In', 'پرو پارٹنر سائن ان')
+            : mode === 'register'
+            ? tr(lang, 'Become a Pro Partner', 'پرو پارٹنر بنیں')
+            : tr(lang, 'Reset Password', 'پاس ورڈ ری سیٹ کریں')}
+        </h1>
+        <p className="text-xs text-zinc-500 mt-1">
+          {tr(
+            lang,
+            'Sign in with Google or your Email & Password.',
+            'Google یا اپنے ای میل اور پاس ورڈ کے ذریعے ڈرائیور پورٹل میں داخل ہوں۔'
+          )}
+        </p>
+      </div>
+
+      {!emailVerificationPending && (
+        <>
+          <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-zinc-100 border border-[#D4A017]/30 text-xs font-semibold">
+            <button
+              type="button"
+              onClick={() => {
+                setMode('login');
+                setError(null);
+                setInfo(null);
+              }}
+              className={`py-2.5 rounded-lg transition-colors ${
+                mode === 'login' ? 'pr-gold-cta font-bold' : 'text-zinc-600 hover:text-[#0D0D10]'
+              }`}
+            >
+              {tr(lang, 'Login', 'لاگ اِن')}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setMode('register');
+                setError(null);
+                setInfo(null);
+              }}
+              className={`py-2.5 rounded-lg transition-colors ${
+                mode === 'register' ? 'pr-gold-cta font-bold' : 'text-zinc-600 hover:text-[#0D0D10]'
+              }`}
+            >
+              {tr(lang, 'Register', 'رجسٹر')}
+            </button>
           </div>
 
-          {!emailVerificationPending && (
+          {mode !== 'forgot' && (
             <>
-              <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-zinc-900 text-xs font-semibold">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMode('login');
-                    setError(null);
-                    setInfo(null);
-                  }}
-                  className={`py-2 rounded-lg ${mode === 'login' ? 'bg-[#D4A017] text-[#0D0D10] font-bold' : 'text-zinc-400'}`}
-                >
-                  {lang === 'ur' ? 'لاگ اِن' : 'Login'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMode('register');
-                    setError(null);
-                    setInfo(null);
-                  }}
-                  className={`py-2 rounded-lg ${mode === 'register' ? 'bg-[#D4A017] text-[#0D0D10] font-bold' : 'text-zinc-400'}`}
-                >
-                  {lang === 'ur' ? 'رجسٹر' : 'Register'}
-                </button>
+              <button
+                type="button"
+                disabled={loading}
+                onClick={handleGoogleSignIn}
+                className="pr-preserve-light w-full flex items-center justify-center gap-2.5 py-3 rounded-2xl border border-zinc-300 bg-white hover:bg-zinc-50 !text-[#0D0D10] text-xs font-bold disabled:opacity-60"
+              >
+                <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+                  <path fill="#EA4335" d="M12 10.2v3.9h5.5c-.2 1.3-1.5 3.9-5.5 3.9-3.3 0-6-2.7-6-6s2.7-6 6-6c1.9 0 3.1.8 3.9 1.5l2.7-2.6C16.9 3.3 14.7 2.4 12 2.4 6.7 2.4 2.4 6.7 2.4 12s4.3 9.6 9.6 9.6c5.5 0 9.2-3.9 9.2-9.4 0-.6-.1-1.1-.2-1.6H12z" />
+                </svg>
+                {tr(lang, 'Continue with Google', 'Google کے ساتھ جاری رکھیں')}
+              </button>
+
+              <div className="relative flex items-center justify-center">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-zinc-200" />
+                </div>
+                <span className="relative bg-white px-3 text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
+                  {tr(lang, 'Or continue with Email', 'یا ای میل کے ساتھ')}
+                </span>
               </div>
+            </>
+          )}
+        </>
+      )}
 
-              {mode !== 'forgot' && (
-                <>
-                  <button
-                    type="button"
-                    disabled={loading}
-                    onClick={handleGoogleSignIn}
-                    className="w-full flex items-center justify-center gap-2.5 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-white text-xs font-bold hover:bg-zinc-800 disabled:opacity-60"
+      {error && <div className="rounded-xl bg-red-50 border border-red-200 px-3.5 py-2.5 text-xs text-red-700">{error}</div>}
+      {info && <div className="rounded-xl bg-amber-50 border border-amber-200 px-3.5 py-2.5 text-xs text-amber-900">{info}</div>}
+
+      {emailVerificationPending ? (
+        <div className="space-y-4 text-xs text-center">
+          <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 space-y-2">
+            <p className="font-bold text-sm text-[#0D0D10]">
+              {tr(lang, 'Verify Partner Email', 'ڈرائیور ای میل کی تصدیق کریں')}
+            </p>
+            <p className="text-zinc-600">
+              {tr(lang, `Open the verification link sent to ${email}.`, `ای میل (${email}) میں بھیجے گئے لنک پر کلک کریں۔`)}
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={loading}
+            onClick={async () => {
+              setLoading(true);
+              try {
+                const reloaded = await reloadFirebaseUser('partner', city, lang);
+                if (!reloaded || !reloaded.emailVerified) {
+                  setError(tr(lang, 'Email is not verified yet. Check your inbox and click the link first.', 'ای میل ابھی تصدیق نہیں ہوئی۔'));
+                  return;
+                }
+                await finalizePartnerSession(reloaded.idToken, reloaded.user, fullName);
+              } catch (err: any) {
+                setError(formatFirebaseAuthError(err, 'Email Verification'));
+              } finally {
+                setLoading(false);
+              }
+            }}
+            className="w-full py-3 rounded-xl pr-gold-cta text-sm font-bold"
+          >
+            {loading ? tr(lang, 'Checking...', 'چیک ہو رہا ہے...') : tr(lang, "I've Verified — Continue", 'تصدیق مکمل — آگے بڑھیں')}
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              void resendFirebaseEmailVerification().then(() =>
+                setInfo(tr(lang, 'Verification email resent!', 'تصدیقی ای میل دوبارہ بھیج دی گئی۔'))
+              )
+            }
+            className="text-[#B8860B] hover:underline font-semibold"
+          >
+            {tr(lang, 'Resend Verification Email', 'تصدیقی ای میل دوبارہ بھیجیں')}
+          </button>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit} className="space-y-4 text-xs">
+          {mode === 'register' && (
+            <div>
+              <label className="block font-semibold text-zinc-700 mb-1">
+                {tr(lang, 'Full Name (as per CNIC)', 'مکمل نام (شناختی کارڈ کے مطابق)')}
+              </label>
+              <div className="relative">
+                <UserIcon className="w-4 h-4 text-[#D4A017] absolute start-3 top-3" />
+                <input
+                  required
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  placeholder={tr(lang, 'e.g. Asif Ali', 'مثال: آصف علی')}
+                  className="w-full ps-9 pe-3 py-2.5 rounded-xl border border-zinc-200 text-sm"
+                />
+              </div>
+            </div>
+          )}
+
+          <div>
+            <label className="block font-semibold text-zinc-700 mb-1">
+              {tr(lang, 'Email Address', 'ای میل ایڈریس')}
+            </label>
+            <div className="relative">
+              <Mail className="w-4 h-4 text-[#D4A017] absolute start-3 top-3" />
+              <input
+                required
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="driver@email.com"
+                className="w-full ps-9 pe-3 py-2.5 rounded-xl border border-zinc-200 text-sm"
+              />
+            </div>
+          </div>
+
+          {mode === 'register' && (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-zinc-700 mb-1">
+                    {tr(lang, 'Mobile (Optional)', 'موبائل (اختیاری)')}
+                  </label>
+                  <input
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    placeholder="03XXXXXXXXX"
+                    className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 text-sm font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-zinc-700 mb-1">
+                    {tr(lang, 'City', 'شہر')}
+                  </label>
+                  <select
+                    value={city}
+                    onChange={(e) => setCity(e.target.value)}
+                    className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 bg-white text-sm"
                   >
-                    <svg className="w-4 h-4" viewBox="0 0 24 24" aria-hidden="true">
-                      <path fill="#EA4335" d="M12 10.2v3.9h5.5c-.2 1.3-1.5 3.9-5.5 3.9-3.3 0-6-2.7-6-6s2.7-6 6-6c1.9 0 3.1.8 3.9 1.5l2.7-2.6C16.9 3.3 14.7 2.4 12 2.4 6.7 2.4 2.4 6.7 2.4 12s4.3 9.6 9.6 9.6c5.5 0 9.2-3.9 9.2-9.4 0-.6-.1-1.1-.2-1.6H12z" />
-                    </svg>
-                    {lang === 'ur' ? 'Google کے ساتھ جاری رکھیں' : 'Continue with Google'}
-                  </button>
-
-                  <div className="relative flex items-center justify-center">
-                    <div className="absolute inset-0 flex items-center">
-                      <div className="w-full border-t border-zinc-800" />
-                    </div>
-                    <span className="relative bg-[#16171C] px-3 text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">
-                      {lang === 'ur' ? 'یا ای میل کے ساتھ' : 'Or continue with Email'}
-                    </span>
-                  </div>
-                </>
-              )}
+                    <option value="Islamabad">{tr(lang, 'Islamabad', 'اسلام آباد')}</option>
+                    <option value="Rawalpindi">{tr(lang, 'Rawalpindi', 'راولپنڈی')}</option>
+                    <option value="Lahore">{tr(lang, 'Lahore', 'لاہور')}</option>
+                    <option value="Karachi">{tr(lang, 'Karachi', 'کراچی')}</option>
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-zinc-700 mb-1">
+                    {tr(lang, 'WhatsApp', 'واٹس ایپ')}
+                  </label>
+                  <input
+                    value={whatsapp}
+                    onChange={(e) => setWhatsapp(e.target.value)}
+                    placeholder="03XXXXXXXXX"
+                    className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 text-sm font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-zinc-700 mb-1">
+                    {tr(lang, 'Operating Area', 'علاقہ / سیکٹر')}
+                  </label>
+                  <input
+                    value={operatingArea}
+                    onChange={(e) => setOperatingArea(e.target.value)}
+                    placeholder={tr(lang, 'e.g. F-10 / Blue Area', 'مثال: ایف-10 / بلیو ایریا')}
+                    className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 text-sm"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block font-semibold text-zinc-700 mb-1">
+                  {tr(lang, 'Vehicle Category (incl. 7-Seater Van)', 'گاڑی کی کیٹگری (سیون سیٹر سمیت)')}
+                </label>
+                <select
+                  value={vehicleCategoryId}
+                  onChange={(e) => setVehicleCategoryId(e.target.value)}
+                  className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 bg-white text-sm"
+                >
+                  {DEFAULT_PUBLIC_CONFIG.fleet.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.name} ({f.seating_capacity} {tr(lang, 'Seats', 'سیٹیں')})
+                    </option>
+                  ))}
+                </select>
+              </div>
             </>
           )}
 
-          {error && <div className="rounded-xl bg-red-950/60 border border-red-800 px-3.5 py-2.5 text-xs text-red-200">{error}</div>}
-          {info && <div className="rounded-xl bg-amber-950/60 border border-amber-800 px-3.5 py-2.5 text-xs text-amber-200">{info}</div>}
-
-          {emailVerificationPending ? (
-            <div className="space-y-4 text-xs text-center">
-              <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-700 space-y-2">
-                <p className="font-bold text-sm text-[#D4A017]">Verify Partner Email</p>
-                <p className="text-zinc-300">Open the verification link sent to <strong className="font-mono">{email}</strong>.</p>
+          {mode !== 'forgot' && (
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="font-semibold text-zinc-700">{tr(lang, 'Password', 'پاس ورڈ')}</label>
+                <button
+                  type="button"
+                  onClick={() => setMode('forgot')}
+                  className="text-[11px] font-semibold text-[#B8860B] hover:underline"
+                >
+                  {tr(lang, 'Forgot Password?', 'پاس ورڈ بھول گئے؟')}
+                </button>
               </div>
-              <button
-                type="button"
-                disabled={loading}
-                onClick={async () => {
-                  setLoading(true);
-                  try {
-                    const reloaded = await reloadFirebaseUser('partner', city, lang);
-                    if (!reloaded || !reloaded.emailVerified) {
-                      setError('Email is not verified yet. Check your inbox and click the link first.');
-                      return;
-                    }
-                    await finalizePartnerSession(reloaded.idToken, reloaded.user, fullName);
-                  } catch (err: any) {
-                    setError(formatFirebaseAuthError(err, 'Email Verification'));
-                  } finally {
-                    setLoading(false);
-                  }
-                }}
-                className="w-full py-3 rounded-xl bg-[#D4A017] text-[#0D0D10] text-sm font-bold"
-              >
-                {loading ? 'Checking...' : "I've Verified — Continue"}
-              </button>
-              <button
-                type="button"
-                onClick={() => void resendFirebaseEmailVerification().then(() => setInfo('Verification email resent!'))}
-                className="text-[#D4A017] hover:underline font-semibold"
-              >
-                Resend Verification Email
-              </button>
-            </div>
-          ) : (
-            <form onSubmit={handleSubmit} className="space-y-4">
-              {mode === 'register' && (
-                <div>
-                  <label className="block text-xs font-semibold text-zinc-300 mb-1">Full Name (as per CNIC)</label>
-                  <div className="relative">
-                    <UserIcon className="w-4 h-4 text-zinc-500 absolute left-3 top-3" />
-                    <input
-                      required
-                      value={fullName}
-                      onChange={(e) => setFullName(e.target.value)}
-                      placeholder="e.g. Asif Ali"
-                      className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
-                    />
-                  </div>
-                </div>
-              )}
-
-              <div>
-                <label className="block text-xs font-semibold text-zinc-300 mb-1">Email Address</label>
+              <div className="relative">
+                <Lock className="w-4 h-4 text-[#D4A017] absolute start-3 top-3" />
                 <input
                   required
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="driver@email.com"
-                  className="w-full px-3 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
+                  type={showPassword ? 'text' : 'password'}
+                  minLength={6}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder={tr(lang, 'Minimum 6 characters', 'کم از کم 6 حروف')}
+                  className="w-full ps-9 pe-10 py-2.5 rounded-xl border border-zinc-200 text-sm"
                 />
-              </div>
-
-              {mode === 'register' && (
-                <>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-semibold text-zinc-300 mb-1">Mobile (Optional)</label>
-                      <input
-                        value={phone}
-                        onChange={(e) => setPhone(e.target.value)}
-                        placeholder="03XXXXXXXXX"
-                        className="w-full px-3 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-zinc-300 mb-1">City</label>
-                      <select
-                        value={city}
-                        onChange={(e) => setCity(e.target.value)}
-                        className="w-full px-3 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
-                      >
-                        <option value="Islamabad">Islamabad</option>
-                        <option value="Rawalpindi">Rawalpindi</option>
-                        <option value="Lahore">Lahore</option>
-                        <option value="Karachi">Karachi</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-semibold text-zinc-300 mb-1">WhatsApp</label>
-                      <input
-                        value={whatsapp}
-                        onChange={(e) => setWhatsapp(e.target.value)}
-                        placeholder="03XXXXXXXXX"
-                        className="w-full px-3 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-zinc-300 mb-1">Operating Area</label>
-                      <input
-                        value={operatingArea}
-                        onChange={(e) => setOperatingArea(e.target.value)}
-                        placeholder="e.g. F-10 / Blue Area"
-                        className="w-full px-3 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-zinc-300 mb-1">
-                      {lang === 'ur' ? 'گاڑی کی کیٹگری (سیون سیٹر سمیت)' : 'Vehicle Category (incl. 7-Seater Van)'}
-                    </label>
-                    <select
-                      value={vehicleCategoryId}
-                      onChange={(e) => setVehicleCategoryId(e.target.value)}
-                      className="w-full px-3 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
-                    >
-                      {DEFAULT_PUBLIC_CONFIG.fleet.map((f) => (
-                        <option key={f.id} value={f.id}>
-                          {f.name} ({f.seating_capacity} Seats)
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </>
-              )}
-
-              {mode !== 'forgot' && (
-                <div>
-                  <label className="block text-xs font-semibold text-zinc-300 mb-1">Password</label>
-                  <div className="relative">
-                    <Lock className="w-4 h-4 text-zinc-500 absolute left-3 top-3" />
-                    <input
-                      required
-                      type="password"
-                      minLength={6}
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="Minimum 6 characters"
-                      className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
-                    />
-                  </div>
-                </div>
-              )}
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full py-3 rounded-xl bg-[#D4A017] text-[#0D0D10] text-sm font-bold hover:bg-[#EAB308]"
-              >
-                {loading
-                  ? 'Processing...'
-                  : mode === 'login'
-                  ? 'Sign In with Email'
-                  : mode === 'register'
-                  ? 'Register with Email'
-                  : 'Send Password Reset Email'}
-              </button>
-            </form>
-          )}
-
-          {/* DIMMED, DISABLED CIRCULAR "COMING SOON" BUTTONS AT BOTTOM (Facebook & Phone OTP) */}
-          {!emailVerificationPending && (
-            <div className="pt-3 border-t border-zinc-800 flex flex-col items-center gap-2">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
-                {lang === 'ur' ? 'فیس بک اور فون او ٹی پی · کمنگ سون' : 'Facebook & Phone SMS OTP · Coming Soon'}
-              </span>
-              <div className="flex items-center justify-center gap-4">
-                <div className="flex flex-col items-center gap-1 opacity-45 select-none">
-                  <button
-                    type="button"
-                    disabled
-                    aria-disabled="true"
-                    title="Facebook Login — Coming Soon (Under Meta Review)"
-                    className="w-10 h-10 rounded-full bg-zinc-900 border border-zinc-700 flex items-center justify-center text-[#1877F2] cursor-not-allowed"
-                  >
-                    <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24" aria-hidden="true">
-                      <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" />
-                    </svg>
-                  </button>
-                  <span className="text-[9px] font-semibold text-zinc-500">
-                    {lang === 'ur' ? 'کمنگ سون' : 'Coming Soon'}
-                  </span>
-                </div>
-
-                <div className="flex flex-col items-center gap-1 opacity-45 select-none">
-                  <button
-                    type="button"
-                    disabled
-                    aria-disabled="true"
-                    title="Phone SMS OTP — Coming Soon"
-                    className="w-10 h-10 rounded-full bg-zinc-900 border border-zinc-700 flex items-center justify-center text-zinc-400 cursor-not-allowed"
-                  >
-                    <Phone className="w-4 h-4" />
-                  </button>
-                  <span className="text-[9px] font-semibold text-zinc-500">
-                    {lang === 'ur' ? 'کمنگ سون' : 'Coming Soon'}
-                  </span>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((s) => !s)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  className="absolute end-3 top-2.5 text-zinc-400 hover:text-[#D4A017]"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
               </div>
             </div>
           )}
 
-          <div className="flex justify-between text-xs text-zinc-400 pt-2 border-t border-zinc-800">
-            <button type="button" onClick={() => setMode(mode === 'forgot' ? 'login' : 'forgot')} className="hover:text-white">
-              {mode === 'forgot' ? 'Back to Login' : 'Forgot Password?'}
-            </button>
-            <span>Driver-Only Session</span>
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full py-3.5 rounded-2xl pr-gold-cta text-sm font-bold transition-transform hover:scale-[1.01]"
+          >
+            {loading
+              ? tr(lang, 'Processing...', 'جاری ہے...')
+              : mode === 'login'
+              ? tr(lang, 'Sign In', 'سائن ان کریں')
+              : mode === 'register'
+              ? tr(lang, 'Register Pro Partner', 'پرو پارٹنر رجسٹر کریں')
+              : tr(lang, 'Send Password Reset Email', 'پاس ورڈ ری سیٹ ای میل بھیجیں')}
+          </button>
+
+          {mode === 'forgot' && (
+            <div className="text-center">
+              <button
+                type="button"
+                onClick={() => setMode('login')}
+                className="text-xs font-semibold text-zinc-500 hover:text-[#0D0D10]"
+              >
+                {tr(lang, '← Back to Login', '← واپس لاگ ان پر جائیں')}
+              </button>
+            </div>
+          )}
+        </form>
+      )}
+
+      {/* DIMMED, DISABLED CIRCULAR "COMING SOON" BUTTONS AT BOTTOM (Facebook & Phone OTP) */}
+      {!emailVerificationPending && (
+        <div className="pt-3 border-t border-zinc-100 flex flex-col items-center gap-2">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+            {tr(lang, 'Facebook & Phone SMS OTP · Coming Soon', 'فیس بک اور فون او ٹی پی · کمنگ سون')}
+          </span>
+          <div className="flex items-center justify-center gap-4">
+            <div className="flex flex-col items-center gap-1 opacity-45 select-none">
+              <button
+                type="button"
+                disabled
+                aria-disabled="true"
+                title={tr(lang, 'Facebook Login — Coming Soon (Under Meta Review)', 'فیس بک لاگ ان — جلد آ رہا ہے')}
+                className="w-10 h-10 rounded-full bg-zinc-100 border border-zinc-200 flex items-center justify-center text-[#1877F2] cursor-not-allowed"
+              >
+                <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" />
+                </svg>
+              </button>
+              <span className="text-[9px] font-semibold text-zinc-400">
+                {tr(lang, 'Coming Soon', 'کمنگ سون')}
+              </span>
+            </div>
+
+            <div className="flex flex-col items-center gap-1 opacity-45 select-none">
+              <button
+                type="button"
+                disabled
+                aria-disabled="true"
+                title={tr(lang, 'Phone SMS OTP — Coming Soon', 'فون ایس ایم ایس او ٹی پی — جلد آ رہا ہے')}
+                className="w-10 h-10 rounded-full bg-zinc-100 border border-zinc-200 flex items-center justify-center text-zinc-600 cursor-not-allowed"
+              >
+                <Phone className="w-4 h-4" />
+              </button>
+              <span className="text-[9px] font-semibold text-zinc-400">
+                {tr(lang, 'Coming Soon', 'کمنگ سون')}
+              </span>
+            </div>
           </div>
         </div>
-      </main>
+      )}
+    </div>
+  );
+
+  return (
+    <div dir={lang === 'ur' ? 'rtl' : 'ltr'} className="min-h-screen w-full max-w-full overflow-x-clip bg-[#F8F8FA] flex flex-col">
+      <header className="border-b border-zinc-200 bg-white px-3 sm:px-8 h-14 sm:h-16 flex items-center justify-between gap-2 w-full sticky top-0 z-30">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          <button type="button" onClick={onBackWelcome} className="p-2 rounded-lg hover:bg-zinc-100 text-zinc-500 shrink-0">
+            <ArrowLeft className={`w-4 h-4 ${lang === 'ur' ? 'rotate-180' : ''}`} />
+          </button>
+          <BrandLogo compact lang={lang} />
+        </div>
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          <LanguageToggle lang={lang} onChange={onChangeLang} />
+        </div>
+      </header>
+
+      {authLayout === 'classic-card' && (
+        <main className="flex-1 flex items-center justify-center p-4 py-10">
+          <div className="w-full max-w-md">{AuthCardBody}</div>
+        </main>
+      )}
+
+      {authLayout === 'hero-sheet' && (
+        <main className="flex-1 flex flex-col items-center">
+          <div className="w-full max-w-2xl mx-auto">
+            <div className="pr-preserve-light relative h-44 sm:h-56 w-full overflow-hidden sm:rounded-b-3xl bg-[#0D0D10]">
+              <img
+                src={heroMobilityImg}
+                alt="PRO PARTNER"
+                referrerPolicy="no-referrer"
+                className="w-full h-full object-cover object-center opacity-80"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/35 to-black/25 flex flex-col justify-end p-5 sm:p-8">
+                <p className="text-[11px] font-bold uppercase tracking-widest !text-[#F4C430]">
+                  PRO RIDER AI
+                </p>
+                <h2 className="font-display text-2xl sm:text-3xl font-bold !text-white">
+                  {tr(lang, 'PRO PARTNER', 'پرو پارٹنر')}
+                </h2>
+                <p className="text-xs !text-zinc-200 mt-0.5">
+                  {tr(lang, 'Drive Smart. Earn More. Grow Together.', 'سمجھداری سے چلائیں، زیادہ کمائیں، اعتماد سے آگے بڑھیں۔')}
+                </p>
+              </div>
+            </div>
+            <div className="px-0 sm:px-4 -mt-6 relative z-10 pb-8">{AuthCardBody}</div>
+          </div>
+        </main>
+      )}
+
+      {authLayout === 'split-showcase' && (
+        <main className="flex-1 max-w-6xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8 grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
+          <div className="hidden lg:flex lg:col-span-6 flex-col space-y-5">
+            <div className="pr-preserve-light relative rounded-3xl overflow-hidden border border-[#D4A017]/50 h-[460px] bg-[#0D0D10] shadow-2xl">
+              <img
+                src={heroMobilityImg}
+                alt="PRO RIDER AI Partner Showcase"
+                referrerPolicy="no-referrer"
+                className="w-full h-full object-cover object-center"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent flex flex-col justify-end p-8">
+                <span className="inline-flex items-center gap-1.5 text-xs font-bold text-[#F4C430] uppercase tracking-widest">
+                  <ShieldCheck className="w-4 h-4" />
+                  {tr(lang, 'Partner Excellence', 'پرو پارٹنر نیٹ ورک')}
+                </span>
+                <h2 className="font-display text-3xl font-bold !text-white mt-2">
+                  {tr(lang, 'Drive Smart & Track Daily PKR Earnings', 'روزانہ کی PKR کمائی اور لائیو بُکنگز')}
+                </h2>
+                <p className="text-sm !text-zinc-200 mt-2">
+                  {tr(
+                    lang,
+                    'Accept verified passenger rides, manage your showcase profile with per-photo locks, and settle directly via bank or wallet.',
+                    'تصدیق شدہ سواریاں حاصل کریں، اپنی ڈرائیور پروفائل ترتیب دیں اور والٹ کے ذریعے ادائیگی وصول کریں۔'
+                  )}
+                </p>
+              </div>
+            </div>
+          </div>
+          <div className="lg:col-span-6 w-full max-w-md mx-auto">{AuthCardBody}</div>
+        </main>
+      )}
     </div>
   );
 };
-
-const DOC_SLOTS: Array<{ type: PartnerDocument['doc_type']; label: string; hasExpiry?: boolean }> = [
-  { type: 'profile_photo', label: 'Partner Profile Photo' },
-  { type: 'cnic_front', label: 'CNIC Front Copy', hasExpiry: true },
-  { type: 'cnic_back', label: 'CNIC Back Copy' },
-  { type: 'driving_licence', label: 'Valid Driving Licence', hasExpiry: true },
-  { type: 'vehicle_registration', label: 'Vehicle Registration Book / Smart Card' },
-  { type: 'vehicle_photo', label: 'Vehicle Exterior Photo (with Number Plate)' },
-];
 
 // Screens 18, 19, 26, 27: Partner Registration, Vehicle Management & Document Verification
 export const PartnerVerificationAndVehicleView: React.FC<{
@@ -688,6 +820,15 @@ export const PartnerVerificationAndVehicleView: React.FC<{
   const fleetCategories = (
     config?.fleet?.length ? config.fleet : DEFAULT_PUBLIC_CONFIG.fleet
   ).filter((f) => f.is_active === 1);
+
+  const docSlots: Array<{ type: PartnerDocument['doc_type']; label: string; hasExpiry?: boolean }> = [
+    { type: 'profile_photo', label: tr(lang, 'Partner Profile Photo', 'ڈرائیور کی پروفائل تصویر') },
+    { type: 'cnic_front', label: tr(lang, 'CNIC Front Copy', 'شناختی کارڈ فرنٹ کاپی'), hasExpiry: true },
+    { type: 'cnic_back', label: tr(lang, 'CNIC Back Copy', 'شناختی کارڈ بیک کاپی') },
+    { type: 'driving_licence', label: tr(lang, 'Valid Driving Licence', 'کارآمد ڈرائیونگ لائسنس'), hasExpiry: true },
+    { type: 'vehicle_registration', label: tr(lang, 'Vehicle Registration Book / Smart Card', 'گاڑی کی رجسٹریشن بک / اسمارٹ کارڈ') },
+    { type: 'vehicle_photo', label: tr(lang, 'Vehicle Exterior Photo (with Number Plate)', 'گاڑی کی تصویر (نمبر پلیٹ سمیت)') },
+  ];
 
   const [cnicNumber, setCnicNumber] = useState(profile.cnic_number || '');
   const [cnicExpiry, setCnicExpiry] = useState(profile.cnic_expiry || '');
@@ -721,16 +862,12 @@ export const PartnerVerificationAndVehicleView: React.FC<{
   const [uploadingSlot, setUploadingSlot] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
-  const statusLabels: Record<string, { label: string; color: string }> = {
-    not_registered: { label: 'Not Registered', color: 'text-zinc-600' },
-    incomplete: { label: 'Registration Incomplete', color: 'text-amber-700' },
-    documents_pending: { label: 'Documents Pending', color: 'text-amber-700' },
-    under_review: { label: 'Under Admin Review', color: 'text-blue-700' },
-    approved: { label: 'Approved', color: 'text-emerald-700' },
-    rejected: { label: 'Rejected', color: 'text-red-700' },
-    suspended: { label: 'Suspended', color: 'text-red-700' },
-  };
-  const st = statusLabels[profile.verification_status] || statusLabels.incomplete;
+  const statusColor =
+    profile.verification_status === 'approved'
+      ? 'text-emerald-700'
+      : profile.verification_status === 'rejected' || profile.verification_status === 'suspended'
+      ? 'text-red-700'
+      : 'text-amber-700';
 
   const saveVehicleAndDetails = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -754,7 +891,10 @@ export const PartnerVerificationAndVehicleView: React.FC<{
           serviceEligibility: services,
         },
       });
-      setMsg(res.message || 'Registration & vehicle details saved.');
+      setMsg(
+        res.message ||
+          tr(lang, 'Registration & vehicle details saved.', 'رجسٹریشن اور گاڑی کی تفصیلات محفوظ ہو گئیں۔')
+      );
       await onRefresh();
     } catch (err: any) {
       setMsg(err.message);
@@ -809,12 +949,14 @@ export const PartnerVerificationAndVehicleView: React.FC<{
       }
 
       setMsg(
-        lang === 'ur'
-          ? `${docType.replaceAll('_', ' ')} کامیابی سے اپ لوڈ ہو گیا ہے۔`
-          : `${docType.replaceAll('_', ' ')} uploaded successfully for Admin review.`
+        tr(
+          lang,
+          `${docType.replaceAll('_', ' ')} uploaded successfully for Admin review.`,
+          `${docType.replaceAll('_', ' ')} کامیابی سے اپ لوڈ ہو گیا ہے۔`
+        )
       );
     } catch (err: any) {
-      setMsg(err?.message || 'Upload failed. Please try another photo.');
+      setMsg(err?.message || tr(lang, 'Upload failed. Please try another photo.', 'اپ لوڈ ناکام ہو گیا۔ دوبارہ کوشش کریں۔'));
     } finally {
       setUploadingSlot(null);
     }
@@ -822,24 +964,29 @@ export const PartnerVerificationAndVehicleView: React.FC<{
 
   return (
     <div className="space-y-6 w-full min-w-0 overflow-x-clip">
-      {/* Verification Status Banner */}
       <div className="rounded-2xl border border-zinc-200 bg-white p-5 flex flex-wrap items-center justify-between gap-4">
         <div className="space-y-1">
-          <p className="text-xs text-zinc-500 font-semibold uppercase tracking-wider">Verification Status</p>
+          <p className="text-xs text-zinc-500 font-semibold uppercase tracking-wider">
+            {tr(lang, 'Verification Status', 'تصدیق کی صورتحال')}
+          </p>
           <div className="flex items-center gap-2">
             {profile.verification_status === 'approved' ? (
               <CheckCircle2 className="w-5 h-5 text-emerald-700" />
             ) : (
               <ShieldAlert className="w-5 h-5 text-amber-600" />
             )}
-            <span className={`font-display text-xl font-bold ${st.color}`}>{st.label}</span>
+            <span className={`font-display text-xl font-bold ${statusColor}`}>
+              {trVerificationStatus(lang, profile.verification_status)}
+            </span>
           </div>
           {profile.admin_notes && (
-            <p className="text-xs text-zinc-600">Admin Note: {profile.admin_notes}</p>
+            <p className="text-xs text-zinc-600">
+              {tr(lang, 'Admin Note:', 'ایڈمن نوٹ:')} {profile.admin_notes}
+            </p>
           )}
         </div>
         <div className="text-xs text-zinc-500 font-mono">
-          Uploaded Docs: {documents.length} / {DOC_SLOTS.length}
+          {tr(lang, 'Uploaded Docs:', 'اپ لوڈ شدہ دستاویزات:')} {documents.length} / {docSlots.length}
         </div>
       </div>
 
@@ -847,16 +994,19 @@ export const PartnerVerificationAndVehicleView: React.FC<{
         <div className="rounded-xl bg-[#0D0D10] text-[#F4C430] px-4 py-2.5 text-xs font-semibold">{msg}</div>
       )}
 
-      {/* Vehicle & Identity Details Form */}
       <form onSubmit={saveVehicleAndDetails} className="rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6 space-y-5">
         <h3 className="font-display text-lg font-bold flex items-center gap-2">
           <CarFront className="w-5 h-5 text-[#D4A017]" />
-          {mode === 'vehicle' ? 'Vehicle Management & Service Eligibility' : 'Personal Identity & Vehicle Registration'}
+          {mode === 'vehicle'
+            ? tr(lang, 'Vehicle Management & Service Eligibility', 'گاڑی کا انتظام اور سروس اہلیت')
+            : tr(lang, 'Personal Identity & Vehicle Registration', 'ذاتی شناخت اور گاڑی کی رجسٹریشن')}
         </h3>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">CNIC Number</label>
+            <label className="block text-xs font-semibold text-zinc-600 mb-1">
+              {tr(lang, 'CNIC Number', 'شناختی کارڈ نمبر')}
+            </label>
             <input
               required
               value={cnicNumber}
@@ -866,11 +1016,15 @@ export const PartnerVerificationAndVehicleView: React.FC<{
             />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">CNIC Expiry</label>
+            <label className="block text-xs font-semibold text-zinc-600 mb-1">
+              {tr(lang, 'CNIC Expiry', 'شناختی کارڈ کی میعاد')}
+            </label>
             <input type="date" value={cnicExpiry} onChange={(e) => setCnicExpiry(e.target.value)} className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm" />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">Driving Licence No.</label>
+            <label className="block text-xs font-semibold text-zinc-600 mb-1">
+              {tr(lang, 'Driving Licence No.', 'ڈرائیونگ لائسنس نمبر')}
+            </label>
             <input
               required
               value={licenceNumber}
@@ -880,7 +1034,9 @@ export const PartnerVerificationAndVehicleView: React.FC<{
             />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">Licence Expiry</label>
+            <label className="block text-xs font-semibold text-zinc-600 mb-1">
+              {tr(lang, 'Licence Expiry', 'لائسنس کی میعاد')}
+            </label>
             <input type="date" value={licenceExpiry} onChange={(e) => setLicenceExpiry(e.target.value)} className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm" />
           </div>
         </div>
@@ -888,11 +1044,11 @@ export const PartnerVerificationAndVehicleView: React.FC<{
         <div className="space-y-2.5">
           <div className="flex items-center justify-between gap-2">
             <label className="block text-xs font-semibold text-zinc-600">
-              Select Vehicle Category (including Van · 7-seater · وین)
+              {tr(lang, 'Select Vehicle Category (including Van · 7-seater)', 'گاڑی کی کیٹگری منتخب کریں (7 سیٹر وین سمیت)')}
             </label>
             {selectedFleetCategory && (
               <span className="text-[11px] font-mono font-bold text-[#B8860B]">
-                {selectedFleetCategory.seating_capacity} Seats
+                {selectedFleetCategory.seating_capacity} {tr(lang, 'Seats', 'سیٹیں')}
               </span>
             )}
           </div>
@@ -904,16 +1060,18 @@ export const PartnerVerificationAndVehicleView: React.FC<{
                   key={f.id}
                   type="button"
                   onClick={() => handleSelectCategory(f.id)}
-                  className={`p-2 rounded-xl border text-left transition-all flex items-center gap-2.5 min-w-0 ${
+                  className={`p-2 rounded-xl border text-start transition-all flex items-center gap-2.5 min-w-0 ${
                     active
-                      ? 'border-[#D4A017] bg-[#FFFBEB] shadow-xs ring-1 ring-[#D4A017]'
+                      ? 'border-[#D4A017] bg-[#D4A017]/15 shadow-xs ring-1 ring-[#D4A017]'
                       : 'border-zinc-200 bg-white hover:border-zinc-300'
                   }`}
                 >
                   <VehicleImage src={f.image_url} alt={f.name} className="w-14 h-10 rounded-lg border shrink-0" />
                   <div className="min-w-0 flex-1">
                     <div className="text-[11px] font-bold text-[#0D0D10] truncate">{f.name}</div>
-                    <div className="text-[10px] text-zinc-500 font-mono">{f.seating_capacity} Seats</div>
+                    <div className="text-[10px] text-zinc-500 font-mono">
+                      {f.seating_capacity} {tr(lang, 'Seats', 'سیٹیں')}
+                    </div>
                   </div>
                 </button>
               );
@@ -923,7 +1081,9 @@ export const PartnerVerificationAndVehicleView: React.FC<{
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">Vehicle Category</label>
+            <label className="block text-xs font-semibold text-zinc-600 mb-1">
+              {tr(lang, 'Vehicle Category', 'گاڑی کی قسم')}
+            </label>
             <select
               value={vehicleCategoryId}
               onChange={(e) => handleSelectCategory(e.target.value)}
@@ -931,23 +1091,27 @@ export const PartnerVerificationAndVehicleView: React.FC<{
             >
               {fleetCategories.map((f) => (
                 <option key={f.id} value={f.id}>
-                  {f.name} ({f.seating_capacity} seats)
+                  {f.name} ({f.seating_capacity} {tr(lang, 'seats', 'سیٹیں')})
                 </option>
               ))}
             </select>
           </div>
           <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">Vehicle Make &amp; Model</label>
+            <label className="block text-xs font-semibold text-zinc-600 mb-1">
+              {tr(lang, 'Vehicle Make & Model', 'گاڑی کا نام اور ماڈل')}
+            </label>
             <input
               required
               value={vehicleName}
               onChange={(e) => setVehicleName(e.target.value)}
-              placeholder="e.g. Suzuki Every 7-Seater / Corolla GLi"
+              placeholder={tr(lang, 'e.g. Suzuki Every 7-Seater / Corolla GLi', 'مثال: سوزوکی ایوری / کرولا جی ایل آئی')}
               className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm"
             />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">Registration Plate Number</label>
+            <label className="block text-xs font-semibold text-zinc-600 mb-1">
+              {tr(lang, 'Registration Plate Number', 'رجسٹریشن نمبر پلیٹ')}
+            </label>
             <input
               required
               value={vehicleNumber}
@@ -957,7 +1121,9 @@ export const PartnerVerificationAndVehicleView: React.FC<{
             />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">Seating Capacity</label>
+            <label className="block text-xs font-semibold text-zinc-600 mb-1">
+              {tr(lang, 'Seating Capacity', 'نشستوں کی تعداد')}
+            </label>
             <input
               type="number"
               min={1}
@@ -968,50 +1134,50 @@ export const PartnerVerificationAndVehicleView: React.FC<{
             />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">Fuel Type</label>
+            <label className="block text-xs font-semibold text-zinc-600 mb-1">
+              {tr(lang, 'Fuel Type', 'ایندھن کی قسم')}
+            </label>
             <select value={fuelType} onChange={(e) => setFuelType(e.target.value)} className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm bg-white">
-              <option value="Petrol">Petrol</option>
-              <option value="Hybrid">Hybrid</option>
-              <option value="CNG">CNG</option>
-              <option value="Diesel">Diesel</option>
-              <option value="Electric">Electric</option>
+              <option value="Petrol">{tr(lang, 'Petrol', 'پیٹرول')}</option>
+              <option value="Hybrid">{tr(lang, 'Hybrid', 'ہائبرڈ')}</option>
+              <option value="CNG">{tr(lang, 'CNG', 'سی این جی')}</option>
+              <option value="Diesel">{tr(lang, 'Diesel', 'ڈیزل')}</option>
+              <option value="Electric">{tr(lang, 'Electric', 'الیکٹرک')}</option>
             </select>
           </div>
           <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">Operating City</label>
+            <label className="block text-xs font-semibold text-zinc-600 mb-1">
+              {tr(lang, 'Operating City', 'کام کا شہر')}
+            </label>
             <select value={operatingCity} onChange={(e) => setOperatingCity(e.target.value)} className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm bg-white">
-              <option value="Islamabad">Islamabad</option>
-              <option value="Rawalpindi">Rawalpindi</option>
-              <option value="Lahore">Lahore</option>
-              <option value="Karachi">Karachi</option>
+              <option value="Islamabad">{tr(lang, 'Islamabad', 'اسلام آباد')}</option>
+              <option value="Rawalpindi">{tr(lang, 'Rawalpindi', 'راولپنڈی')}</option>
+              <option value="Lahore">{tr(lang, 'Lahore', 'لاہور')}</option>
+              <option value="Karachi">{tr(lang, 'Karachi', 'کراچی')}</option>
             </select>
           </div>
         </div>
 
         <div className="space-y-2">
-          <label className="block text-xs font-semibold text-zinc-600">Service Eligibility Preferences</label>
+          <label className="block text-xs font-semibold text-zinc-600">
+            {tr(lang, 'Service Eligibility Preferences', 'خدمات کی اقسام')}
+          </label>
           <div className="flex flex-wrap gap-3 text-xs">
-            {(
-              [
-                { id: 'pick_and_drop', label: 'Pick & Drop' },
-                { id: 'ride_sharing', label: 'Ride Sharing' },
-                { id: 'fuel_sharing', label: 'Fuel Sharing' },
-              ] as const
-            ).map((srv) => {
-              const checked = services.includes(srv.id);
+            {(['pick_and_drop', 'ride_sharing', 'fuel_sharing'] as const).map((id) => {
+              const checked = services.includes(id);
               return (
-                <label key={srv.id} className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-zinc-200 cursor-pointer">
+                <label key={id} className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-zinc-200 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={checked}
                     onChange={() =>
                       setServices((prev) =>
-                        checked ? prev.filter((x) => x !== srv.id) : [...prev, srv.id]
+                        checked ? prev.filter((x) => x !== id) : [...prev, id]
                       )
                     }
                     className="accent-[#D4A017]"
                   />
-                  <span className="font-semibold">{srv.label}</span>
+                  <span className="font-semibold">{trService(lang, id)}</span>
                 </label>
               );
             })}
@@ -1023,23 +1189,26 @@ export const PartnerVerificationAndVehicleView: React.FC<{
           disabled={saving}
           className="px-6 py-2.5 rounded-xl bg-[#0D0D10] text-white text-xs font-bold hover:bg-zinc-800"
         >
-          {saving ? 'Saving...' : 'Save Vehicle & Registration Details'}
+          {saving
+            ? tr(lang, 'Saving...', 'محفوظ ہو رہا ہے...')
+            : tr(lang, 'Save Vehicle & Registration Details', 'گاڑی اور رجسٹریشن کی تفصیلات محفوظ کریں')}
         </button>
       </form>
 
-      {/* Screen 27: Document Upload Slots with Per-Photo Privacy Lock Toggle */}
       {mode === 'documents' && (
         <div className="space-y-3">
           <div className="rounded-xl bg-zinc-50 border border-zinc-200 px-3.5 py-2.5 text-xs text-zinc-600 flex flex-wrap items-center justify-between gap-2">
             <span>
-              {lang === 'ur'
-                ? 'ہر تصویر کے اوپر آنکھ / لاک بٹن سے آپ پبلک ویزیبلٹی آن یا بند کر سکتے ہیں۔ ایڈمن تمام دستاویزات دیکھ سکتا ہے۔'
-                : 'Use the privacy button on each photo to show or hide it from Passengers. Admin always sees uploaded verification docs.'}
+              {tr(
+                lang,
+                'Use the privacy button on each photo to show or hide it from Passengers. Admin always sees uploaded verification docs.',
+                'ہر تصویر کے اوپر آنکھ / لاک بٹن سے آپ پبلک ویزیبلٹی آن یا بند کر سکتے ہیں۔ ایڈمن تمام دستاویزات دیکھ سکتا ہے۔'
+              )}
             </span>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {DOC_SLOTS.map((slot) => {
+            {docSlots.map((slot) => {
               const uploaded = documents.find((d) => d.doc_type === slot.type);
               const defaultPublic = slot.type === 'profile_photo' || slot.type === 'vehicle_photo';
               const isPublic = uploaded ? uploaded.is_public === 1 : defaultPublic;
@@ -1060,10 +1229,14 @@ export const PartnerVerificationAndVehicleView: React.FC<{
                               : 'text-amber-700'
                           }`}
                         >
-                          {uploaded.status}
+                          {uploaded.status === 'approved'
+                            ? tr(lang, 'Approved', 'منظور شدہ')
+                            : uploaded.status === 'rejected'
+                            ? tr(lang, 'Rejected', 'مسترد')
+                            : tr(lang, 'Pending', 'زیرِ جائزہ')}
                         </span>
                       ) : (
-                        <span className="text-zinc-400">Missing</span>
+                        <span className="text-zinc-400">{tr(lang, 'Missing', 'باقی ہے')}</span>
                       )}
                     </div>
 
@@ -1072,35 +1245,33 @@ export const PartnerVerificationAndVehicleView: React.FC<{
                         <img
                           src={uploaded.file_data_url}
                           alt={slot.label}
-                          className={`w-full h-32 object-cover transition-opacity ${
-                            !isPublic ? 'opacity-80' : ''
-                          }`}
+                          className={`w-full h-32 object-cover transition-opacity ${!isPublic ? 'opacity-80' : ''}`}
                         />
                         <button
                           type="button"
                           onClick={() => onToggleDocVisibility?.(slot.type, !isPublic)}
-                          className={`absolute top-2 right-2 inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold shadow-sm backdrop-blur ${
-                            isPublic
-                              ? 'bg-emerald-700/95 text-white'
-                              : 'bg-[#0D0D10]/90 text-[#F4C430]'
+                          className={`pr-preserve-light absolute top-2 right-2 inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold shadow-sm backdrop-blur ${
+                            isPublic ? 'bg-emerald-700/95 !text-white' : 'bg-[#0D0D10]/90 !text-[#F4C430]'
                           }`}
                         >
                           {isPublic ? (
                             <>
                               <Eye className="w-3 h-3" />
-                              <span>{lang === 'ur' ? 'پبلک آن' : 'Public'}</span>
+                              <span>{tr(lang, 'Public', 'پبلک آن')}</span>
                             </>
                           ) : (
                             <>
                               <EyeOff className="w-3 h-3" />
-                              <span>{lang === 'ur' ? 'بند · ایڈمن' : 'Locked · Admin Only'}</span>
+                              <span>{tr(lang, 'Locked · Admin Only', 'بند · ایڈمن')}</span>
                             </>
                           )}
                         </button>
                       </div>
                     )}
                     {uploaded?.review_notes && (
-                      <p className="mt-1.5 text-[11px] text-red-700">Note: {uploaded.review_notes}</p>
+                      <p className="mt-1.5 text-[11px] text-red-700">
+                        {tr(lang, 'Note:', 'نوٹ:')} {uploaded.review_notes}
+                      </p>
                     )}
                   </div>
 
@@ -1122,12 +1293,10 @@ export const PartnerVerificationAndVehicleView: React.FC<{
                         <Upload className="w-3.5 h-3.5" />
                       )}
                       {isBusy
-                        ? lang === 'ur'
-                          ? 'اپ لوڈ ہو رہا ہے...'
-                          : 'Compressing & Uploading...'
+                        ? tr(lang, 'Compressing & Uploading...', 'اپ لوڈ ہو رہا ہے...')
                         : uploaded
-                        ? 'Re-upload Document'
-                        : 'Upload Photo / File'}
+                        ? tr(lang, 'Re-upload Document', 'دوبارہ اپ لوڈ کریں')
+                        : tr(lang, 'Upload Photo / File', 'تصویر / فائل اپ لوڈ کریں')}
                       <input
                         type="file"
                         accept="image/*,.pdf"

@@ -17,6 +17,7 @@ import {
   X,
 } from 'lucide-react';
 import { useFirebase, type GroundedPlace, type GroundedSource } from '../contexts/FirebaseContext';
+import { tr } from '../i18n/translations';
 import type { Language } from '../types';
 import { apiRequest } from '../utils/api';
 import { VoiceTranscribeButton } from './VoiceTranscribeButton';
@@ -39,6 +40,7 @@ interface ProRiderAiCopilotProps {
   persona: CopilotPersona;
   lang: Language;
   currentCoords?: { lat: number; lng: number } | null;
+  showFloatingOnMobile?: boolean;
 }
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
@@ -96,6 +98,7 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
   persona,
   lang,
   currentCoords = { lat: 33.6844, lng: 73.0479 },
+  showFloatingOnMobile = false,
 }) => {
   const { firebaseUser, aiThreads, createAiThread, saveAiMessage, fetchThreadMessages } = useFirebase();
 
@@ -106,17 +109,34 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [showThreads, setShowThreads] = useState(false);
 
+  const getWelcomeText = (l: Language) =>
+    persona === 'partner'
+      ? tr(
+          l,
+          'Assalam-o-Alaikum Pro Partner! Ask me about busy routes, Google Maps hotspots, today’s live Pakistan fuel rates via Google Search, or speak directly using the mic.',
+          'السلام علیکم پرو پارٹنر! مجھ سے مصروف روٹس، گوگل میپس ہاٹ اسپاٹس، آج کے پیٹرول ریٹس پوچھیں یا مائیک سے براہِ راست بات کریں۔'
+        )
+      : tr(
+          l,
+          'Assalam-o-Alaikum! I am your PRO RIDER AI Concierge. Ask me about rides, compare fares, discover nearby landmarks via Google Maps, check live traffic/fuel prices via Google Search, or switch to Live Voice.',
+          'السلام علیکم! میں آپ کا پرو رائیڈر اے آئی اسسٹنٹ ہوں۔ سفر، کرایوں، گوگل میپس لوکیشنز اور پیٹرول ریٹس کے بارے میں پوچھیں یا لائیو وائس کال شروع کریں۔'
+        );
+
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: 'welcome-msg',
       sender: 'assistant',
-      text:
-        persona === 'partner'
-          ? 'Assalam-o-Alaikum Pro Partner! Ask me about busy routes, Google Maps hotspots, today’s live Pakistan fuel rates via Google Search, or speak directly using the mic.'
-          : 'Assalam-o-Alaikum! I am your PRO RIDER AI Concierge. Ask me about rides, compare fares, discover nearby landmarks via Google Maps, check live traffic/fuel prices via Google Search, or switch to Live Voice.',
+      text: getWelcomeText(lang),
       mode: 'general',
     },
   ]);
+
+  useEffect(() => {
+    setMessages((prev) =>
+      prev.map((m) => (m.id === 'welcome-msg' ? { ...m, text: getWelcomeText(lang) } : m))
+    );
+  }, [lang, persona]);
+
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
@@ -340,11 +360,16 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
     }
   };
 
-  const handleSendChat = async (e?: React.FormEvent, overridePrompt?: string) => {
+  const handleSendChat = async (
+    e?: React.FormEvent,
+    overridePrompt?: string,
+    overrideTool?: GroundingTool
+  ) => {
     e?.preventDefault();
     const prompt = (overridePrompt ?? input).trim();
     if (!prompt || sending) return;
 
+    const effectiveTool = overrideTool ?? toolMode;
     setChatError(null);
     if (!overridePrompt) setInput('');
 
@@ -352,7 +377,7 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
       id: `usr_${Date.now()}`,
       sender: 'user',
       text: prompt,
-      mode: toolMode === 'chat' ? depth : toolMode,
+      mode: effectiveTool === 'chat' ? depth : effectiveTool,
     };
     const nextHistory = [...messages, userMsg];
     setMessages(nextHistory);
@@ -375,9 +400,9 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
       let replyText = '';
       let replyPlaces: GroundedPlace[] | undefined;
       let replySources: GroundedSource[] | undefined;
-      const replyMode: ChatMessage['mode'] = toolMode === 'chat' ? depth : toolMode;
+      const replyMode: ChatMessage['mode'] = effectiveTool === 'chat' ? depth : effectiveTool;
 
-      if (toolMode === 'maps') {
+      if (effectiveTool === 'maps') {
         const res = await apiRequest<{ text: string; places: GroundedPlace[] }>('/api/ai/maps-grounding', {
           method: 'POST',
           body: {
@@ -389,7 +414,7 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
         });
         replyText = res.text || 'Here are verified Google Maps locations matching your query:';
         replyPlaces = res.places;
-      } else if (toolMode === 'search') {
+      } else if (effectiveTool === 'search') {
         const res = await apiRequest<{ text: string; sources: GroundedSource[] }>('/api/ai/search-grounding', {
           method: 'POST',
           body: { query: prompt, lang },
@@ -436,7 +461,7 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
         }).catch(() => {});
       }
     } catch (err: any) {
-      setChatError(err?.message || 'AI service temporarily unavailable.');
+      setChatError(err?.message || tr(lang, 'AI service temporarily unavailable.', 'اے آئی سروس عارضی طور پر دستیاب نہیں ہے، براہِ کرم دوبارہ کوشش کریں۔'));
     } finally {
       setSending(false);
     }
@@ -444,20 +469,36 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
 
   return (
     <>
-      {/* Floating Launcher Button (Desktop; mobile triggers from header to avoid covering action buttons) */}
+      {/* Sculpted Executive AI Concierge & Voice Launcher */}
       <button
         type="button"
         onClick={() => setOpen(true)}
-        aria-label="Open PRO RIDER AI Copilot"
-        className="hidden md:inline-flex fixed bottom-6 right-6 z-40 items-center gap-2.5 px-4 py-3 rounded-2xl bg-[#0D0D10] text-white border border-[#D4A017]/70 shadow-xl hover:bg-zinc-900 transition-transform active:scale-95"
+        aria-label={tr(lang, 'Open PRO RIDER AI Copilot', 'پرو رائیڈر اے آئی کھولیں')}
+        className={`pr-preserve-light group ${
+          showFloatingOnMobile ? 'inline-flex' : 'hidden md:inline-flex'
+        } fixed bottom-5 sm:bottom-6 ${
+          lang === 'ur' ? 'left-4 sm:left-6' : 'right-4 sm:right-6'
+        } z-40 items-center gap-3 pl-2 pr-4 py-2 rounded-2xl bg-gradient-to-br from-[#191A20] via-[#0D0D10] to-[#241C08] text-white border border-[#D4A017]/80 ring-1 ring-[#F4C430]/20 shadow-[0_12px_32px_-6px_rgba(212,160,23,0.4),0_8px_20px_-4px_rgba(0,0,0,0.45)] hover:border-[#F4C430] hover:-translate-y-0.5 transition-all duration-200 active:scale-95`}
       >
-        <Sparkles className="w-4 h-4 text-[#D4A017]" />
-        <span className="text-xs font-bold tracking-wide">AI Concierge &amp; Voice</span>
+        <span className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#F4C430] via-[#D4A017] to-[#9E730B] text-[#0D0D10] flex items-center justify-center shrink-0 shadow-inner group-hover:scale-105 transition-transform">
+          <Sparkles className="w-4 h-4" />
+        </span>
+        <span className="flex flex-col text-start leading-tight">
+          <span className="text-[10px] font-bold uppercase tracking-widest text-[#F4C430]">
+            PRO RIDER AI
+          </span>
+          <span className="text-xs font-bold text-white">
+            {tr(lang, 'Smart Help & Voice', 'اے آئی اسسٹنٹ اور وائس')}
+          </span>
+        </span>
+        <span className="w-7 h-7 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-[#F4C430]">
+          <Mic className="w-3.5 h-3.5" />
+        </span>
       </button>
 
       {/* Slide-over Copilot Panel */}
       {open && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-[2px]">
+        <div dir={lang === 'ur' ? 'rtl' : 'ltr'} className="fixed inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-[2px]">
           <div className="w-full max-w-md bg-white h-full flex flex-col shadow-2xl border-l border-zinc-200">
             {/* Header */}
             <div className="bg-[#0D0D10] text-white px-5 py-4 flex items-center justify-between border-b border-zinc-800 shrink-0">
@@ -466,9 +507,13 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                   <Bot className="w-5 h-5" />
                 </div>
                 <div>
-                  <h2 className="font-display text-sm font-bold leading-tight">PRO RIDER AI Copilot</h2>
+                  <h2 className="font-display text-sm font-bold leading-tight">
+                    {tr(lang, 'PRO RIDER AI Copilot', 'پرو رائیڈر اے آئی کوپائلٹ')}
+                  </h2>
                   <p className="text-[11px] text-[#D4A017] font-mono">
-                    {persona === 'partner' ? 'Pro Partner Assistant' : 'Maps · Search · Live Voice'}
+                    {persona === 'partner'
+                      ? tr(lang, 'Pro Partner Assistant', 'پرو پارٹنر اسسٹنٹ')
+                      : tr(lang, 'Maps · Search · Live Voice', 'میپس · سرچ · لائیو وائس')}
                   </p>
                 </div>
               </div>
@@ -477,7 +522,7 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                   <button
                     type="button"
                     onClick={() => setShowThreads((v) => !v)}
-                    title="Cloud Chat History"
+                    title={tr(lang, 'Cloud Chat History', 'محفوظ چیٹ ہسٹری')}
                     className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-300"
                   >
                     <History className="w-4 h-4" />
@@ -489,7 +534,7 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                     stopLiveVoice();
                     setOpen(false);
                   }}
-                  aria-label="Close Copilot"
+                  aria-label={tr(lang, 'Close Copilot', 'اسسٹنٹ بند کریں')}
                   className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-300"
                 >
                   <X className="w-4 h-4" />
@@ -507,7 +552,7 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                 }`}
               >
                 <MessageSquare className="w-3.5 h-3.5" />
-                AI Chat &amp; Grounding
+                {tr(lang, 'AI Chat & Grounding', 'اے آئی چیٹ اور میپس')}
               </button>
               <button
                 type="button"
@@ -519,14 +564,14 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                 }`}
               >
                 <Radio className="w-3.5 h-3.5" />
-                Live Voice Call
+                {tr(lang, 'Live Voice Call', 'لائیو وائس کال')}
               </button>
             </div>
 
             {showThreads && firebaseUser && (
               <div className="px-4 py-3 bg-amber-50 border-b border-amber-200 max-h-48 overflow-y-auto space-y-1.5">
                 <div className="flex items-center justify-between text-[11px] font-bold text-amber-900">
-                  <span>Saved Cloud Conversations ({firebaseUser.email})</span>
+                  <span>{tr(lang, 'Saved Cloud Conversations', 'محفوظ کلاؤڈ گفتگو')} ({firebaseUser.email})</span>
                   <button
                     type="button"
                     onClick={() => {
@@ -535,7 +580,7 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                     }}
                     className="underline"
                   >
-                    New Chat
+                    {tr(lang, 'New Chat', 'نئی چیٹ')}
                   </button>
                 </div>
                 {aiThreads.map((t) => (
@@ -561,7 +606,10 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                   <div className="grid grid-cols-3 gap-1.5 text-[11px] font-semibold">
                     <button
                       type="button"
-                      onClick={() => setToolMode('chat')}
+                      onClick={() => {
+                        setToolMode('chat');
+                        setChatError(null);
+                      }}
                       className={`py-1.5 rounded-lg inline-flex items-center justify-center gap-1 border ${
                         toolMode === 'chat'
                           ? 'bg-[#0D0D10] text-white border-[#0D0D10]'
@@ -569,11 +617,14 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                       }`}
                     >
                       <Bot className="w-3 h-3" />
-                      AI Concierge
+                      {tr(lang, 'AI Concierge', 'اے آئی مدد')}
                     </button>
                     <button
                       type="button"
-                      onClick={() => setToolMode('maps')}
+                      onClick={() => {
+                        setToolMode('maps');
+                        setChatError(null);
+                      }}
                       className={`py-1.5 rounded-lg inline-flex items-center justify-center gap-1 border ${
                         toolMode === 'maps'
                           ? 'bg-emerald-700 text-white border-emerald-700'
@@ -581,11 +632,14 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                       }`}
                     >
                       <Compass className="w-3 h-3" />
-                      Maps Data
+                      {tr(lang, 'Maps Data', 'میپس ڈیٹا')}
                     </button>
                     <button
                       type="button"
-                      onClick={() => setToolMode('search')}
+                      onClick={() => {
+                        setToolMode('search');
+                        setChatError(null);
+                      }}
                       className={`py-1.5 rounded-lg inline-flex items-center justify-center gap-1 border ${
                         toolMode === 'search'
                           ? 'bg-blue-700 text-white border-blue-700'
@@ -593,13 +647,13 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                       }`}
                     >
                       <Globe className="w-3 h-3" />
-                      Web Search
+                      {tr(lang, 'Web Search', 'ویب سرچ')}
                     </button>
                   </div>
 
                   {toolMode === 'chat' && (
                     <div className="flex items-center justify-between text-[11px]">
-                      <span className="text-zinc-500 font-medium">Reasoning Mode:</span>
+                      <span className="text-zinc-500 font-medium">{tr(lang, 'Reasoning Mode:', 'جوابی انداز:')}</span>
                       <div className="inline-flex rounded-lg bg-zinc-100 p-0.5 gap-0.5">
                         {(['fast', 'general', 'deep'] as const).map((d) => (
                           <button
@@ -610,7 +664,11 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                               depth === d ? 'bg-white text-[#0D0D10] shadow-xs' : 'text-zinc-500'
                             }`}
                           >
-                            {d === 'fast' ? 'Fast' : d === 'general' ? 'Balanced' : 'Deep'}
+                            {d === 'fast'
+                              ? tr(lang, 'Fast', 'تیز')
+                              : d === 'general'
+                              ? tr(lang, 'Balanced', 'متوازن')
+                              : tr(lang, 'Deep', 'گہرا')}
                           </button>
                         ))}
                       </div>
@@ -623,9 +681,10 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                   {messages.map((m) => (
                     <div key={m.id} className={`flex flex-col ${m.sender === 'user' ? 'items-end' : 'items-start'}`}>
                       <div
+                        dir="auto"
                         className={`max-w-[88%] rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed whitespace-pre-wrap ${
                           m.sender === 'user'
-                            ? 'bg-[#0D0D10] text-white'
+                            ? 'bg-[#0D0D10] text-white font-medium'
                             : 'bg-white border border-zinc-200 text-[#0D0D10] shadow-xs'
                         }`}
                       >
@@ -636,7 +695,7 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                       {m.places && m.places.length > 0 && (
                         <div className="mt-2 w-[88%] space-y-1.5">
                           <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">
-                            Google Maps Verified Places
+                            {tr(lang, 'Google Maps Verified Places', 'گوگل میپس تصدیق شدہ مقامات')}
                           </p>
                           {m.places.map((pl, idx) => (
                             <a
@@ -667,7 +726,7 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                       {m.sources && m.sources.length > 0 && (
                         <div className="mt-2 w-[88%] space-y-1">
                           <p className="text-[10px] font-bold uppercase tracking-wider text-blue-800">
-                            Google Search Sources
+                            {tr(lang, 'Google Search Sources', 'گوگل سرچ ذرائع')}
                           </p>
                           <div className="flex flex-wrap gap-1.5">
                             {m.sources.map((src, idx) => (
@@ -688,50 +747,97 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                     </div>
                   ))}
                   {sending && (
-                    <div className="flex items-center gap-2 text-xs text-zinc-500 px-2">
+                    <div className="flex items-center gap-2 text-xs text-zinc-600 font-medium px-2">
                       <Loader2 className="w-3.5 h-3.5 animate-spin text-[#D4A017]" />
-                      Thinking...
+                      {tr(lang, 'Thinking...', 'جواب تیار کیا جا رہا ہے...')}
                     </div>
                   )}
                 </div>
 
-                {/* Quick Suggestions */}
-                <div className="px-4 py-2 bg-white border-t border-zinc-100 flex gap-1.5 overflow-x-auto shrink-0">
+                {/* Quick Touch Question Prompts (Routed reliably via AI Concierge) */}
+                <div className="px-3.5 py-2.5 bg-white border-t border-zinc-200 flex gap-1.5 overflow-x-auto shrink-0">
                   <button
                     type="button"
-                    onClick={() => {
-                      setToolMode('maps');
-                      void handleSendChat(undefined, 'Find best fuel stations & cafes near Blue Area Islamabad');
-                    }}
-                    className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-900 text-[11px] font-semibold whitespace-nowrap border border-emerald-200"
-                  >
-                    Nearby Fuel &amp; Landmarks
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setToolMode('search');
-                      void handleSendChat(undefined, 'Current petrol price in Pakistan today PKR per liter');
-                    }}
-                    className="px-2.5 py-1 rounded-lg bg-blue-50 text-blue-900 text-[11px] font-semibold whitespace-nowrap border border-blue-200"
-                  >
-                    Live Fuel Price PK
-                  </button>
-                  <button
-                    type="button"
+                    disabled={sending}
                     onClick={() => {
                       setToolMode('chat');
-                      void handleSendChat(undefined, 'Compare Pick & Drop vs Ride Sharing vs Fuel Sharing savings');
+                      void handleSendChat(
+                        undefined,
+                        tr(
+                          lang,
+                          'Compare Pick & Drop, Ride Sharing, and Fuel Sharing savings in Pakistan.',
+                          'پِک اینڈ ڈراپ، رائیڈ شیئرنگ اور فیول شیئرنگ میں کرایہ اور بچت کا موازنہ بتائیں۔'
+                        ),
+                        'chat'
+                      );
                     }}
-                    className="px-2.5 py-1 rounded-lg bg-zinc-100 text-[#0D0D10] text-[11px] font-semibold whitespace-nowrap border border-zinc-200"
+                    className="px-3 py-1.5 rounded-lg bg-[#0D0D10] text-[#F4C430] text-[11px] font-bold whitespace-nowrap border border-[#0D0D10] disabled:opacity-50"
                   >
-                    Compare Services
+                    {tr(lang, 'Compare Services', 'سروسز کا موازنہ')}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={sending}
+                    onClick={() => {
+                      setToolMode('chat');
+                      void handleSendChat(
+                        undefined,
+                        persona === 'partner'
+                          ? tr(
+                              lang,
+                              'How do I complete Pro Partner driver documents, privacy settings, and accept rides?',
+                              'پرو پارٹنر ڈرائیور اپنے ڈاکومنٹس، پرائیویسی سیٹنگ اور نئی رائیڈ قبول کرنے کا طریقہ بتائیں؟'
+                            )
+                          : tr(
+                              lang,
+                              'How do I book a Pick & Drop ride or Monthly Package on PRO RIDER AI?',
+                              'پرو رائیڈر اے آئی پر پِک اینڈ ڈراپ رائیڈ یا ماہانہ پیکج کیسے بک کریں؟'
+                            ),
+                        'chat'
+                      );
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-950 text-[11px] font-bold whitespace-nowrap border border-emerald-300 disabled:opacity-50"
+                  >
+                    {persona === 'partner'
+                      ? tr(lang, 'Driver Docs & Rides', 'ڈرائیور ڈاکومنٹس اور رائیڈ')
+                      : tr(lang, 'How to Book Ride', 'رائیڈ بکنگ کا طریقہ')}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={sending}
+                    onClick={() => {
+                      setToolMode('chat');
+                      void handleSendChat(
+                        undefined,
+                        tr(
+                          lang,
+                          'What are the vehicle options, fares, and official support contact details?',
+                          'کون کون سی گاڑیاں دستیاب ہیں، کرایہ کیسے طے ہوتا ہے اور آفیشل سپورٹ نمبر کیا ہے؟'
+                        ),
+                        'chat'
+                      );
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-amber-50 text-amber-950 text-[11px] font-bold whitespace-nowrap border border-amber-300 disabled:opacity-50"
+                  >
+                    {tr(lang, 'Vehicles & Support', 'گاڑیاں اور سپورٹ')}
                   </button>
                 </div>
 
                 {chatError && (
-                  <div className="px-4 py-1.5 bg-red-50 text-red-700 text-[11px] font-medium border-t border-red-200">
-                    {chatError}
+                  <div className="px-4 py-2 bg-red-50 text-red-800 text-[11px] font-semibold border-t border-red-200 flex items-center justify-between gap-2">
+                    <span className="min-w-0">{chatError}</span>
+                    {toolMode !== 'chat' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setToolMode('chat');
+                          setChatError(null);
+                        }}
+                        className="px-2 py-1 rounded bg-[#0D0D10] text-[#F4C430] text-[10px] font-bold whitespace-nowrap shrink-0"
+                      >
+                        {tr(lang, 'Use AI Chat', 'اے آئی چیٹ استعمال کریں')}
+                      </button>
+                    )}
                   </div>
                 )}
 
@@ -740,26 +846,33 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                   <VoiceTranscribeButton
                     lang={lang}
                     disabled={sending}
-                    title="Speak message (Audio Transcribe)"
-                    onTranscript={(text) => setInput((prev) => (prev ? `${prev} ${text}` : text))}
+                    title={tr(lang, 'Speak message (Audio Transcribe)', 'بول کر پیغام لکھیں')}
+                    onTranscript={(text) => {
+                      setChatError(null);
+                      setInput((prev) => (prev ? `${prev} ${text}` : text));
+                    }}
                     onError={(msg) => setChatError(msg)}
                   />
                   <input
+                    dir="auto"
                     value={input}
-                    onChange={(e) => setInput(e.target.value)}
+                    onChange={(e) => {
+                      if (chatError) setChatError(null);
+                      setInput(e.target.value);
+                    }}
                     placeholder={
                       toolMode === 'maps'
-                        ? 'Search places with Google Maps...'
+                        ? tr(lang, 'Search places with Google Maps...', 'گوگل میپس پر مقام تلاش کریں...')
                         : toolMode === 'search'
-                        ? 'Ask live traffic/fuel via Google Search...'
-                        : 'Ask PRO RIDER AI anything...'
+                        ? tr(lang, 'Ask live traffic/fuel via Google Search...', 'گوگل سرچ سے ٹریفک یا پیٹرول ریٹ پوچھیں...')
+                        : tr(lang, 'Ask PRO RIDER AI anything...', 'پرو رائیڈر اے آئی سے کچھ بھی پوچھیں...')
                     }
-                    className="flex-1 px-3 py-2 rounded-xl border border-zinc-200 text-xs focus:outline-none focus:border-[#D4A017]"
+                    className="flex-1 px-3 py-2 rounded-xl border border-zinc-300 text-xs font-medium text-[#0D0D10] focus:outline-none focus:border-[#D4A017]"
                   />
                   <button
                     type="submit"
                     disabled={sending || !input.trim()}
-                    aria-label="Send message"
+                    aria-label={tr(lang, 'Send message', 'پیغام بھیجیں')}
                     className="p-2.5 rounded-xl bg-[#D4A017] text-[#0D0D10] hover:bg-[#EAB308] disabled:opacity-40"
                   >
                     <Send className="w-4 h-4" />
@@ -785,13 +898,17 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                     <div>
                       <h3 className="font-display text-lg font-bold">
                         {voiceState === 'live'
-                          ? 'Live Voice Connected'
+                          ? tr(lang, 'Live Voice Connected', 'لائیو وائس کال منسلک ہے')
                           : voiceState === 'connecting'
-                          ? 'Connecting Gemini Live Voice...'
-                          : 'Hands-Free Travel Voice Assistant'}
+                          ? tr(lang, 'Connecting Live Voice...', 'لائیو وائس کنیکٹ ہو رہی ہے...')
+                          : tr(lang, 'Hands-Free Travel Voice Assistant', 'ہینڈز فری وائس ٹریول اسسٹنٹ')}
                       </h3>
                       <p className="text-xs text-zinc-400 mt-1">
-                        Speak naturally in English or Urdu. Interrupt anytime — audio streams in real time at 16kHz / 24kHz PCM.
+                        {tr(
+                          lang,
+                          'Speak naturally in English or Urdu. Interrupt anytime — audio streams in real time.',
+                          'انگریزی یا اردو میں قدرتی انداز میں بات کریں۔ کسی بھی وقت روک کر اگلا سوال پوچھ سکتے ہیں۔'
+                        )}
                       </p>
                     </div>
                     <button
@@ -805,11 +922,11 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                     >
                       {voiceState === 'live' || voiceState === 'connecting' ? (
                         <>
-                          <PhoneOff className="w-4 h-4" /> End Voice Conversation
+                          <PhoneOff className="w-4 h-4" /> {tr(lang, 'End Voice Conversation', 'وائس کال بند کریں')}
                         </>
                       ) : (
                         <>
-                          <Mic className="w-4 h-4" /> Start Live Voice Conversation
+                          <Mic className="w-4 h-4" /> {tr(lang, 'Start Live Voice Conversation', 'لائیو وائس کال شروع کریں')}
                         </>
                       )}
                     </button>
@@ -823,17 +940,21 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
 
                   <div className="rounded-2xl bg-[#16171C] border border-zinc-800 p-4 h-64 overflow-y-auto space-y-2.5">
                     <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">
-                      Live Speech Captions
+                      {tr(lang, 'Live Speech Captions', 'لائیو گفتگو کی تحریر')}
                     </p>
                     {voiceCaptions.length === 0 ? (
                       <p className="text-xs text-zinc-500 italic">
-                        Tap Start Live Voice Conversation and speak into your microphone.
+                        {tr(
+                          lang,
+                          'Tap Start Live Voice Conversation and speak into your microphone.',
+                          'لائیو وائس کال شروع کریں پر کلک کر کے مائیکروفون میں بولیں۔'
+                        )}
                       </p>
                     ) : (
                       voiceCaptions.map((cap) => (
                         <div key={cap.id} className="text-xs leading-relaxed">
                           <span className={cap.speaker === 'You' ? 'text-zinc-400 font-bold' : 'text-[#D4A017] font-bold'}>
-                            {cap.speaker}:{' '}
+                            {cap.speaker === 'You' ? tr(lang, 'You', 'آپ') : tr(lang, 'PRO RIDER AI', 'پرو رائیڈر اے آئی')}:{' '}
                           </span>
                           <span className="text-zinc-200">{cap.text}</span>
                         </div>
@@ -858,7 +979,7 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                     }}
                     className="w-full py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-xs font-semibold text-zinc-300 hover:text-white"
                   >
-                    Ask Quick Spoken Tip
+                    {tr(lang, 'Ask Quick Spoken Tip', 'فوری صوتی مشورہ سنیں')}
                   </button>
                 )}
               </div>

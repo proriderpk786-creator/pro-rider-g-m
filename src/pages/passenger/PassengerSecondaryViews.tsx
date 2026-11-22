@@ -17,11 +17,14 @@ import {
   X,
 } from 'lucide-react';
 import { ShareTripStatusModal } from '../../components/ShareTripStatusModal';
+import { ThemePreferencesPanel } from '../../components/ThemeSwitcher';
+import { tr, trBookingStatus, trPaymentStatus, trService } from '../../i18n/translations';
 import { apiRequest } from '../../utils/api';
 import { downloadBookingPdf, downloadWalletStatementPdf, shareBookingPdf } from '../../utils/pdfGenerator';
 import type {
   AppNotification,
   Booking,
+  Language,
   SupportTicket,
   User,
   WalletTransaction,
@@ -31,9 +34,10 @@ import type {
 export const PassengerBookingsView: React.FC<{
   bookings: Booking[];
   passengerName: string;
+  lang?: Language;
   onRefresh: () => Promise<void>;
   onOpenSupport: (bookingId: string) => void;
-}> = ({ bookings, passengerName, onRefresh, onOpenSupport }) => {
+}> = ({ bookings, passengerName, lang = 'en', onRefresh, onOpenSupport }) => {
   const [tab, setTab] = useState<'upcoming' | 'active' | 'completed' | 'cancelled'>('active');
   const [ratingTarget, setRatingTarget] = useState<string | null>(null);
   const [stars, setStars] = useState(5);
@@ -51,7 +55,10 @@ export const PassengerBookingsView: React.FC<{
       const data = await apiRequest<any>(`/api/partners/${partnerId}/public-profile`);
       setDriverPreview({ loading: false, data });
     } catch (err: any) {
-      setDriverPreview({ loading: false, error: err?.message || 'Driver showcase not available offline.' });
+      setDriverPreview({
+        loading: false,
+        error: err?.message || tr(lang, 'Driver showcase not available offline.', 'آف لائن حالت میں ڈرائیور پروفائل دستیاب نہیں ہے۔'),
+      });
     }
   };
 
@@ -73,21 +80,30 @@ export const PassengerBookingsView: React.FC<{
     await onRefresh();
   };
 
+  const tabLabels: Record<'active' | 'upcoming' | 'completed' | 'cancelled', string> = {
+    active: tr(lang, 'Active', 'جاری'),
+    upcoming: tr(lang, 'Upcoming', 'آنے والی'),
+    completed: tr(lang, 'Completed', 'مکمل'),
+    cancelled: tr(lang, 'Cancelled', 'منسوخ'),
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="font-display text-2xl font-bold text-[#0D0D10]">My Bookings</h2>
+        <h2 className="font-display text-2xl font-bold text-[#0D0D10]">
+          {tr(lang, 'My Bookings', 'میری بکنگز')}
+        </h2>
         <div className="inline-flex rounded-xl bg-zinc-100 p-1 gap-1">
           {(['active', 'upcoming', 'completed', 'cancelled'] as const).map((tb) => (
             <button
               key={tb}
               type="button"
               onClick={() => setTab(tb)}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold capitalize transition-colors ${
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
                 tab === tb ? 'bg-[#0D0D10] text-white' : 'text-zinc-600 hover:text-[#0D0D10]'
               }`}
             >
-              {tb}
+              {tabLabels[tb]}
             </button>
           ))}
         </div>
@@ -95,7 +111,7 @@ export const PassengerBookingsView: React.FC<{
 
       {filtered.length === 0 ? (
         <div className="rounded-2xl border border-zinc-200 bg-white p-10 text-center text-sm text-zinc-500">
-          No {tab} bookings found.
+          {tr(lang, `No ${tab} bookings found.`, `${tabLabels[tab]} بکنگز موجود نہیں ہیں۔`)}
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4">
@@ -103,18 +119,19 @@ export const PassengerBookingsView: React.FC<{
             <div key={b.id} className="rounded-2xl border border-zinc-200 bg-white p-5 space-y-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <div className="flex items-center gap-2 text-xs text-zinc-500 font-mono">
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500 font-mono">
                     <span className="font-bold text-[#0D0D10]">{b.id}</span>
                     <span aria-hidden="true">·</span>
                     <span>{b.pickup_date} {b.pickup_time}</span>
                     <span aria-hidden="true">·</span>
-                    <span>{b.service_type.replaceAll('_', ' ')}</span>
+                    <span>{trService(lang, b.service_type)}</span>
                   </div>
                   <p className="text-sm font-semibold text-[#0D0D10] mt-1">
                     {b.pickup_address} → {b.dropoff_address}
                   </p>
                   <p className="text-xs text-zinc-500 mt-0.5">
-                    {b.vehicle_category_name} · {b.distance_km} km · Status: <strong className="uppercase">{b.status.replaceAll('_', ' ')}</strong>
+                    {b.vehicle_category_name} · {b.distance_km} km · {tr(lang, 'Status:', 'حالت:')}{' '}
+                    <strong className="uppercase">{trBookingStatus(lang, b.status)}</strong>
                   </p>
                 </div>
 
@@ -123,7 +140,7 @@ export const PassengerBookingsView: React.FC<{
                     Rs. {Number(b.total_bill_pkr).toLocaleString()}
                   </div>
                   <div className="text-[11px] font-semibold text-zinc-500">
-                    {b.payment_status} · Paid Rs. {Number(b.amount_paid_pkr).toLocaleString()}
+                    {trPaymentStatus(lang, b.payment_status)} · {tr(lang, 'Paid', 'ادا شدہ')} Rs. {Number(b.amount_paid_pkr).toLocaleString()}
                   </div>
                 </div>
               </div>
@@ -133,10 +150,10 @@ export const PassengerBookingsView: React.FC<{
                   type="button"
                   onClick={() => setShareBooking(b)}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#D4A017] text-[#0D0D10] text-xs font-bold hover:bg-[#EAB308] transition-colors"
-                  title="Share live trip route and ETA"
+                  title={tr(lang, 'Share live trip route and ETA', 'لائیو روٹ اور آمد کا وقت شیئر کریں')}
                 >
                   <Radio className="w-3.5 h-3.5 text-[#0D0D10]" />
-                  Share Trip Status
+                  {tr(lang, 'Share Trip Status', 'سفر کا احوال شیئر کریں')}
                 </button>
                 <button
                   type="button"
@@ -144,7 +161,7 @@ export const PassengerBookingsView: React.FC<{
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0D0D10] text-white text-xs font-semibold hover:bg-zinc-800"
                 >
                   <Download className="w-3.5 h-3.5 text-[#D4A017]" />
-                  Download PDF
+                  {tr(lang, 'Download PDF', 'پی ڈی ایف ڈاؤن لوڈ')}
                 </button>
                 <button
                   type="button"
@@ -152,7 +169,7 @@ export const PassengerBookingsView: React.FC<{
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-200 text-xs font-semibold hover:bg-zinc-50"
                 >
                   <Share2 className="w-3.5 h-3.5" />
-                  Share Invoice
+                  {tr(lang, 'Share Invoice', 'انوائس شیئر')}
                 </button>
                 <button
                   type="button"
@@ -160,7 +177,7 @@ export const PassengerBookingsView: React.FC<{
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-200 text-xs font-semibold hover:bg-zinc-50"
                 >
                   <HelpCircle className="w-3.5 h-3.5" />
-                  Contact Support
+                  {tr(lang, 'Contact Support', 'سپورٹ سے رابطہ')}
                 </button>
                 {b.partner_id && (
                   <button
@@ -169,7 +186,9 @@ export const PassengerBookingsView: React.FC<{
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-200 bg-zinc-50 text-xs font-semibold hover:bg-zinc-100"
                   >
                     <UserCheck className="w-3.5 h-3.5 text-[#D4A017]" />
-                    {b.partner_name ? `${b.partner_name} · Profile` : 'Driver Profile'}
+                    {b.partner_name
+                      ? `${b.partner_name} · ${tr(lang, 'Profile', 'پروفائل')}`
+                      : tr(lang, 'Driver Profile', 'ڈرائیور پروفائل')}
                   </button>
                 )}
                 {b.status === 'completed' && !b.my_rating && (
@@ -179,13 +198,13 @@ export const PassengerBookingsView: React.FC<{
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#D4A017] text-[#0D0D10] text-xs font-bold"
                   >
                     <Star className="w-3.5 h-3.5" />
-                    Rate Trip
+                    {tr(lang, 'Rate Trip', 'ریٹنگ دیں')}
                   </button>
                 )}
                 {b.my_rating && (
                   <span className="text-xs font-semibold text-emerald-700 inline-flex items-center gap-1">
                     <Star className="w-3.5 h-3.5 fill-amber-500 text-amber-500" />
-                    Rated {b.my_rating}/5
+                    {tr(lang, `Rated ${b.my_rating}/5`, `ریٹنگ ${b.my_rating}/5`)}
                   </span>
                 )}
               </div>
@@ -198,13 +217,15 @@ export const PassengerBookingsView: React.FC<{
                     className="px-2.5 py-1.5 rounded-lg border border-zinc-200 bg-white text-xs"
                   >
                     {[5, 4, 3, 2, 1].map((n) => (
-                      <option key={n} value={n}>{n} Stars</option>
+                      <option key={n} value={n}>
+                        {n} {tr(lang, 'Stars', 'اسٹارز')}
+                      </option>
                     ))}
                   </select>
                   <input
                     value={comment}
                     onChange={(e) => setComment(e.target.value)}
-                    placeholder="Share trip feedback..."
+                    placeholder={tr(lang, 'Share trip feedback...', 'سفر کے بارے میں اپنی رائے لکھیں...')}
                     className="flex-1 min-w-[180px] px-3 py-1.5 rounded-lg border border-zinc-200 bg-white text-xs"
                   />
                   <button
@@ -212,7 +233,7 @@ export const PassengerBookingsView: React.FC<{
                     onClick={() => submitRating(b.id)}
                     className="px-3.5 py-1.5 rounded-lg bg-[#0D0D10] text-white text-xs font-semibold"
                   >
-                    Submit Rating
+                    {tr(lang, 'Submit Rating', 'ریٹنگ جمع کریں')}
                   </button>
                 </div>
               )}
@@ -226,14 +247,16 @@ export const PassengerBookingsView: React.FC<{
         onClose={() => setShareBooking(null)}
         booking={shareBooking}
         passengerName={passengerName}
-        lang="en"
+        lang={lang}
       />
 
       {driverPreview && (
         <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-md w-full max-h-[86vh] overflow-y-auto shadow-2xl border border-zinc-200">
             <div className="px-5 py-3.5 border-b border-zinc-100 flex items-center justify-between sticky top-0 bg-white z-10">
-              <span className="font-display font-bold text-sm text-[#0D0D10]">Pro Partner Profile</span>
+              <span className="font-display font-bold text-sm text-[#0D0D10]">
+                {tr(lang, 'Pro Partner Profile', 'پرو پارٹنر پروفائل')}
+              </span>
               <button
                 type="button"
                 onClick={() => setDriverPreview(null)}
@@ -243,17 +266,23 @@ export const PassengerBookingsView: React.FC<{
               </button>
             </div>
             {driverPreview.loading ? (
-              <div className="p-8 text-center text-xs text-zinc-500">Loading Pro Partner profile...</div>
+              <div className="p-8 text-center text-xs text-zinc-500">
+                {tr(lang, 'Loading Pro Partner profile...', 'ڈرائیور کی پروفائل لوڈ ہو رہی ہے...')}
+              </div>
             ) : driverPreview.error ? (
               <div className="p-6 text-center text-xs text-red-700">{driverPreview.error}</div>
             ) : !driverPreview.data?.published ? (
               <div className="p-8 text-center space-y-2">
                 <Lock className="w-9 h-9 text-[#D4A017] mx-auto" />
                 <h4 className="font-display font-bold text-base text-[#0D0D10]">
-                  {driverPreview.data?.full_name || 'Verified Driver'}
+                  {driverPreview.data?.full_name || tr(lang, 'Verified Driver', 'تصدیق شدہ ڈرائیور')}
                 </h4>
                 <p className="text-xs text-zinc-600">
-                  This driver has set their public showcase photos to Private (Admin Verified).
+                  {tr(
+                    lang,
+                    'This driver has set their public showcase photos to Private (Admin Verified).',
+                    'اس ڈرائیور نے اپنی تصاویر پرائیویٹ رکھی ہوئی ہیں (ایڈمن سے تصدیق شدہ)۔'
+                  )}
                 </p>
               </div>
             ) : (
@@ -285,7 +314,7 @@ export const PassengerBookingsView: React.FC<{
                     </h4>
                     {driverPreview.data.verification_status === 'approved' && (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-100 text-emerald-800 text-[10px] font-bold">
-                        <ShieldCheck className="w-3 h-3" /> Verified
+                        <ShieldCheck className="w-3 h-3" /> {tr(lang, 'Verified', 'تصدیق شدہ')}
                       </span>
                     )}
                   </div>
@@ -297,7 +326,7 @@ export const PassengerBookingsView: React.FC<{
                   )}
                   <p className="text-xs text-zinc-500 mt-2">
                     {driverPreview.data.vehicle_name} · {driverPreview.data.vehicle_number} ·{' '}
-                    {driverPreview.data.completedTrips || 0} Completed Trips
+                    {driverPreview.data.completedTrips || 0} {tr(lang, 'Completed Trips', 'مکمل ٹرپس')}
                   </p>
                   {((driverPreview.data.gallery && driverPreview.data.gallery.length > 0) ||
                     (driverPreview.data.publicDocuments && driverPreview.data.publicDocuments.length > 0)) && (
@@ -336,6 +365,7 @@ export const PassengerBookingsView: React.FC<{
 export const PassengerWalletView: React.FC<{
   passengerName: string;
   bookings: Booking[];
+  lang?: Language;
   wallet: {
     balancePkr: number;
     totalPaymentsPkr: number;
@@ -343,7 +373,7 @@ export const PassengerWalletView: React.FC<{
     transactions: WalletTransaction[];
   };
   onRefresh: () => Promise<void>;
-}> = ({ passengerName, bookings, wallet, onRefresh }) => {
+}> = ({ passengerName, bookings, lang = 'en', wallet, onRefresh }) => {
   const [topupAmount, setTopupAmount] = useState('2000');
   const [topupMethod, setTopupMethod] = useState<'jazzcash' | 'easypaisa' | 'bank_transfer'>('jazzcash');
   const [busy, setBusy] = useState(false);
@@ -363,7 +393,7 @@ export const PassengerWalletView: React.FC<{
         role: 'passenger',
         body: { amountPkr: Number(topupAmount), method: topupMethod },
       });
-      setMsg(`Wallet credited (${res.txRef}).`);
+      setMsg(tr(lang, `Wallet credited (${res.txRef}).`, `والیٹ میں رقم شامل ہو گئی (${res.txRef})۔`));
       await onRefresh();
     } catch (err: any) {
       setMsg(err.message);
@@ -381,7 +411,7 @@ export const PassengerWalletView: React.FC<{
         role: 'passenger',
         body: { method },
       });
-      setMsg(`Payment confirmed (${res.txRef}).`);
+      setMsg(tr(lang, `Payment confirmed (${res.txRef}).`, `ادائیگی مکمل ہو گئی (${res.txRef})۔`));
       await onRefresh();
     } catch (err: any) {
       setMsg(err.message);
@@ -393,34 +423,36 @@ export const PassengerWalletView: React.FC<{
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="font-display text-2xl font-bold text-[#0D0D10]">Passenger Digital Wallet</h2>
+        <h2 className="font-display text-2xl font-bold text-[#0D0D10]">
+          {tr(lang, 'Passenger Digital Wallet', 'مسافر ڈیجیٹل والیٹ')}
+        </h2>
         <button
           type="button"
           onClick={() => downloadWalletStatementPdf(passengerName, 'Passenger', wallet.balancePkr, wallet.transactions)}
           className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#0D0D10] text-white text-xs font-semibold hover:bg-zinc-800"
         >
           <Download className="w-3.5 h-3.5 text-[#D4A017]" />
-          Download Statement PDF
+          {tr(lang, 'Download Statement PDF', 'اسٹیٹمنٹ پی ڈی ایف ڈاؤن لوڈ')}
         </button>
       </div>
 
       {/* KPI Strip */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="rounded-2xl bg-[#0D0D10] text-white p-5">
-          <span className="text-xs text-zinc-400">Wallet Balance</span>
-          <div className="font-mono text-2xl font-bold text-[#D4A017] mt-1">
+          <span className="text-xs text-zinc-400">{tr(lang, 'Wallet Balance', 'والیٹ بیلنس')}</span>
+          <div className="font-mono text-2xl font-bold text-[#D4A017] mt-1 tabular-nums">
             Rs. {wallet.balancePkr.toLocaleString()}
           </div>
         </div>
         <div className="rounded-2xl border border-zinc-200 bg-white p-5">
-          <span className="text-xs text-zinc-500">Total Confirmed Payments</span>
-          <div className="font-mono text-2xl font-bold text-[#0D0D10] mt-1">
+          <span className="text-xs text-zinc-500">{tr(lang, 'Total Confirmed Payments', 'کل تصدیق شدہ ادائیگیاں')}</span>
+          <div className="font-mono text-2xl font-bold text-[#0D0D10] mt-1 tabular-nums">
             Rs. {wallet.totalPaymentsPkr.toLocaleString()}
           </div>
         </div>
         <div className="rounded-2xl border border-zinc-200 bg-white p-5">
-          <span className="text-xs text-zinc-500">Outstanding Amount</span>
-          <div className="font-mono text-2xl font-bold text-amber-700 mt-1">
+          <span className="text-xs text-zinc-500">{tr(lang, 'Outstanding Amount', 'واجب الادا رقم')}</span>
+          <div className="font-mono text-2xl font-bold text-amber-700 mt-1 tabular-nums">
             Rs. {wallet.outstandingPkr.toLocaleString()}
           </div>
         </div>
@@ -433,10 +465,12 @@ export const PassengerWalletView: React.FC<{
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <form onSubmit={handleTopup} className="lg:col-span-5 rounded-2xl border border-zinc-200 bg-white p-5 space-y-4">
           <h3 className="font-display font-bold text-base flex items-center gap-2">
-            <WalletIcon className="w-4 h-4 text-[#D4A017]" /> Add Funds to Wallet
+            <WalletIcon className="w-4 h-4 text-[#D4A017]" /> {tr(lang, 'Add Funds to Wallet', 'والیٹ میں رقم شامل کریں')}
           </h3>
           <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">Amount (PKR)</label>
+            <label className="block text-xs font-semibold text-zinc-600 mb-1">
+              {tr(lang, 'Amount (PKR)', 'رقم (پاکستانی روپے)')}
+            </label>
             <input
               type="number"
               min={100}
@@ -447,15 +481,17 @@ export const PassengerWalletView: React.FC<{
             />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">Payment Channel</label>
+            <label className="block text-xs font-semibold text-zinc-600 mb-1">
+              {tr(lang, 'Payment Channel', 'ادائیگی کا ذریعہ')}
+            </label>
             <select
               value={topupMethod}
               onChange={(e) => setTopupMethod(e.target.value as any)}
               className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 text-sm bg-white"
             >
-              <option value="jazzcash">JazzCash</option>
-              <option value="easypaisa">EasyPaisa</option>
-              <option value="bank_transfer">Bank Transfer / Raast</option>
+              <option value="jazzcash">{tr(lang, 'JazzCash', 'جاز کیش (JazzCash)')}</option>
+              <option value="easypaisa">{tr(lang, 'EasyPaisa', 'ایزی پیسہ (EasyPaisa)')}</option>
+              <option value="bank_transfer">{tr(lang, 'Bank Transfer / Raast', 'بینک ٹرانسفر / راست')}</option>
             </select>
           </div>
           <button
@@ -463,16 +499,18 @@ export const PassengerWalletView: React.FC<{
             disabled={busy}
             className="w-full py-2.5 rounded-xl bg-[#D4A017] text-[#0D0D10] text-xs font-bold hover:bg-[#EAB308]"
           >
-            Confirm Wallet Top-up
+            {tr(lang, 'Confirm Wallet Top-up', 'والیٹ ٹاپ اپ کی تصدیق کریں')}
           </button>
         </form>
 
         <div className="lg:col-span-7 rounded-2xl border border-zinc-200 bg-white p-5 space-y-3">
           <h3 className="font-display font-bold text-base flex items-center gap-2">
-            <CreditCard className="w-4 h-4 text-[#D4A017]" /> Pending Booking Bills
+            <CreditCard className="w-4 h-4 text-[#D4A017]" /> {tr(lang, 'Pending Booking Bills', 'بقایا بکنگ بل')}
           </h3>
           {unpaidBookings.length === 0 ? (
-            <p className="text-xs text-zinc-500 py-4">No outstanding booking balances.</p>
+            <p className="text-xs text-zinc-500 py-4">
+              {tr(lang, 'No outstanding booking balances.', 'کوئی بقایا بل باقی نہیں ہے۔')}
+            </p>
           ) : (
             <div className="space-y-3">
               {unpaidBookings.map((b) => {
@@ -482,7 +520,7 @@ export const PassengerWalletView: React.FC<{
                     <div>
                       <div className="font-mono text-xs font-bold">{b.id}</div>
                       <div className="text-xs text-zinc-500">
-                        Remaining: <strong className="font-mono text-[#0D0D10]">Rs. {rem.toLocaleString()}</strong> ({b.payment_status})
+                        {tr(lang, 'Remaining:', 'باقی:')} <strong className="font-mono text-[#0D0D10]">Rs. {rem.toLocaleString()}</strong> ({trPaymentStatus(lang, b.payment_status)})
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -492,7 +530,7 @@ export const PassengerWalletView: React.FC<{
                         onClick={() => handlePayBooking(b.id, 'wallet')}
                         className="px-3 py-1.5 rounded-lg bg-[#0D0D10] text-white text-xs font-semibold"
                       >
-                        Pay via Wallet
+                        {tr(lang, 'Pay via Wallet', 'والیٹ سے ادا کریں')}
                       </button>
                       <button
                         type="button"
@@ -500,7 +538,7 @@ export const PassengerWalletView: React.FC<{
                         onClick={() => handlePayBooking(b.id, 'jazzcash')}
                         className="px-3 py-1.5 rounded-lg border border-zinc-200 text-xs font-semibold hover:bg-zinc-50"
                       >
-                        JazzCash
+                        {tr(lang, 'JazzCash', 'جاز کیش')}
                       </button>
                     </div>
                   </div>
@@ -514,24 +552,24 @@ export const PassengerWalletView: React.FC<{
       {/* Real Transaction Ledger */}
       <div className="rounded-2xl border border-zinc-200 bg-white overflow-hidden">
         <div className="px-5 py-4 border-b border-zinc-100 font-display font-bold text-sm">
-          Transaction History
+          {tr(lang, 'Transaction History', 'لین دین کی تفصیل')}
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead className="bg-zinc-50 text-zinc-500 border-b border-zinc-200">
               <tr>
-                <th className="px-4 py-3">Transaction ID</th>
-                <th className="px-4 py-3">Description</th>
-                <th className="px-4 py-3">Method</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3 text-right">Amount</th>
+                <th className="px-4 py-3">{tr(lang, 'Transaction ID', 'ٹرانزیکشن آئی ڈی')}</th>
+                <th className="px-4 py-3">{tr(lang, 'Description', 'تفصیل')}</th>
+                <th className="px-4 py-3">{tr(lang, 'Method', 'طریقہ')}</th>
+                <th className="px-4 py-3">{tr(lang, 'Status', 'حالت')}</th>
+                <th className="px-4 py-3 text-right">{tr(lang, 'Amount', 'رقم')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100">
               {wallet.transactions.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="px-4 py-6 text-center text-zinc-500">
-                    No financial transactions recorded yet.
+                    {tr(lang, 'No financial transactions recorded yet.', 'ابھی تک کوئی لین دین ریکارڈ نہیں ہوا۔')}
                   </td>
                 </tr>
               ) : (
@@ -541,7 +579,7 @@ export const PassengerWalletView: React.FC<{
                     <td className="px-4 py-3">{tx.description}</td>
                     <td className="px-4 py-3 uppercase">{tx.payment_method}</td>
                     <td className="px-4 py-3 uppercase font-semibold text-emerald-700">{tx.status}</td>
-                    <td className="px-4 py-3 text-right font-mono font-bold">
+                    <td className="px-4 py-3 text-right font-mono font-bold tabular-nums">
                       {tx.type === 'credit' ? '+' : '-'}Rs. {Number(tx.amount_pkr).toLocaleString()}
                     </td>
                   </tr>
@@ -558,23 +596,26 @@ export const PassengerWalletView: React.FC<{
 // Screen 14: Notifications
 export const NotificationsView: React.FC<{
   notifications: AppNotification[];
+  lang?: Language;
   onMarkAllRead: () => Promise<void>;
-}> = ({ notifications, onMarkAllRead }) => {
+}> = ({ notifications, lang = 'en', onMarkAllRead }) => {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="font-display text-2xl font-bold text-[#0D0D10]">Notifications</h2>
+        <h2 className="font-display text-2xl font-bold text-[#0D0D10]">
+          {tr(lang, 'Notifications', 'نوٹیفکیشنز')}
+        </h2>
         <button
           type="button"
           onClick={onMarkAllRead}
           className="px-3.5 py-1.5 rounded-lg border border-zinc-200 bg-white text-xs font-semibold hover:bg-zinc-50"
         >
-          Mark All Read
+          {tr(lang, 'Mark All Read', 'سب پڑھے ہوئے نشان زد کریں')}
         </button>
       </div>
       {notifications.length === 0 ? (
         <div className="rounded-2xl border border-zinc-200 bg-white p-10 text-center text-sm text-zinc-500">
-          No notifications yet.
+          {tr(lang, 'No notifications yet.', 'ابھی کوئی نوٹیفکیشن موجود نہیں ہے۔')}
         </div>
       ) : (
         <div className="divide-y divide-zinc-100 rounded-2xl border border-zinc-200 bg-white overflow-hidden">
@@ -602,18 +643,29 @@ export const SupportView: React.FC<{
   role: 'passenger' | 'partner';
   tickets: SupportTicket[];
   defaultBookingId?: string;
+  lang?: Language;
   onRefresh: () => Promise<void>;
-}> = ({ role, tickets, defaultBookingId = '', onRefresh }) => {
-  const [category, setCategory] = useState(role === 'passenger' ? 'Booking Complaint' : 'Booking Dispute');
+}> = ({ role, tickets, defaultBookingId = '', lang = 'en', onRefresh }) => {
+  const categories =
+    role === 'passenger'
+      ? [
+          { value: 'Booking Complaint', label: tr(lang, 'Booking Complaint', 'بُکنگ شکایت') },
+          { value: 'Payment Complaint', label: tr(lang, 'Payment Complaint', 'ادائیگی شکایت') },
+          { value: 'Safety Complaint', label: tr(lang, 'Safety Complaint', 'سیفٹی شکایت') },
+          { value: 'General Inquiry', label: tr(lang, 'General Inquiry', 'عام معلومات') },
+        ]
+      : [
+          { value: 'Booking Dispute', label: tr(lang, 'Booking Dispute', 'بُکنگ تنازعہ') },
+          { value: 'Payment Issue', label: tr(lang, 'Payment Issue', 'ادائیگی کا مسئلہ') },
+          { value: 'Document Problem', label: tr(lang, 'Document Problem', 'دستاویزات کا مسئلہ') },
+          { value: 'Vehicle Verification Issue', label: tr(lang, 'Vehicle Verification Issue', 'گاڑی تصدیق کا مسئلہ') },
+        ];
+
+  const [category, setCategory] = useState(categories[0].value);
   const [bookingId, setBookingId] = useState(defaultBookingId);
   const [subject, setSubject] = useState('');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
-
-  const categories =
-    role === 'passenger'
-      ? ['Booking Complaint', 'Payment Complaint', 'Safety Complaint', 'General Inquiry']
-      : ['Booking Dispute', 'Payment Issue', 'Document Problem', 'Vehicle Verification Issue'];
 
   const submitTicket = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -636,8 +688,12 @@ export const SupportView: React.FC<{
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="font-display text-2xl font-bold text-[#0D0D10]">Support Center</h2>
-          <p className="text-xs text-zinc-500">Direct communication with PRO RIDER AI Admin Support</p>
+          <h2 className="font-display text-2xl font-bold text-[#0D0D10]">
+            {tr(lang, 'Support Center', 'سپورٹ سینٹر')}
+          </h2>
+          <p className="text-xs text-zinc-500">
+            {tr(lang, 'Direct communication with PRO RIDER AI Admin Support', 'پرو رائیڈر اے آئی ایڈمن سپورٹ سے براہ راست رابطہ')}
+          </p>
         </div>
         <a
           href="https://wa.me/923125007782"
@@ -646,27 +702,33 @@ export const SupportView: React.FC<{
           className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#0D0D10] text-white text-xs font-bold"
         >
           <PhoneCall className="w-3.5 h-3.5 text-[#D4A017]" />
-          WhatsApp Support: 03125007782
+          {tr(lang, 'WhatsApp Support: 03125007782', 'واٹس ایپ سپورٹ: 03125007782')}
         </a>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <form onSubmit={submitTicket} className="lg:col-span-5 rounded-2xl border border-zinc-200 bg-white p-5 space-y-4">
-          <h3 className="font-display font-bold text-base">Open Support Ticket</h3>
+          <h3 className="font-display font-bold text-base">
+            {tr(lang, 'Open Support Ticket', 'نیا سپورٹ ٹکٹ کھولیں')}
+          </h3>
           <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">Category</label>
+            <label className="block text-xs font-semibold text-zinc-600 mb-1">
+              {tr(lang, 'Category', 'زمرہ')}
+            </label>
             <select
               value={category}
               onChange={(e) => setCategory(e.target.value)}
               className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 text-sm bg-white"
             >
               {categories.map((c) => (
-                <option key={c} value={c}>{c}</option>
+                <option key={c.value} value={c.value}>{c.label}</option>
               ))}
             </select>
           </div>
           <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">Booking ID (Optional)</label>
+            <label className="block text-xs font-semibold text-zinc-600 mb-1">
+              {tr(lang, 'Booking ID (Optional)', 'بکنگ آئی ڈی (اختیاری)')}
+            </label>
             <input
               value={bookingId}
               onChange={(e) => setBookingId(e.target.value)}
@@ -675,23 +737,27 @@ export const SupportView: React.FC<{
             />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">Subject</label>
+            <label className="block text-xs font-semibold text-zinc-600 mb-1">
+              {tr(lang, 'Subject', 'عنوان')}
+            </label>
             <input
               required
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
-              placeholder="Brief summary of the issue"
+              placeholder={tr(lang, 'Brief summary of the issue', 'مسئلے کا مختصر خلاصہ')}
               className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 text-sm"
             />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">Details</label>
+            <label className="block text-xs font-semibold text-zinc-600 mb-1">
+              {tr(lang, 'Details', 'تفصیلات')}
+            </label>
             <textarea
               required
               rows={4}
               value={message}
               onChange={(e) => setMessage(e.target.value)}
-              placeholder="Describe the issue clearly..."
+              placeholder={tr(lang, 'Describe the issue clearly...', 'مسئلے کی واضح تفصیل لکھیں...')}
               className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 text-sm"
             />
           </div>
@@ -700,15 +766,17 @@ export const SupportView: React.FC<{
             disabled={busy}
             className="w-full py-2.5 rounded-xl bg-[#D4A017] text-[#0D0D10] text-xs font-bold hover:bg-[#EAB308]"
           >
-            Submit Ticket to Admin
+            {tr(lang, 'Submit Ticket to Admin', 'ٹکٹ ایڈمن کو بھیجیں')}
           </button>
         </form>
 
         <div className="lg:col-span-7 space-y-3">
-          <h3 className="font-display font-bold text-base">Your Tickets</h3>
+          <h3 className="font-display font-bold text-base">
+            {tr(lang, 'Your Tickets', 'آپ کے ٹکٹس')}
+          </h3>
           {tickets.length === 0 ? (
             <div className="rounded-2xl border border-zinc-200 bg-white p-8 text-center text-xs text-zinc-500">
-              No support tickets submitted yet.
+              {tr(lang, 'No support tickets submitted yet.', 'ابھی کوئی سپورٹ ٹکٹ جمع نہیں کروایا گیا۔')}
             </div>
           ) : (
             tickets.map((tkt) => (
@@ -721,7 +789,7 @@ export const SupportView: React.FC<{
                 <p className="text-xs text-zinc-600">{tkt.message}</p>
                 {tkt.admin_reply && (
                   <div className="p-3 rounded-xl bg-zinc-50 border border-zinc-200 text-xs">
-                    <strong className="text-[#0D0D10]">Admin Reply:</strong> {tkt.admin_reply}
+                    <strong className="text-[#0D0D10]">{tr(lang, 'Admin Reply:', 'ایڈمن کا جواب:')}</strong> {tkt.admin_reply}
                   </div>
                 )}
               </div>
@@ -733,12 +801,15 @@ export const SupportView: React.FC<{
   );
 };
 
-// Screen 16: Passenger Profile
+// Screen 16: Passenger Profile (with integrated Theme Studio, Notifications & App Permissions)
 export const PassengerProfileView: React.FC<{
   user: User;
+  lang?: Language;
+  unreadNotifications?: number;
+  onOpenNotifications?: () => void;
   onUpdated: (u: User) => void;
   onLogout: () => void;
-}> = ({ user, onUpdated, onLogout }) => {
+}> = ({ user, lang = 'en', unreadNotifications = 0, onOpenNotifications, onUpdated, onLogout }) => {
   const [fullName, setFullName] = useState(user.full_name);
   const [whatsapp, setWhatsapp] = useState(user.whatsapp || '');
   const [email, setEmail] = useState(user.email || '');
@@ -758,7 +829,7 @@ export const PassengerProfileView: React.FC<{
       body: { fullName, whatsapp, email, city, notifyPush, notifySms },
     });
     onUpdated(res.user);
-    setStatusMsg('Profile updated.');
+    setStatusMsg(tr(lang, 'Profile updated.', 'پروفائل اپڈیٹ ہو گئی۔'));
   };
 
   const changePassword = async (e: React.FormEvent) => {
@@ -771,7 +842,7 @@ export const PassengerProfileView: React.FC<{
       });
       setCurrentPassword('');
       setNewPassword('');
-      setStatusMsg('Password changed successfully.');
+      setStatusMsg(tr(lang, 'Password changed successfully.', 'پاس ورڈ کامیابی سے تبدیل ہو گیا۔'));
     } catch (err: any) {
       setStatusMsg(err.message);
     }
@@ -801,13 +872,15 @@ export const PassengerProfileView: React.FC<{
   return (
     <div className="space-y-6 max-w-4xl">
       <div className="flex items-center justify-between">
-        <h2 className="font-display text-2xl font-bold text-[#0D0D10]">Passenger Profile &amp; Account</h2>
+        <h2 className="font-display text-2xl font-bold text-[#0D0D10]">
+          {tr(lang, 'Passenger Profile & Settings', 'مسافر پروفائل اور سیٹنگز')}
+        </h2>
         <button
           type="button"
           onClick={onLogout}
           className="px-4 py-2 rounded-xl border border-zinc-200 text-xs font-semibold hover:bg-zinc-100"
         >
-          Sign Out
+          {tr(lang, 'Sign Out', 'لاگ آؤٹ')}
         </button>
       </div>
 
@@ -815,67 +888,134 @@ export const PassengerProfileView: React.FC<{
         <div className="rounded-xl bg-zinc-900 text-[#F4C430] px-4 py-2.5 text-xs font-semibold">{statusMsg}</div>
       )}
 
+      {/* Quick Profile Controls: Notifications & App Permissions */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {onOpenNotifications && (
+          <button
+            type="button"
+            onClick={onOpenNotifications}
+            className="rounded-2xl border border-zinc-200 bg-white hover:border-[#D4A017] p-4 flex items-center justify-between gap-3 text-start transition-colors min-h-[64px]"
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-[#0D0D10] text-[#D4A017] flex items-center justify-center shrink-0">
+                <Bell className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <div className="font-display font-bold text-sm text-[#0D0D10]">
+                  {tr(lang, 'Notifications', 'نوٹیفکیشنز')}
+                </div>
+                <p className="text-[11px] text-zinc-500">
+                  {tr(lang, 'View ride & system alerts', 'سفر اور سسٹم کی اطلاعات دیکھیں')}
+                </p>
+              </div>
+            </div>
+            {unreadNotifications > 0 && (
+              <span className="font-mono text-xs font-bold px-2.5 py-1 rounded-lg bg-red-600 text-white shrink-0">
+                {unreadNotifications}
+              </span>
+            )}
+          </button>
+        )}
+
+        <button
+          type="button"
+          onClick={() => window.dispatchEvent(new CustomEvent('open-prorider-permissions'))}
+          className="rounded-2xl border border-zinc-200 bg-white hover:border-[#D4A017] p-4 flex items-center justify-between gap-3 text-start transition-colors min-h-[64px]"
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center shrink-0">
+              <ShieldCheck className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <div className="font-display font-bold text-sm text-[#0D0D10]">
+                {tr(lang, 'App Permissions', 'ایپ پرمیشنز')}
+              </div>
+              <p className="text-[11px] text-zinc-500">
+                {tr(lang, 'Location, Camera, Mic & Alerts', 'لوکیشن، کیمرہ، مائیک اور الرٹس')}
+              </p>
+            </div>
+          </div>
+        </button>
+      </div>
+
+      {/* Embedded Personal Color Theme Selector inside Profile Settings */}
+      <ThemePreferencesPanel lang={lang} />
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <form onSubmit={saveProfile} className="rounded-2xl border border-zinc-200 bg-white p-5 space-y-4">
-          <h3 className="font-display font-bold text-base">Personal &amp; Contact Information</h3>
+          <h3 className="font-display font-bold text-base">
+            {tr(lang, 'Personal & Contact Information', 'ذاتی اور رابطہ کی معلومات')}
+          </h3>
           <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">Full Name</label>
+            <label className="block text-xs font-semibold text-zinc-600 mb-1">
+              {tr(lang, 'Full Name', 'پورا نام')}
+            </label>
             <input value={fullName} onChange={(e) => setFullName(e.target.value)} className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm" />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">Registered Mobile Number</label>
+            <label className="block text-xs font-semibold text-zinc-600 mb-1">
+              {tr(lang, 'Registered Mobile Number', 'رجسٹرڈ موبائل نمبر')}
+            </label>
             <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-zinc-50 border border-zinc-200 text-sm font-mono">
               <span>{user.phone}</span>
               <span className={`text-[11px] font-sans font-bold ${user.phone_verified ? 'text-emerald-700' : 'text-amber-700'}`}>
-                {user.phone_verified ? 'Verified' : 'Unverified'}
+                {user.phone_verified ? tr(lang, 'Verified', 'تصدیق شدہ') : tr(lang, 'Unverified', 'غیر تصدیق شدہ')}
               </span>
             </div>
             {!user.phone_verified && (
               <button type="button" onClick={requestPhoneVerify} className="mt-1.5 text-xs font-semibold text-[#B8860B] hover:underline">
-                Verify Mobile via SMS Provider
+                {tr(lang, 'Verify Mobile via SMS Provider', 'موبائل نمبر تصدیق کروائیں')}
               </button>
             )}
             {otpNotice && <p className="mt-1 text-[11px] text-amber-700">{otpNotice}</p>}
           </div>
           <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">WhatsApp</label>
+            <label className="block text-xs font-semibold text-zinc-600 mb-1">
+              {tr(lang, 'WhatsApp', 'واٹس ایپ')}
+            </label>
             <input value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)} className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm" />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">Email</label>
+            <label className="block text-xs font-semibold text-zinc-600 mb-1">
+              {tr(lang, 'Email', 'ای میل')}
+            </label>
             <input value={email} onChange={(e) => setEmail(e.target.value)} className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm" />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">Primary City</label>
+            <label className="block text-xs font-semibold text-zinc-600 mb-1">
+              {tr(lang, 'Primary City', 'بنیادی شہر')}
+            </label>
             <select value={city} onChange={(e) => setCity(e.target.value)} className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm bg-white">
-              <option value="Islamabad">Islamabad</option>
-              <option value="Rawalpindi">Rawalpindi</option>
-              <option value="Lahore">Lahore</option>
-              <option value="Karachi">Karachi</option>
+              <option value="Islamabad">{tr(lang, 'Islamabad', 'اسلام آباد')}</option>
+              <option value="Rawalpindi">{tr(lang, 'Rawalpindi', 'راولپنڈی')}</option>
+              <option value="Lahore">{tr(lang, 'Lahore', 'لاہور')}</option>
+              <option value="Karachi">{tr(lang, 'Karachi', 'کراچی')}</option>
             </select>
           </div>
           <div className="space-y-2 pt-1 text-xs">
             <label className="flex items-center gap-2">
               <input type="checkbox" checked={notifyPush} onChange={(e) => setNotifyPush(e.target.checked)} className="accent-[#D4A017]" />
-              Booking &amp; Driver Offer Notifications
+              {tr(lang, 'Booking & Driver Offer Notifications', 'بُکنگ اور ڈرائیور آفر نوٹیفکیشنز')}
             </label>
             <label className="flex items-center gap-2">
               <input type="checkbox" checked={notifySms} onChange={(e) => setNotifySms(e.target.checked)} className="accent-[#D4A017]" />
-              SMS / WhatsApp Schedule Reminders
+              {tr(lang, 'SMS / WhatsApp Schedule Reminders', 'ایس ایم ایس / واٹس ایپ شیڈول یاد دہانیاں')}
             </label>
           </div>
           <button type="submit" className="w-full py-2.5 rounded-xl bg-[#0D0D10] text-white text-xs font-bold">
-            Save Changes
+            {tr(lang, 'Save Changes', 'تبدیلیاں محفوظ کریں')}
           </button>
         </form>
 
         <div className="space-y-6">
           <form onSubmit={changePassword} className="rounded-2xl border border-zinc-200 bg-white p-5 space-y-4">
-            <h3 className="font-display font-bold text-base">Manage Password</h3>
+            <h3 className="font-display font-bold text-base">
+              {tr(lang, 'Manage Password', 'پاس ورڈ تبدیل کریں')}
+            </h3>
             <input
               type="password"
               required
-              placeholder="Current Password"
+              placeholder={tr(lang, 'Current Password', 'موجودہ پاس ورڈ')}
               value={currentPassword}
               onChange={(e) => setCurrentPassword(e.target.value)}
               className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm"
@@ -884,22 +1024,26 @@ export const PassengerProfileView: React.FC<{
               type="password"
               required
               minLength={6}
-              placeholder="New Password (min 6 chars)"
+              placeholder={tr(lang, 'New Password (min 6 chars)', 'نیا پاس ورڈ (کم از کم 6 حروف)')}
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
               className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm"
             />
             <button type="submit" className="w-full py-2.5 rounded-xl bg-[#D4A017] text-[#0D0D10] text-xs font-bold">
-              Update Password
+              {tr(lang, 'Update Password', 'پاس ورڈ اپڈیٹ کریں')}
             </button>
           </form>
 
           <div className="rounded-2xl border border-zinc-200 bg-white p-5 space-y-3">
             <h3 className="font-display font-bold text-base flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-[#D4A017]" /> Privacy &amp; Account Deletion
+              <CheckCircle2 className="w-4 h-4 text-[#D4A017]" /> {tr(lang, 'Privacy & Account Deletion', 'پرائیویسی اور اکاؤنٹ حذف کرنے کی درخواست')}
             </h3>
             <p className="text-xs text-zinc-600 leading-relaxed">
-              Your Passenger account is isolated from Driver/Pro Partner systems. Financial invoices are retained per Pakistan digital ledger rules.
+              {tr(
+                lang,
+                'Your Passenger account is isolated from Driver/Pro Partner systems. Financial invoices are retained per Pakistan digital ledger rules.',
+                'آپ کا مسافر اکاؤنٹ ڈرائیور سسٹم سے مکمل طور پر الگ ہے۔ مالیاتی انوائسز پاکستانی ڈیجیٹل قوانین کے مطابق محفوظ رہتی ہیں۔'
+              )}
             </p>
             <button
               type="button"
@@ -907,7 +1051,7 @@ export const PassengerProfileView: React.FC<{
               className="inline-flex items-center gap-1.5 text-xs font-semibold text-red-700 hover:underline"
             >
               <ShieldAlert className="w-3.5 h-3.5" />
-              Request Account Deletion
+              {tr(lang, 'Request Account Deletion', 'اکاؤنٹ حذف کرنے کی درخواست دیں')}
             </button>
           </div>
         </div>

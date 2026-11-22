@@ -16,17 +16,20 @@ import {
   Wallet,
   X,
 } from 'lucide-react';
+import { tr } from '../../i18n/translations';
 import { apiRequest } from '../../utils/api';
-import type { PassengerAccount } from '../../types';
+import type { Language, PassengerAccount } from '../../types';
 
 interface PassengerManagementTabProps {
   passengers: PassengerAccount[];
+  lang?: Language;
   onReload: () => Promise<void>;
   onShowToast: (msg: string) => void;
 }
 
 export const PassengerManagementTab: React.FC<PassengerManagementTabProps> = ({
   passengers,
+  lang = 'en',
   onReload,
   onShowToast,
 }) => {
@@ -70,11 +73,15 @@ export const PassengerManagementTab: React.FC<PassengerManagementTabProps> = ({
         body: { status: nextStatus },
       });
       onShowToast(
-        `Passenger "${p.full_name}" is now ${nextStatus.toUpperCase()}.`
+        tr(
+          lang,
+          `Passenger "${p.full_name}" is now ${nextStatus.toUpperCase()}.`,
+          `مسافر "${p.full_name}" اب ${nextStatus === 'suspended' ? 'معطل' : 'فعال'} ہے۔`
+        )
       );
       await onReload();
     } catch (err: any) {
-      onShowToast(`Failed to update passenger status: ${err.message}`);
+      onShowToast(tr(lang, `Failed to update passenger status: ${err.message}`, `اسٹیٹس اپڈیٹ کرنے میں خرابی: ${err.message}`));
     } finally {
       setActionBusyId(null);
     }
@@ -90,11 +97,15 @@ export const PassengerManagementTab: React.FC<PassengerManagementTabProps> = ({
         body: { phone_verified: nextVerified },
       });
       onShowToast(
-        `Phone verification for "${p.full_name}" set to ${nextVerified === 1 ? 'VERIFIED' : 'UNVERIFIED'}.`
+        tr(
+          lang,
+          `Phone verification for "${p.full_name}" set to ${nextVerified === 1 ? 'VERIFIED' : 'UNVERIFIED'}.`,
+          `"${p.full_name}" کی فون تصدیق اب ${nextVerified === 1 ? 'تصدیق شدہ' : 'غیر تصدیق شدہ'} ہے۔`
+        )
       );
       await onReload();
     } catch (err: any) {
-      onShowToast(`Failed to update phone verification: ${err.message}`);
+      onShowToast(tr(lang, `Failed to update phone verification: ${err.message}`, `فون تصدیق اپڈیٹ کرنے میں خرابی: ${err.message}`));
     } finally {
       setActionBusyId(null);
     }
@@ -122,11 +133,17 @@ export const PassengerManagementTab: React.FC<PassengerManagementTabProps> = ({
         role: 'admin',
         body: editForm,
       });
-      onShowToast(`Passenger record for "${editForm.full_name}" saved.`);
+      onShowToast(
+        tr(
+          lang,
+          `Passenger record for "${editForm.full_name}" saved.`,
+          `"${editForm.full_name}" کا ریکارڈ محفوظ ہو گیا۔`
+        )
+      );
       setEditingPassenger(null);
       await onReload();
     } catch (err: any) {
-      onShowToast(`Error saving passenger: ${err.message}`);
+      onShowToast(tr(lang, `Error saving passenger: ${err.message}`, `مسافر محفوظ کرنے میں خرابی: ${err.message}`));
     } finally {
       setSavingEdit(false);
     }
@@ -139,14 +156,17 @@ export const PassengerManagementTab: React.FC<PassengerManagementTabProps> = ({
         <div>
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-lg bg-[#D4A017]/15 text-[#8F6400] text-xs font-bold uppercase tracking-wider mb-2">
             <Users className="w-3.5 h-3.5" />
-            Super Admin Passenger Management
+            {tr(lang, 'Super Admin Passenger Management', 'سپر ایڈمن مسافر کنٹرول')}
           </div>
           <h1 className="font-display text-2xl font-bold text-[#0D0D10]">
-            Registered Passengers &amp; Accounts
+            {tr(lang, 'Registered Passengers & Accounts', 'رجسٹرڈ مسافر اور اکاؤنٹس')}
           </h1>
           <p className="text-xs text-zinc-500 mt-1 max-w-2xl">
-            Super Admin can monitor passenger accounts, view total trip history, inspect wallet balances,
-            verify phone numbers, and suspend or reactivate access.
+            {tr(
+              lang,
+              'Super Admin can monitor passenger accounts, view total trip history, inspect wallet balances, verify phone numbers, and suspend or reactivate access.',
+              'سپر ایڈمن مسافر اکاؤنٹس، ٹرپس کی تعداد، والیٹ بیلنس، فون کی تصدیق اور اکاؤنٹ معطل یا فعال کر سکتا ہے۔'
+            )}
           </p>
         </div>
         <button
@@ -155,7 +175,7 @@ export const PassengerManagementTab: React.FC<PassengerManagementTabProps> = ({
           className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-zinc-200 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 shrink-0"
         >
           <RefreshCw className="w-3.5 h-3.5" />
-          Refresh List
+          {tr(lang, 'Refresh List', 'فہرست تازہ کریں')}
         </button>
       </div>
 
@@ -163,7 +183,7 @@ export const PassengerManagementTab: React.FC<PassengerManagementTabProps> = ({
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="rounded-2xl bg-white border border-zinc-200 p-4">
           <span className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">
-            Total Passengers
+            {tr(lang, 'Total Passengers', 'کل مسافر')}
           </span>
           <div className="font-mono text-2xl font-bold text-[#0D0D10] mt-1">
             {passengers.length}
@@ -171,7 +191,7 @@ export const PassengerManagementTab: React.FC<PassengerManagementTabProps> = ({
         </div>
         <div className="rounded-2xl bg-white border border-zinc-200 p-4">
           <span className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">
-            Active Accounts
+            {tr(lang, 'Active Accounts', 'فعال اکاؤنٹس')}
           </span>
           <div className="font-mono text-2xl font-bold text-emerald-700 mt-1">
             {totalActive}
@@ -179,7 +199,7 @@ export const PassengerManagementTab: React.FC<PassengerManagementTabProps> = ({
         </div>
         <div className="rounded-2xl bg-white border border-zinc-200 p-4">
           <span className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">
-            Phone Verified
+            {tr(lang, 'Phone Verified', 'فون تصدیق شدہ')}
           </span>
           <div className="font-mono text-2xl font-bold text-[#8F6400] mt-1">
             {totalVerified}
@@ -187,7 +207,7 @@ export const PassengerManagementTab: React.FC<PassengerManagementTabProps> = ({
         </div>
         <div className="rounded-2xl bg-white border border-zinc-200 p-4">
           <span className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">
-            Platform Trips
+            {tr(lang, 'Platform Trips', 'پلیٹ فارم ٹرپس')}
           </span>
           <div className="font-mono text-2xl font-bold text-indigo-700 mt-1">
             {totalBookingsAll}
@@ -201,7 +221,7 @@ export const PassengerManagementTab: React.FC<PassengerManagementTabProps> = ({
           <Search className="w-4 h-4 text-zinc-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
           <input
             type="text"
-            placeholder="Search by name, phone, city, email..."
+            placeholder={tr(lang, 'Search by name, phone, city, email...', 'نام، فون، شہر یا ای میل سے تلاش کریں...')}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-9 pr-3.5 py-2 rounded-xl border border-zinc-200 text-xs font-semibold focus:border-[#D4A017] focus:outline-none"
@@ -209,7 +229,7 @@ export const PassengerManagementTab: React.FC<PassengerManagementTabProps> = ({
         </div>
 
         <div className="flex items-center gap-2 self-start sm:self-auto text-xs">
-          <span className="text-zinc-500 font-semibold">Status:</span>
+          <span className="text-zinc-500 font-semibold">{tr(lang, 'Status:', 'حالت:')}</span>
           {(['all', 'active', 'suspended'] as const).map((st) => (
             <button
               key={st}
@@ -221,7 +241,11 @@ export const PassengerManagementTab: React.FC<PassengerManagementTabProps> = ({
                   : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
               }`}
             >
-              {st}
+              {st === 'all'
+                ? tr(lang, 'All', 'سب')
+                : st === 'active'
+                ? tr(lang, 'Active', 'فعال')
+                : tr(lang, 'Suspended', 'معطل')}
             </button>
           ))}
         </div>
@@ -233,21 +257,21 @@ export const PassengerManagementTab: React.FC<PassengerManagementTabProps> = ({
           <table className="w-full text-left text-xs">
             <thead className="bg-zinc-50 border-b border-zinc-200 text-zinc-500 uppercase tracking-wider text-[10px]">
               <tr>
-                <th className="px-5 py-3.5">Passenger</th>
-                <th className="px-4 py-3.5">Phone &amp; WhatsApp</th>
-                <th className="px-4 py-3.5">City</th>
-                <th className="px-4 py-3.5 text-center">Verified</th>
-                <th className="px-4 py-3.5 text-right">Trips</th>
-                <th className="px-4 py-3.5 text-right">Wallet Balance</th>
-                <th className="px-4 py-3.5 text-center">Status</th>
-                <th className="px-5 py-3.5 text-right">Admin Actions</th>
+                <th className="px-5 py-3.5">{tr(lang, 'Passenger', 'مسافر')}</th>
+                <th className="px-4 py-3.5">{tr(lang, 'Phone & WhatsApp', 'فون اور واٹس ایپ')}</th>
+                <th className="px-4 py-3.5">{tr(lang, 'City', 'شہر')}</th>
+                <th className="px-4 py-3.5 text-center">{tr(lang, 'Verified', 'تصدیق')}</th>
+                <th className="px-4 py-3.5 text-right">{tr(lang, 'Trips', 'ٹرپس')}</th>
+                <th className="px-4 py-3.5 text-right">{tr(lang, 'Wallet Balance', 'والیٹ بیلنس')}</th>
+                <th className="px-4 py-3.5 text-center">{tr(lang, 'Status', 'حالت')}</th>
+                <th className="px-5 py-3.5 text-right">{tr(lang, 'Admin Actions', 'ایڈمن کارروائی')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100">
               {filteredPassengers.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="px-5 py-12 text-center text-zinc-400">
-                    No passenger records found matching criteria.
+                    {tr(lang, 'No passenger records found matching criteria.', 'فلٹر کے مطابق کوئی مسافر ریکارڈ نہیں ملا۔')}
                   </td>
                 </tr>
               ) : (
@@ -294,15 +318,15 @@ export const PassengerManagementTab: React.FC<PassengerManagementTabProps> = ({
                               ? 'bg-emerald-100 text-emerald-800'
                               : 'bg-zinc-100 text-zinc-500'
                           }`}
-                          title="Click to toggle phone verification status"
+                          title={tr(lang, 'Click to toggle phone verification status', 'فون کی تصدیق تبدیل کرنے کے لیے کلک کریں')}
                         >
                           {p.phone_verified === 1 ? (
                             <>
-                              <UserCheck className="w-3 h-3 text-emerald-600" /> Verified
+                              <UserCheck className="w-3 h-3 text-emerald-600" /> {tr(lang, 'Verified', 'تصدیق شدہ')}
                             </>
                           ) : (
                             <>
-                              <UserX className="w-3 h-3 text-zinc-400" /> Unverified
+                              <UserX className="w-3 h-3 text-zinc-400" /> {tr(lang, 'Unverified', 'غیر تصدیق شدہ')}
                             </>
                           )}
                         </button>
@@ -332,7 +356,7 @@ export const PassengerManagementTab: React.FC<PassengerManagementTabProps> = ({
                               : 'bg-emerald-100 text-emerald-800'
                           }`}
                         >
-                          {p.status || 'Active'}
+                          {isSuspended ? tr(lang, 'Suspended', 'معطل') : tr(lang, 'Active', 'فعال')}
                         </span>
                       </td>
 
@@ -348,13 +372,13 @@ export const PassengerManagementTab: React.FC<PassengerManagementTabProps> = ({
                                 : 'bg-red-50 hover:bg-red-100 text-red-700 border border-red-200'
                             }`}
                           >
-                            {isSuspended ? 'Reactivate' : 'Suspend'}
+                            {isSuspended ? tr(lang, 'Reactivate', 'بحال کریں') : tr(lang, 'Suspend', 'معطل کریں')}
                           </button>
                           <button
                             type="button"
                             onClick={() => openEditModal(p)}
                             className="p-1.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-700"
-                            title="Edit passenger details"
+                            title={tr(lang, 'Edit passenger details', 'مسافر کی تفصیلات ترمیم کریں')}
                           >
                             <Edit3 className="w-3.5 h-3.5" />
                           </button>
@@ -376,7 +400,7 @@ export const PassengerManagementTab: React.FC<PassengerManagementTabProps> = ({
             <div className="px-6 py-5 bg-[#0D0D10] text-white flex items-center justify-between">
               <div className="flex items-center gap-2.5">
                 <Users className="w-5 h-5 text-[#D4A017]" />
-                <h3 className="font-display font-bold text-base">Edit Passenger Profile</h3>
+                <h3 className="font-display font-bold text-base">{tr(lang, 'Edit Passenger Profile', 'مسافر پروفائل ترمیم کریں')}</h3>
               </div>
               <button
                 type="button"
@@ -389,7 +413,7 @@ export const PassengerManagementTab: React.FC<PassengerManagementTabProps> = ({
 
             <form onSubmit={handleSavePassenger} className="p-6 space-y-4 text-xs">
               <div>
-                <label className="block font-semibold text-zinc-700 mb-1">Full Name</label>
+                <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'Full Name', 'مکمل نام')}</label>
                 <input
                   type="text"
                   required
@@ -400,7 +424,7 @@ export const PassengerManagementTab: React.FC<PassengerManagementTabProps> = ({
               </div>
 
               <div>
-                <label className="block font-semibold text-zinc-700 mb-1">Mobile Phone</label>
+                <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'Mobile Phone', 'موبائل نمبر')}</label>
                 <input
                   type="tel"
                   required
@@ -411,7 +435,7 @@ export const PassengerManagementTab: React.FC<PassengerManagementTabProps> = ({
               </div>
 
               <div>
-                <label className="block font-semibold text-zinc-700 mb-1">WhatsApp Number</label>
+                <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'WhatsApp Number', 'واٹس ایپ نمبر')}</label>
                 <input
                   type="tel"
                   value={editForm.whatsapp ?? ''}
@@ -421,7 +445,7 @@ export const PassengerManagementTab: React.FC<PassengerManagementTabProps> = ({
               </div>
 
               <div>
-                <label className="block font-semibold text-zinc-700 mb-1">Email Address</label>
+                <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'Email Address', 'ای میل ایڈریس')}</label>
                 <input
                   type="email"
                   value={editForm.email ?? ''}
@@ -431,7 +455,7 @@ export const PassengerManagementTab: React.FC<PassengerManagementTabProps> = ({
               </div>
 
               <div>
-                <label className="block font-semibold text-zinc-700 mb-1">City</label>
+                <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'City', 'شہر')}</label>
                 <input
                   type="text"
                   value={editForm.city ?? ''}
@@ -441,14 +465,14 @@ export const PassengerManagementTab: React.FC<PassengerManagementTabProps> = ({
               </div>
 
               <div>
-                <label className="block font-semibold text-zinc-700 mb-1">Account Status</label>
+                <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'Account Status', 'اکاؤنٹ اسٹیٹس')}</label>
                 <select
                   value={editForm.status || 'active'}
                   onChange={(e) => setEditForm((f) => ({ ...f, status: e.target.value }))}
                   className="w-full px-3 py-2 rounded-xl border border-zinc-200 bg-white font-semibold"
                 >
-                  <option value="active">Active</option>
-                  <option value="suspended">Suspended</option>
+                  <option value="active">{tr(lang, 'Active', 'فعال')}</option>
+                  <option value="suspended">{tr(lang, 'Suspended', 'معطل')}</option>
                 </select>
               </div>
 
@@ -458,14 +482,14 @@ export const PassengerManagementTab: React.FC<PassengerManagementTabProps> = ({
                   onClick={() => setEditingPassenger(null)}
                   className="px-4 py-2.5 rounded-xl border border-zinc-300 font-bold text-zinc-700 hover:bg-zinc-50"
                 >
-                  Cancel
+                  {tr(lang, 'Cancel', 'منسوخ')}
                 </button>
                 <button
                   type="submit"
                   disabled={savingEdit}
                   className="px-5 py-2.5 rounded-xl bg-[#0D0D10] text-white font-bold hover:bg-zinc-800 disabled:opacity-50"
                 >
-                  {savingEdit ? 'Saving...' : 'Save Profile'}
+                  {savingEdit ? tr(lang, 'Saving...', 'محفوظ ہو رہا ہے...') : tr(lang, 'Save Profile', 'پروفائل محفوظ کریں')}
                 </button>
               </div>
             </form>

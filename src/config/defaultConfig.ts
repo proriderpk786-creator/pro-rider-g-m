@@ -17,6 +17,13 @@ export const DEFAULT_PUBLIC_CONFIG: PublicConfig = {
     allowedDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
     ratePerKm: 38,
   },
+  themeConfig: {
+    themeId: 'classic-ivory',
+    homeLayout: 'classic',
+    authLayout: 'hero-sheet',
+    forceGlobal: false,
+    updatedAt: 0,
+  },
   fleet: [
     {
       id: 'fleet-economy',

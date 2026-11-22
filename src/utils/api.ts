@@ -27,14 +27,14 @@ export class ApiRequestError extends Error {
 
 export function isBackendOfflineError(err: unknown): boolean {
   if (err instanceof ApiRequestError) {
-    return err.isBackendUnavailable || [404, 405, 502, 503].includes(err.status);
+    return err.isBackendUnavailable || err.status === 0 || err.status === 405;
   }
   const msg = String((err as any)?.message || err || '').toLowerCase();
   return (
     msg.includes('failed to fetch') ||
     msg.includes('networkerror') ||
     msg.includes('backend api unavailable') ||
-    msg.includes('(404)') ||
+    msg.includes('html received') ||
     msg.includes('(405)')
   );
 }
@@ -125,7 +125,7 @@ export async function apiRequest<T = any>(
   const baseUrl = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_BASE_URL) || '';
   const fullUrl = path.startsWith('http') ? path : `${baseUrl}${path}`;
 
-  // Avoid noisy 405 / HTML requests once static hosting (no Node/Express backend) is detected
+  // Avoid noisy requests only when static hosting (Express absent, HTML fallback) was genuinely confirmed
   if (staticHostingDetected && !baseUrl && path !== '/api/health') {
     throw new ApiRequestError('Backend API unavailable on static hosting.', 405, true);
   }
@@ -144,7 +144,7 @@ export async function apiRequest<T = any>(
   const contentType = (res.headers.get('content-type') || '').toLowerCase();
   const rawText = await res.text().catch(() => '');
 
-  // Detect static SPA fallback returning index.html on GET /api/* routes (e.g. Vercel without serverless API)
+  // Detect static SPA fallback returning index.html on /api/* routes (e.g. static host without Express)
   const trimmed = rawText.trim();
   const isHtml =
     contentType.includes('text/html') ||
@@ -158,9 +158,11 @@ export async function apiRequest<T = any>(
   }
 
   let data: any = {};
+  let parsedJson = false;
   if (trimmed) {
     try {
       data = JSON.parse(trimmed);
+      parsedJson = true;
     } catch {
       if (res.ok) {
         if (!baseUrl) staticHostingDetected = true;
@@ -173,11 +175,20 @@ export async function apiRequest<T = any>(
     if (res.status === 429 && data?.quotaExceeded && typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('gmp-quota-exceeded'));
     }
-    const unavailable = [404, 405, 502, 503, 504].includes(res.status);
-    if (unavailable && !baseUrl) staticHostingDetected = true;
-    throw new ApiRequestError(data?.error || `Request failed (${res.status})`, res.status, unavailable);
+    // Only consider backend static/offline if Express did NOT return a structured JSON error payload
+    const isStaticMethodBlock = res.status === 405 && !parsedJson;
+    if (isStaticMethodBlock && !baseUrl) {
+      staticHostingDetected = true;
+    }
+    throw new ApiRequestError(
+      data?.error || `Request failed (${res.status})`,
+      res.status,
+      isStaticMethodBlock
+    );
   }
 
+  // Confirmed live JSON response from backend
+  staticHostingDetected = false;
   return data as T;
 }
 

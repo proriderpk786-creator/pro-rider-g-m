@@ -22,6 +22,7 @@ import { ShareTripStatusModal } from '../../components/ShareTripStatusModal';
 import { StreetMap } from '../../components/StreetMap';
 import { DEFAULT_PUBLIC_CONFIG } from '../../config/defaultConfig';
 import { useFirebase } from '../../contexts/FirebaseContext';
+import { tr, trBookingStatus, trDay, trService } from '../../i18n/translations';
 import type {
   Booking,
   DemandMapData,
@@ -62,14 +63,16 @@ const WEEK_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 export type BookingStep = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
-const NUMBERED_STEPS: Array<{ step: BookingStep; title: string; short: string }> = [
-  { step: 1, title: 'Select pickup', short: 'Pickup' },
-  { step: 2, title: 'Select drop-off', short: 'Drop-off' },
-  { step: 3, title: 'Pickup & drop-off time', short: 'Time' },
-  { step: 4, title: 'Date, package & days', short: 'Days' },
-  { step: 5, title: 'Choose fleet vehicle', short: 'Fleet' },
-  { step: 6, title: 'Billing & confirmation', short: 'Billing' },
-];
+function getNumberedSteps(lang: Language): Array<{ step: BookingStep; title: string; short: string }> {
+  return [
+    { step: 1, title: tr(lang, 'Select pickup', 'پِک اپ مقام منتخب کریں'), short: tr(lang, 'Pickup', 'پِک اپ') },
+    { step: 2, title: tr(lang, 'Select drop-off', 'ڈراپ آف مقام منتخب کریں'), short: tr(lang, 'Drop-off', 'ڈراپ آف') },
+    { step: 3, title: tr(lang, 'Pickup & drop-off time', 'پِک اپ اور ڈراپ آف کا وقت'), short: tr(lang, 'Time', 'وقت') },
+    { step: 4, title: tr(lang, 'Date, package & days', 'تاریخ، پیکیج اور سفر کے دن'), short: tr(lang, 'Days', 'دن') },
+    { step: 5, title: tr(lang, 'Choose fleet vehicle', 'گاڑی کی کیٹیگری منتخب کریں'), short: tr(lang, 'Fleet', 'گاڑی') },
+    { step: 6, title: tr(lang, 'Billing & confirmation', 'بلنگ اور بُکنگ تصدیق'), short: tr(lang, 'Billing', 'بلنگ') },
+  ];
+}
 
 export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
   lang,
@@ -169,7 +172,7 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
         if (userTouchedPickupRef.current) return;
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
-        setPickup({ label: 'Finding address...', lat, lng });
+        setPickup({ label: tr(lang, 'Finding address...', 'پتہ تلاش کیا جا رہا ہے...'), lat, lng });
         setResolvingAddress('pickup');
         try {
           const resolved = await reverseGeocodePakistan(lat, lng);
@@ -191,9 +194,9 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
     const fallbackCoords = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
     if (target === 'pickup') {
       userTouchedPickupRef.current = true;
-      setPickup({ label: 'Finding address...', lat, lng });
+      setPickup({ label: tr(lang, 'Finding address...', 'پتہ تلاش کیا جا رہا ہے...'), lat, lng });
     } else {
-      setDropoff({ label: 'Finding address...', lat, lng });
+      setDropoff({ label: tr(lang, 'Finding address...', 'پتہ تلاش کیا جا رہا ہے...'), lat, lng });
     }
     setResolvingAddress(target);
     if (geocodeTimerRef.current) {
@@ -355,7 +358,7 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
   // Confirm & Submit Booking
   const handleConfirmBooking = async () => {
     if (!pickup || !dropoff || !selectedVehicle) {
-      setSubmitError('Please complete all booking steps.');
+      setSubmitError(tr(lang, 'Please complete all booking steps.', 'براہ کرم بُکنگ کے تمام مراحل مکمل کریں۔'));
       return;
     }
     setSubmitting(true);
@@ -506,7 +509,8 @@ PRO RIDER AI — Travel with Trust`;
     window.open(url, '_blank');
   };
 
-  const activeStepMeta = NUMBERED_STEPS.find((s) => s.step === currentStep) || NUMBERED_STEPS[0];
+  const numberedSteps = getNumberedSteps(lang);
+  const activeStepMeta = numberedSteps.find((s) => s.step === currentStep) || numberedSteps[0];
   const isFullMapStep = !viewActiveTripTab && (currentStep === 1 || currentStep === 2);
 
   return (
@@ -518,7 +522,7 @@ PRO RIDER AI — Travel with Trust`;
             <button
               type="button"
               onClick={() => setCurrentStep((s) => (s - 1) as BookingStep)}
-              aria-label="Go to previous step"
+              aria-label={tr(lang, 'Go to previous step', 'پچھلے مرحلے پر جائیں')}
               className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-zinc-800 text-zinc-200 shrink-0"
             >
               <ArrowLeft className="w-4 h-4" />
@@ -532,7 +536,7 @@ PRO RIDER AI — Travel with Trust`;
           </div>
 
           <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
-            {NUMBERED_STEPS.map((item) => {
+            {numberedSteps.map((item) => {
               const isCurrent = currentStep === item.step;
               const isDone = currentStep > item.step;
               const canJump = isDone;
@@ -542,8 +546,8 @@ PRO RIDER AI — Travel with Trust`;
                   type="button"
                   disabled={!canJump}
                   onClick={() => canJump && setCurrentStep(item.step)}
-                  title={`Step ${item.step}: ${item.short}`}
-                  aria-label={`Step ${item.step}: ${item.short}`}
+                  title={`${tr(lang, 'Step', 'مرحلہ')} ${item.step}: ${item.short}`}
+                  aria-label={`${tr(lang, 'Step', 'مرحلہ')} ${item.step}: ${item.short}`}
                   className={`w-6 h-6 rounded-full text-[11px] font-mono font-bold flex items-center justify-center transition-colors tabular-nums ${
                     isCurrent
                       ? 'bg-[#F4C430] text-[#0D0D10]'
@@ -563,7 +567,7 @@ PRO RIDER AI — Travel with Trust`;
                 onClick={() => setViewActiveTripTab(true)}
                 className="ml-1.5 px-2.5 py-1 rounded-full bg-zinc-800 border border-[#D4A017]/50 text-[#F4C430] text-[11px] font-semibold whitespace-nowrap shrink-0 hover:bg-zinc-700"
               >
-                Active Ride
+                {tr(lang, 'Active Ride', 'جاری رائیڈ')}
               </button>
             )}
           </div>
@@ -577,10 +581,10 @@ PRO RIDER AI — Travel with Trust`;
             <div className="flex items-center justify-between border-b pb-3">
               <div>
                 <h2 className="font-display text-lg font-bold text-[#0D0D10]">
-                  Active Booking · {activeBooking.id}
+                  {tr(lang, 'Active Booking', 'جاری بُکنگ')} · {activeBooking.id}
                 </h2>
                 <p className="text-xs text-zinc-500">
-                  {activeBooking.status.replaceAll('_', ' ')} · Rs.{' '}
+                  {trBookingStatus(lang, activeBooking.status)} · Rs.{' '}
                   {(activeBooking.agreed_fare_pkr || activeBooking.proposed_fare_pkr).toLocaleString()}
                 </p>
               </div>
@@ -590,7 +594,7 @@ PRO RIDER AI — Travel with Trust`;
                 className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#D4A017] text-[#0D0D10] text-xs font-bold"
               >
                 <Share2 className="w-3.5 h-3.5" />
-                Share
+                {tr(lang, 'Share', 'شیئر کریں')}
               </button>
             </div>
             <StreetMap
@@ -603,11 +607,11 @@ PRO RIDER AI — Travel with Trust`;
             />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
               <div className="p-3 rounded-xl bg-zinc-50 border border-zinc-200">
-                <span className="text-zinc-500 block">Pickup</span>
+                <span className="text-zinc-500 block">{tr(lang, 'Pickup', 'پِک اپ')}</span>
                 <span className="font-semibold text-[#0D0D10]">{activeBooking.pickup_address}</span>
               </div>
               <div className="p-3 rounded-xl bg-zinc-50 border border-zinc-200">
-                <span className="text-zinc-500 block">Drop-off</span>
+                <span className="text-zinc-500 block">{tr(lang, 'Drop-off', 'ڈراپ آف')}</span>
                 <span className="font-semibold text-[#0D0D10]">{activeBooking.dropoff_address}</span>
               </div>
             </div>
@@ -618,14 +622,14 @@ PRO RIDER AI — Travel with Trust`;
                 className="px-4 py-2.5 rounded-xl bg-[#0D0D10] text-white text-xs font-semibold inline-flex items-center gap-1.5"
               >
                 <Download className="w-3.5 h-3.5 text-[#D4A017]" />
-                Download PDF Bill
+                {tr(lang, 'Download PDF Bill', 'پی ڈی ایف بل ڈاؤن لوڈ')}
               </button>
               <button
                 type="button"
                 onClick={() => setViewActiveTripTab(false)}
                 className="px-4 py-2.5 rounded-xl border border-zinc-300 text-xs font-semibold text-zinc-800 hover:bg-zinc-50"
               >
-                Back to Map Booking
+                {tr(lang, 'Back to Map Booking', 'میپ بُکنگ پر واپس جائیں')}
               </button>
             </div>
           </div>
@@ -643,7 +647,7 @@ PRO RIDER AI — Travel with Trust`;
             <div className="flex-1 min-w-0">
               <LocationAutocomplete
                 compactBar
-                placeholder="Search area, sector, block, phase, street..."
+                placeholder={tr(lang, 'Search area, sector, block, phase, street...', 'علاقہ، سیکٹر، بلاک، فیز یا سڑک تلاش کریں...')}
                 value={pickup}
                 pinColor="green"
                 onSelect={(pt) => {
@@ -661,7 +665,7 @@ PRO RIDER AI — Travel with Trust`;
                 onClick={() => setViewActiveTripTab(true)}
                 className="px-2.5 py-1.5 rounded-xl bg-[#0D0D10] text-[#F4C430] text-[11px] font-bold whitespace-nowrap shrink-0"
               >
-                Active
+                {tr(lang, 'Active', 'جاری')}
               </button>
             )}
           </div>
@@ -702,7 +706,7 @@ PRO RIDER AI — Travel with Trust`;
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">
-                    PICKUP LOCATION
+                    {tr(lang, 'PICKUP LOCATION', 'پِک اپ کا مقام')}
                   </p>
                   <button
                     type="button"
@@ -717,18 +721,14 @@ PRO RIDER AI — Travel with Trust`;
                     }
                     className="text-[11px] font-semibold text-[#B8860B] hover:text-[#0D0D10] whitespace-nowrap"
                   >
-                    {serviceType === 'pick_and_drop'
-                      ? 'Pick & Drop ▾'
-                      : serviceType === 'ride_sharing'
-                      ? 'Ride Share ▾'
-                      : 'Fuel Share ▾'}
+                    {trService(lang, serviceType)} ▾
                   </button>
                 </div>
                 <p className="font-bold text-sm sm:text-base text-[#0D0D10] leading-snug flex items-center gap-2 truncate mt-0.5">
                   {resolvingAddress === 'pickup' && (
                     <Loader2 className="w-3.5 h-3.5 text-[#D4A017] animate-spin shrink-0" />
                   )}
-                  <span className="truncate">{pickup?.label || 'Finding address...'}</span>
+                  <span className="truncate">{pickup?.label || tr(lang, 'Finding address...', 'پتہ تلاش کیا جا رہا ہے...')}</span>
                 </p>
                 <p className="text-[11px] text-zinc-400 font-mono tabular-nums mt-0.5">
                   {pickup ? `${pickup.lat.toFixed(6)}, ${pickup.lng.toFixed(6)}` : '33.664963, 73.087013'}
@@ -755,7 +755,7 @@ PRO RIDER AI — Travel with Trust`;
                 }}
                 className="py-3.5 px-4 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50 transition-colors"
               >
-                Reset GPS
+                {tr(lang, 'Reset GPS', 'جی پی ایس ری سیٹ')}
               </button>
               <button
                 type="button"
@@ -763,7 +763,7 @@ PRO RIDER AI — Travel with Trust`;
                 onClick={() => setCurrentStep(2)}
                 className="py-3.5 px-4 rounded-2xl bg-[#F4C430] text-[#0D0D10] font-bold text-sm hover:bg-[#E5B520] shadow-sm disabled:opacity-60 transition-colors"
               >
-                Select
+                {tr(lang, 'Select', 'منتخب کریں')}
               </button>
             </div>
           </div>
@@ -778,7 +778,7 @@ PRO RIDER AI — Travel with Trust`;
               <button
                 type="button"
                 onClick={() => setCurrentStep(1)}
-                aria-label="Back to Pickup"
+                aria-label={tr(lang, 'Back to Pickup', 'پِک اپ پر واپس')}
                 className="w-8 h-8 rounded-full border border-zinc-200 flex items-center justify-center text-zinc-700 hover:bg-zinc-50 shrink-0"
               >
                 <ArrowLeft className="w-4 h-4" />
@@ -789,7 +789,7 @@ PRO RIDER AI — Travel with Trust`;
               <div className="flex-1 min-w-0">
                 <LocationAutocomplete
                   compactBar
-                  placeholder="Search drop-off area, sector, plaza, road..."
+                  placeholder={tr(lang, 'Search drop-off area, sector, plaza, road...', 'منزل کا علاقہ، سیکٹر، پلازہ یا سڑک تلاش کریں...')}
                   value={dropoff}
                   pinColor="red"
                   onSelect={(pt) => {
@@ -810,7 +810,9 @@ PRO RIDER AI — Travel with Trust`;
                 <span className="font-semibold text-[#0D0D10]">A:</span> {pickup?.label}
               </button>
               <span className="font-mono font-bold text-[#0D0D10] tabular-nums shrink-0">
-                {routeLoading ? 'Calculating...' : `${route?.distanceKm || 18.4} km · ~${route?.durationMin || 21} min`}
+                {routeLoading
+                  ? tr(lang, 'Calculating...', 'حساب ہو رہا ہے...')
+                  : `${route?.distanceKm || 18.4} km · ~${route?.durationMin || 21} ${tr(lang, 'min', 'منٹ')}`}
               </span>
             </div>
           </div>
@@ -847,12 +849,14 @@ PRO RIDER AI — Travel with Trust`;
           <div className="px-4 py-3.5 sm:px-6 bg-white border-t border-zinc-200 space-y-3 shrink-0">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
-                <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">DROP-OFF LOCATION</p>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">
+                  {tr(lang, 'DROP-OFF LOCATION', 'ڈراپ آف کا مقام')}
+                </p>
                 <p className="font-bold text-sm sm:text-base text-[#0D0D10] leading-snug flex items-center gap-2 truncate mt-0.5">
                   {resolvingAddress === 'dropoff' && (
                     <Loader2 className="w-3.5 h-3.5 text-red-600 animate-spin shrink-0" />
                   )}
-                  <span className="truncate">{dropoff?.label || 'Finding address...'}</span>
+                  <span className="truncate">{dropoff?.label || tr(lang, 'Finding address...', 'پتہ تلاش کیا جا رہا ہے...')}</span>
                 </p>
                 <p className="text-[11px] text-zinc-400 font-mono tabular-nums mt-0.5">
                   {dropoff ? `${dropoff.lat.toFixed(6)}, ${dropoff.lng.toFixed(6)}` : '33.702500, 72.978500'}
@@ -860,7 +864,7 @@ PRO RIDER AI — Travel with Trust`;
               </div>
 
               <div className="text-right shrink-0 bg-[#0D0D10] text-white px-3 py-1.5 rounded-xl">
-                <span className="block text-[10px] text-zinc-400">Distance</span>
+                <span className="block text-[10px] text-zinc-400">{tr(lang, 'Distance', 'فاصلہ')}</span>
                 <span className="font-mono font-bold text-xs text-[#F4C430] tabular-nums">
                   {routeLoading ? '...' : `${route?.distanceKm || 18.4} km`}
                 </span>
@@ -873,7 +877,7 @@ PRO RIDER AI — Travel with Trust`;
                 onClick={() => setCurrentStep(1)}
                 className="py-3.5 px-4 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50"
               >
-                Back
+                {tr(lang, 'Back', 'واپس')}
               </button>
               <button
                 type="button"
@@ -881,7 +885,7 @@ PRO RIDER AI — Travel with Trust`;
                 onClick={() => setCurrentStep(3)}
                 className="py-3.5 px-4 rounded-2xl bg-[#F4C430] text-[#0D0D10] font-bold text-sm hover:bg-[#E5B520] shadow-sm disabled:opacity-60 transition-colors"
               >
-                Select
+                {tr(lang, 'Select', 'منتخب کریں')}
               </button>
             </div>
           </div>
@@ -915,11 +919,15 @@ PRO RIDER AI — Travel with Trust`;
                   3
                 </span>
                 <h2 className="font-display text-xl sm:text-2xl font-bold text-[#0D0D10]">
-                  Pickup &amp; drop-off time
+                  {tr(lang, 'Pickup & drop-off time', 'پِک اپ اور ڈراپ آف کا وقت')}
                 </h2>
               </div>
               <p className="text-xs text-zinc-500 mt-1">
-                Select morning pickup and evening return times for your daily schedule.
+                {tr(
+                  lang,
+                  'Select morning pickup and evening return times for your daily schedule.',
+                  'اپنے روزانہ شیڈول کے لیے صبح پِک اپ اور شام واپسی کا وقت منتخب کریں۔'
+                )}
               </p>
             </div>
 
@@ -930,7 +938,7 @@ PRO RIDER AI — Travel with Trust`;
               >
                 <div className="flex items-center justify-between text-xs font-bold text-zinc-800 mb-2">
                   <span className="flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-[#D4A017]" /> Pickup time
+                    <Clock className="w-4 h-4 text-[#D4A017]" /> {tr(lang, 'Pickup time', 'پِک اپ کا وقت')}
                   </span>
                   <ChevronDown className="w-4 h-4 text-zinc-400" />
                 </div>
@@ -945,7 +953,7 @@ PRO RIDER AI — Travel with Trust`;
               >
                 <div className="flex items-center justify-between text-xs font-bold text-zinc-800 mb-2">
                   <span className="flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-[#D4A017]" /> Drop-off time
+                    <Clock className="w-4 h-4 text-[#D4A017]" /> {tr(lang, 'Drop-off time', 'ڈراپ آف کا وقت')}
                   </span>
                   <ChevronDown className="w-4 h-4 text-zinc-400" />
                 </div>
@@ -972,14 +980,14 @@ PRO RIDER AI — Travel with Trust`;
                 onClick={() => setCurrentStep(2)}
                 className="py-3.5 px-4 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50"
               >
-                Back
+                {tr(lang, 'Back', 'واپس')}
               </button>
               <button
                 type="button"
                 onClick={() => setCurrentStep(4)}
                 className="py-3.5 px-4 rounded-2xl bg-[#F4C430] text-[#0D0D10] font-bold text-sm hover:bg-[#E5B520] shadow-sm"
               >
-                Confirm Time &amp; Next
+                {tr(lang, 'Confirm Time & Next', 'وقت کنفرم کریں اور آگے بڑھیں')}
               </button>
             </div>
           </div>
@@ -995,7 +1003,7 @@ PRO RIDER AI — Travel with Trust`;
                 4
               </span>
               <h2 className="font-display text-xl sm:text-2xl font-bold text-[#0D0D10]">
-                Start date, package &amp; days
+                {tr(lang, 'Start date, package & days', 'آغاز کی تاریخ، پیکیج اور دن')}
               </h2>
             </div>
 
@@ -1003,7 +1011,9 @@ PRO RIDER AI — Travel with Trust`;
               {/* Left: Start date + Package */}
               <div className="space-y-4">
                 <div>
-                  <label className="block text-xs font-bold text-zinc-800 mb-2">Start date</label>
+                  <label className="block text-xs font-bold text-zinc-800 mb-2">
+                    {tr(lang, 'Start date', 'سفر شروع کرنے کی تاریخ')}
+                  </label>
                   <div className="relative">
                     <input
                       type="date"
@@ -1016,7 +1026,9 @@ PRO RIDER AI — Travel with Trust`;
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-zinc-800 mb-2">Monthly package</label>
+                  <label className="block text-xs font-bold text-zinc-800 mb-2">
+                    {tr(lang, 'Monthly package', 'ماہانہ پیکیج')}
+                  </label>
                   <div className="grid grid-cols-2 gap-3">
                     <button
                       type="button"
@@ -1030,8 +1042,10 @@ PRO RIDER AI — Travel with Trust`;
                           : 'border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700'
                       }`}
                     >
-                      <span className="block text-lg font-display font-bold tabular-nums">22 days</span>
-                      <span className="text-xs opacity-80">Mon – Fri</span>
+                      <span className="block text-lg font-display font-bold tabular-nums">
+                        {tr(lang, '22 days', '22 دن')}
+                      </span>
+                      <span className="text-xs opacity-80">{tr(lang, 'Mon – Fri', 'پیر تا جمعہ')}</span>
                     </button>
 
                     <button
@@ -1046,8 +1060,10 @@ PRO RIDER AI — Travel with Trust`;
                           : 'border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700'
                       }`}
                     >
-                      <span className="block text-lg font-display font-bold tabular-nums">26 days</span>
-                      <span className="text-xs opacity-80">Mon – Sat</span>
+                      <span className="block text-lg font-display font-bold tabular-nums">
+                        {tr(lang, '26 days', '26 دن')}
+                      </span>
+                      <span className="text-xs opacity-80">{tr(lang, 'Mon – Sat', 'پیر تا ہفتہ')}</span>
                     </button>
                   </div>
                 </div>
@@ -1056,7 +1072,9 @@ PRO RIDER AI — Travel with Trust`;
               {/* Right: Travel Days + Return + Passengers */}
               <div className="space-y-4">
                 <div>
-                  <label className="block text-xs font-bold text-zinc-800 mb-2">Travel days</label>
+                  <label className="block text-xs font-bold text-zinc-800 mb-2">
+                    {tr(lang, 'Travel days', 'سفر کے دن')}
+                  </label>
                   <div className="flex flex-wrap gap-2">
                     {WEEK_DAYS.map((day) => {
                       const active = travelDays.includes(day);
@@ -1075,7 +1093,7 @@ PRO RIDER AI — Travel with Trust`;
                             active ? 'bg-[#F4C430] text-[#0D0D10]' : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200'
                           }`}
                         >
-                          {day}
+                          {trDay(lang, day)}
                         </button>
                       );
                     })}
@@ -1084,7 +1102,9 @@ PRO RIDER AI — Travel with Trust`;
 
                 <div className="flex items-center justify-between gap-4 pt-1">
                   <div>
-                    <label className="block text-xs font-bold text-zinc-800">Trip direction</label>
+                    <label className="block text-xs font-bold text-zinc-800">
+                      {tr(lang, 'Trip direction', 'سفر کی نوعیت')}
+                    </label>
                     <div className="flex items-center gap-1 p-1 bg-zinc-100 rounded-xl mt-1.5">
                       <button
                         type="button"
@@ -1093,7 +1113,7 @@ PRO RIDER AI — Travel with Trust`;
                           returnJourney ? 'bg-[#0D0D10] text-[#F4C430]' : 'text-zinc-600'
                         }`}
                       >
-                        Return (2-Way)
+                        {tr(lang, 'Return (2-Way)', 'دو طرفہ (واپسی سمیت)')}
                       </button>
                       <button
                         type="button"
@@ -1102,13 +1122,15 @@ PRO RIDER AI — Travel with Trust`;
                           !returnJourney ? 'bg-[#0D0D10] text-[#F4C430]' : 'text-zinc-600'
                         }`}
                       >
-                        One-Way
+                        {tr(lang, 'One-Way', 'یک طرفہ')}
                       </button>
                     </div>
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-zinc-800">Passengers</label>
+                    <label className="block text-xs font-bold text-zinc-800">
+                      {tr(lang, 'Passengers', 'مسافروں کی تعداد')}
+                    </label>
                     <div className="flex items-center gap-3 mt-1.5">
                       <button
                         type="button"
@@ -1139,14 +1161,14 @@ PRO RIDER AI — Travel with Trust`;
                 onClick={() => setCurrentStep(3)}
                 className="py-3.5 px-4 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50"
               >
-                Back
+                {tr(lang, 'Back', 'واپس')}
               </button>
               <button
                 type="button"
                 onClick={() => setCurrentStep(5)}
                 className="py-3.5 px-4 rounded-2xl bg-[#F4C430] text-[#0D0D10] font-bold text-sm hover:bg-[#E5B520] shadow-sm"
               >
-                Choose Fleet Vehicle
+                {tr(lang, 'Choose Fleet Vehicle', 'گاڑی منتخب کریں')}
               </button>
             </div>
           </div>
@@ -1164,11 +1186,11 @@ PRO RIDER AI — Travel with Trust`;
                 </span>
                 <div>
                   <h2 className="font-display text-xl sm:text-2xl font-bold text-[#0D0D10]">
-                    Choose your vehicle class
+                    {tr(lang, 'Choose your vehicle class', 'اپنی گاڑی کی کیٹیگری منتخب کریں')}
                   </h2>
                   <p className="text-xs text-zinc-500">
-                    {route?.distanceKm || 18.4} km · {selectedPackageDays} days ·{' '}
-                    {returnJourney ? 'Return trip' : 'One-way'}
+                    {route?.distanceKm || 18.4} km · {selectedPackageDays} {tr(lang, 'days', 'دن')} ·{' '}
+                    {returnJourney ? tr(lang, 'Return trip', 'دو طرفہ سفر') : tr(lang, 'One-way', 'یک طرفہ')}
                   </p>
                 </div>
               </div>
@@ -1198,7 +1220,7 @@ PRO RIDER AI — Travel with Trust`;
                       <div className="min-w-0">
                         <p className="font-display font-bold text-sm text-[#0D0D10] truncate">{vehicle.name}</p>
                         <p className="text-xs text-zinc-500 mt-0.5 truncate">
-                          {vehicle.tagline || `${vehicle.seating_capacity} seats`}
+                          {vehicle.tagline || `${vehicle.seating_capacity} ${tr(lang, 'seats', 'سیٹیں')}`}
                         </p>
                       </div>
                     </div>
@@ -1222,14 +1244,14 @@ PRO RIDER AI — Travel with Trust`;
                 onClick={() => setCurrentStep(4)}
                 className="py-3.5 px-4 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50"
               >
-                Back
+                {tr(lang, 'Back', 'واپس')}
               </button>
               <button
                 type="button"
                 onClick={() => setCurrentStep(6)}
                 className="py-3.5 px-4 rounded-2xl bg-[#F4C430] text-[#0D0D10] font-bold text-sm hover:bg-[#E5B520] shadow-sm"
               >
-                Continue to Billing
+                {tr(lang, 'Continue to Billing', 'بلنگ کی طرف بڑھیں')}
               </button>
             </div>
           </div>
@@ -1245,7 +1267,7 @@ PRO RIDER AI — Travel with Trust`;
                 6
               </span>
               <h2 className="font-display text-xl sm:text-2xl font-bold text-[#0D0D10]">
-                Billing &amp; Final Confirmation
+                {tr(lang, 'Billing & Final Confirmation', 'بلنگ اور حتمی تصدیق')}
               </h2>
             </div>
 
@@ -1254,17 +1276,11 @@ PRO RIDER AI — Travel with Trust`;
               <div className="space-y-4">
                 <div className="divide-y divide-zinc-100 text-xs text-zinc-700 border border-zinc-200 rounded-2xl px-4">
                   <div className="py-2.5 flex justify-between items-center gap-2">
-                    <span className="text-zinc-500">Service</span>
-                    <span className="font-semibold">
-                      {serviceType === 'pick_and_drop'
-                        ? 'Monthly Pick & Drop'
-                        : serviceType === 'ride_sharing'
-                        ? 'Ride Sharing'
-                        : 'Fuel Sharing'}
-                    </span>
+                    <span className="text-zinc-500">{tr(lang, 'Service', 'سروس')}</span>
+                    <span className="font-semibold">{trService(lang, serviceType)}</span>
                   </div>
                   <div className="py-2.5 flex justify-between items-center gap-3">
-                    <span className="text-zinc-500 shrink-0">Pickup</span>
+                    <span className="text-zinc-500 shrink-0">{tr(lang, 'Pickup', 'پِک اپ')}</span>
                     <button
                       type="button"
                       onClick={() => setCurrentStep(1)}
@@ -1275,7 +1291,7 @@ PRO RIDER AI — Travel with Trust`;
                     </button>
                   </div>
                   <div className="py-2.5 flex justify-between items-center gap-3">
-                    <span className="text-zinc-500 shrink-0">Drop-off</span>
+                    <span className="text-zinc-500 shrink-0">{tr(lang, 'Drop-off', 'ڈراپ آف')}</span>
                     <button
                       type="button"
                       onClick={() => setCurrentStep(2)}
@@ -1286,48 +1302,50 @@ PRO RIDER AI — Travel with Trust`;
                     </button>
                   </div>
                   <div className="py-2.5 flex justify-between">
-                    <span className="text-zinc-500">Route</span>
+                    <span className="text-zinc-500">{tr(lang, 'Route', 'روٹ')}</span>
                     <span className="font-semibold font-mono tabular-nums">
-                      {route?.distanceKm || 18.4} km · ~{route?.durationMin || 21} min
+                      {route?.distanceKm || 18.4} km · ~{route?.durationMin || 21} {tr(lang, 'min', 'منٹ')}
                     </span>
                   </div>
                   <div className="py-2.5 flex justify-between">
-                    <span className="text-zinc-500">Timing</span>
+                    <span className="text-zinc-500">{tr(lang, 'Timing', 'وقت')}</span>
                     <span className="font-semibold font-mono tabular-nums">
                       {pickupTime} → {dropoffTime}
                     </span>
                   </div>
                   <div className="py-2.5 flex justify-between">
-                    <span className="text-zinc-500">Schedule</span>
+                    <span className="text-zinc-500">{tr(lang, 'Schedule', 'شیڈول')}</span>
                     <span className="font-semibold">
-                      {startDate} · {selectedPackageDays}d ({travelDays.join(', ')})
+                      {startDate} · {selectedPackageDays}{tr(lang, 'd', 'دن')} ({travelDays.map((d) => trDay(lang, d)).join(', ')})
                     </span>
                   </div>
                   <div className="py-2.5 flex justify-between">
-                    <span className="text-zinc-500">Fleet</span>
+                    <span className="text-zinc-500">{tr(lang, 'Fleet', 'گاڑی')}</span>
                     <span className="font-semibold">
-                      {selectedVehicle?.name || 'Economy'} ({passengersCount} pax)
+                      {selectedVehicle?.name || 'Economy'} ({passengersCount} {tr(lang, 'pax', 'مسافر')})
                     </span>
                   </div>
                 </div>
 
                 {/* Obsidian Fare Breakdown */}
                 <div className="rounded-2xl bg-[#0D0D10] text-white p-5 space-y-2.5">
-                  <p className="text-xs font-bold text-[#F4C430] uppercase tracking-wider">Fare breakdown</p>
+                  <p className="text-xs font-bold text-[#F4C430] uppercase tracking-wider">
+                    {tr(lang, 'Fare breakdown', 'کرایہ کی تفصیل')}
+                  </p>
                   <div className="flex justify-between text-xs text-zinc-300 font-mono tabular-nums">
-                    <span>Monthly distance</span>
+                    <span>{tr(lang, 'Monthly distance', 'ماہانہ فاصلہ')}</span>
                     <span>
-                      {route?.distanceKm || 18.4} km × {returnJourney ? 2 : 1} × {selectedPackageDays}d ={' '}
+                      {route?.distanceKm || 18.4} km × {returnJourney ? 2 : 1} × {selectedPackageDays}{tr(lang, 'd', 'دن')} ={' '}
                       {Math.round((route?.distanceKm || 18.4) * (returnJourney ? 2 : 1) * selectedPackageDays * 10) / 10}{' '}
                       km
                     </span>
                   </div>
                   <div className="flex justify-between text-xs text-zinc-300 font-mono tabular-nums">
-                    <span>Rate</span>
+                    <span>{tr(lang, 'Rate', 'ریٹ')}</span>
                     <span>Rs {selectedVehicle ? calculateVehiclePrice(selectedVehicle).ratePerKm : 25}/km</span>
                   </div>
                   <div className="border-t border-zinc-800 pt-3 flex items-baseline justify-between">
-                    <span className="text-sm font-semibold">Reference fare</span>
+                    <span className="text-sm font-semibold">{tr(lang, 'Reference fare', 'مقررہ کرایہ')}</span>
                     <span className="font-display text-2xl font-bold text-[#F4C430] tabular-nums">
                       Rs {referenceFare.toLocaleString()}
                     </span>
@@ -1339,8 +1357,12 @@ PRO RIDER AI — Travel with Trust`;
               <div className="space-y-4">
                 <div className="p-4 rounded-2xl border border-zinc-200 bg-zinc-50/60 space-y-3">
                   <div>
-                    <p className="font-bold text-sm text-[#0D0D10]">Offer your fare · کرایہ پیشکش</p>
-                    <p className="text-xs text-zinc-500">Up to 10% below reference fare.</p>
+                    <p className="font-bold text-sm text-[#0D0D10]">
+                      {tr(lang, 'Offer your fare', 'اپنا کرایہ آفر کریں')}
+                    </p>
+                    <p className="text-xs text-zinc-500">
+                      {tr(lang, 'Up to 10% below reference fare.', 'مقررہ کرایہ سے 10 فیصد تک کم آفر کر سکتے ہیں۔')}
+                    </p>
                   </div>
                   <div className="flex items-center justify-between pt-1">
                     <button
@@ -1356,10 +1378,10 @@ PRO RIDER AI — Travel with Trust`;
                       </span>
                       <span className="block text-[11px] text-zinc-500">
                         {offeredFare === referenceFare
-                          ? 'Standard rate'
+                          ? tr(lang, 'Standard rate', 'معیاری ریٹ')
                           : offeredFare < referenceFare
-                          ? `-Rs ${(referenceFare - offeredFare).toLocaleString()} discount`
-                          : `+Rs ${(offeredFare - referenceFare).toLocaleString()} bonus`}
+                          ? `-Rs ${(referenceFare - offeredFare).toLocaleString()} ${tr(lang, 'discount', 'رعایت')}`
+                          : `+Rs ${(offeredFare - referenceFare).toLocaleString()} ${tr(lang, 'bonus', 'اضافی آفر')}`}
                       </span>
                     </div>
                     <button
@@ -1373,11 +1395,13 @@ PRO RIDER AI — Travel with Trust`;
                 </div>
 
                 <div className="space-y-2">
-                  <label className="block text-xs font-bold text-zinc-800">Payment Method</label>
+                  <label className="block text-xs font-bold text-zinc-800">
+                    {tr(lang, 'Payment Method', 'ادائیگی کا طریقہ')}
+                  </label>
                   {[
-                    { id: 'cash', label: 'Cash on Pickup / Monthly' },
-                    { id: 'wallet', label: 'PRO RIDER Digital Wallet' },
-                    { id: 'jazzcash_easypaisa', label: 'JazzCash / EasyPaisa / Bank' },
+                    { id: 'cash', label: tr(lang, 'Cash on Pickup / Monthly', 'پِک اپ پر نقد / ماہانہ ادائیگی') },
+                    { id: 'wallet', label: tr(lang, 'PRO RIDER Digital Wallet', 'پرو رائیڈر ڈیجیٹل والیٹ') },
+                    { id: 'jazzcash_easypaisa', label: tr(lang, 'JazzCash / EasyPaisa / Bank', 'جاز کیش / ایزی پیسہ / بینک') },
                   ].map((p) => (
                     <button
                       key={p.id}
@@ -1396,13 +1420,13 @@ PRO RIDER AI — Travel with Trust`;
 
                 <div>
                   <label className="block text-xs font-bold text-zinc-800 mb-1">
-                    Landmark or Driver Instructions (Optional)
+                    {tr(lang, 'Landmark or Driver Instructions (Optional)', 'قریبی نشانی یا ڈرائیور کے لیے ہدایات (اختیاری)')}
                   </label>
                   <textarea
                     rows={2}
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
-                    placeholder="e.g. Gate 2 near main road..."
+                    placeholder={tr(lang, 'e.g. Gate 2 near main road...', 'مثال: مین روڈ کے قریب گیٹ نمبر 2...')}
                     className="w-full px-3.5 py-2.5 rounded-xl border border-zinc-200 text-xs focus:outline-none focus:ring-2 focus:ring-[#F4C430]"
                   />
                 </div>
@@ -1423,7 +1447,7 @@ PRO RIDER AI — Travel with Trust`;
                 onClick={() => setCurrentStep(5)}
                 className="py-3.5 px-4 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50"
               >
-                Back
+                {tr(lang, 'Back', 'واپس')}
               </button>
               <button
                 type="button"
@@ -1434,10 +1458,10 @@ PRO RIDER AI — Travel with Trust`;
                 {submitting ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    Confirming...
+                    {tr(lang, 'Confirming...', 'تصدیق ہو رہی ہے...')}
                   </>
                 ) : (
-                  'Confirm Booking'
+                  tr(lang, 'Confirm Booking', 'بُکنگ کنفرم کریں')
                 )}
               </button>
             </div>
@@ -1454,9 +1478,15 @@ PRO RIDER AI — Travel with Trust`;
             </div>
 
             <div>
-              <h2 className="font-display text-2xl sm:text-3xl font-bold text-[#0D0D10]">Booking confirmed!</h2>
+              <h2 className="font-display text-2xl sm:text-3xl font-bold text-[#0D0D10]">
+                {tr(lang, 'Booking confirmed!', 'بُکنگ کنفرم ہو گئی!')}
+              </h2>
               <p className="text-xs text-zinc-600 mt-2 max-w-md mx-auto leading-relaxed">
-                Your ride request is saved as <strong>Pending</strong>. Verified Pro Partners are notified immediately.
+                {tr(
+                  lang,
+                  'Your ride request is saved as Pending. Verified Pro Partners are notified immediately.',
+                  'آپ کی بُکنگ محفوظ ہو چکی ہے اور تصدیق شدہ پرو پارٹنرز کو فوری اطلاع بھیج دی گئی ہے۔'
+                )}
               </p>
             </div>
 
@@ -1466,7 +1496,7 @@ PRO RIDER AI — Travel with Trust`;
               className="w-full py-3.5 rounded-2xl bg-[#F4C430] text-[#0D0D10] font-bold text-sm hover:bg-[#E5B520] transition-colors shadow-sm flex items-center justify-center gap-2"
             >
               <Phone className="w-4 h-4 fill-current" />
-              Also send on WhatsApp
+              {tr(lang, 'Also send on WhatsApp', 'واٹس ایپ پر بھی بھیجیں')}
             </button>
 
             {confirmedBooking && (
@@ -1476,7 +1506,7 @@ PRO RIDER AI — Travel with Trust`;
                 className="w-full py-3.5 rounded-2xl border border-zinc-200 text-zinc-800 font-semibold text-xs hover:bg-zinc-50 flex items-center justify-center gap-2"
               >
                 <Download className="w-4 h-4 text-[#D4A017]" />
-                Download Official Digital Bill (PDF)
+                {tr(lang, 'Download Official Digital Bill (PDF)', 'آفیشل ڈیجیٹل بل (PDF) ڈاؤن لوڈ کریں')}
               </button>
             )}
 
@@ -1488,7 +1518,7 @@ PRO RIDER AI — Travel with Trust`;
               }}
               className="w-full py-3.5 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50"
             >
-              Done
+              {tr(lang, 'Done', 'مکمل')}
             </button>
           </div>
         </div>

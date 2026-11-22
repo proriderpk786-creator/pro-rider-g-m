@@ -18,7 +18,8 @@ import {
 import { BrandLogo, LanguageToggle, PWAInstallButton } from '../../components/BrandMark';
 import { ProRiderAiCopilot } from '../../components/ProRiderAiCopilot';
 import { useFirebase } from '../../contexts/FirebaseContext';
-import { t } from '../../i18n/translations';
+import { useTheme } from '../../contexts/ThemeContext';
+import { t, tr, trVerificationStatus } from '../../i18n/translations';
 import type {
   AppNotification,
   Booking,
@@ -112,6 +113,7 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
   onChangeLang,
   onNavigate,
 }) => {
+  const { isDark } = useTheme();
   const [token, setToken] = useState<string | null>(() => getRoleToken('partner'));
   const [user, setUser] = useState<User | null>(() => getStoredRoleUser<User>('partner'));
   const [profile, setProfile] = useState<PartnerProfile | null>(() => readStoredPartnerProfile());
@@ -280,9 +282,14 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
   }, [requests, token]);
 
   const wsRef = useRoleWebSocket('partner', token, (event) => {
-    if (event === 'booking:created') {
+    if (event === 'config:updated') {
+      window.dispatchEvent(new Event('pr:refresh-config'));
+    } else if (event === 'booking:created') {
       playRideBell(bellSoundRef.current);
-      sendRideBrowserNotification('New Passenger Request', 'Open PRO RIDER Driver Home to view ride details.');
+      sendRideBrowserNotification(
+        tr(lang, 'New Passenger Request', 'نئی مسافر رائیڈ درخواست'),
+        tr(lang, 'Open PRO RIDER Driver Home to view ride details.', 'تفصیل دیکھنے کے لیے پرو رائیڈر ڈرائیور ہوم کھولیں۔')
+      );
     }
     if (
       ['booking:created', 'booking:offer', 'booking:updated', 'partner:verification_updated', 'notification:new'].includes(
@@ -330,7 +337,11 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
     if (!profile) return;
     if (profile.verification_status !== 'approved' && !profile.is_online) {
       setAvailabilityError(
-        'Document verification required before going Online. Please upload your CNIC, Driving Licence & Vehicle details.'
+        tr(
+          lang,
+          'Document verification required before going Online. Please upload your CNIC, Driving Licence & Vehicle details.',
+          'آن لائن ہونے سے پہلے دستاویزات کی تصدیق ضروری ہے۔ براہ کرم اپنا شناختی کارڈ، ڈرائیونگ لائسنس اور گاڑی کی تفصیلات اپ لوڈ کریں۔'
+        )
       );
       setTab('documents');
       return;
@@ -346,7 +357,11 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
     } catch (err: any) {
       setAvailabilityError(
         isBackendOfflineError(err)
-          ? 'Please complete document verification and connect to Admin approval before going Online.'
+          ? tr(
+              lang,
+              'Please complete document verification and connect to Admin approval before going Online.',
+              'آن لائن ہونے سے پہلے دستاویزات مکمل کریں اور ایڈمن کی منظوری کا انتظار کریں۔'
+            )
           : err.message
       );
       setTab('documents');
@@ -462,9 +477,13 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
           >
             <span className="flex items-center gap-2">
               <Power className="w-4 h-4" />
-              {profile.is_online ? 'Online · Receiving' : 'Offline Mode'}
+              {profile.is_online
+                ? tr(lang, 'Online · Receiving', 'آن لائن · رائیڈز فعال')
+                : tr(lang, 'Offline Mode', 'آف لائن موڈ')}
             </span>
-            <span className="font-mono text-[10px] uppercase">{profile.verification_status.replaceAll('_', ' ')}</span>
+            <span className="font-mono text-[10px] uppercase">
+              {trVerificationStatus(lang, profile.verification_status)}
+            </span>
           </button>
 
           <nav className="space-y-1">
@@ -500,7 +519,9 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
         <div className="space-y-2 pt-3 border-t border-zinc-800">
           <div className="p-2.5 rounded-xl bg-zinc-900 text-xs">
             <p className="font-bold text-[#D4A017] truncate">{user.full_name}</p>
-            <p className="text-[11px] text-zinc-400">Pro Partner · {user.city}</p>
+            <p className="text-[11px] text-zinc-400">
+              {tr(lang, 'Pro Partner', 'پرو پارٹنر')} · {user.city}
+            </p>
           </div>
           <button
             type="button"
@@ -540,57 +561,37 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
               }`}
             >
               <Power className="w-3 h-3" />
-              {profile.is_online ? 'Online' : 'Offline'}
+              {profile.is_online ? tr(lang, 'Online', 'آن لائن') : tr(lang, 'Offline', 'آف لائن')}
             </button>
             <span className="hidden sm:inline text-xs font-semibold text-zinc-600 truncate">
-              Pro Partner · {profile.vehicle_name || 'Complete Vehicle Setup'}
+              {tr(lang, 'Pro Partner', 'پرو پارٹنر')} · {profile.vehicle_name || tr(lang, 'Complete Vehicle Setup', 'گاڑی کی تفصیلات مکمل کریں')}
             </span>
           </div>
 
-          <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             <button
               type="button"
               onClick={() => window.dispatchEvent(new CustomEvent('open-prorider-ai-copilot'))}
-              aria-label="Open AI Voice & Concierge"
-              className="md:hidden inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-[#0D0D10] text-[#D4A017] text-[10px] font-bold border border-[#D4A017]/50 whitespace-nowrap shrink-0"
+              aria-label={tr(lang, 'Open AI Voice & Concierge', 'اے آئی وائس کھولیں')}
+              className="pr-preserve-light md:hidden inline-flex items-center gap-1.5 pl-1 pr-2.5 py-1 rounded-xl bg-gradient-to-r from-[#15151A] via-[#0D0D10] to-[#231B07] text-white text-[11px] font-bold border border-[#D4A017]/80 shadow-sm hover:border-[#F4C430] active:scale-95 transition-all whitespace-nowrap shrink-0"
             >
-              <Sparkles className="w-3 h-3" />
-              <span>AI</span>
+              <span className="w-5 h-5 rounded-lg bg-gradient-to-br from-[#F4C430] to-[#B8860B] text-[#0D0D10] flex items-center justify-center shrink-0">
+                <Sparkles className="w-3 h-3" />
+              </span>
+              <span className="tracking-wide">{tr(lang, 'AI', 'اے آئی')}</span>
             </button>
             <div className="scale-90 sm:scale-100 origin-right shrink-0">
-              <LanguageToggle lang={lang} onChange={onChangeLang} />
+              <LanguageToggle lang={lang} onChange={onChangeLang} dark={isDark} />
             </div>
             <PWAInstallButton />
             <button
               type="button"
-              onClick={() => window.dispatchEvent(new CustomEvent('open-prorider-permissions'))}
-              title={lang === 'ur' ? 'ایپ پرمیشنز' : 'App Permissions'}
-              aria-label="App Permissions"
-              className="p-1.5 sm:p-2 rounded-lg border border-zinc-200 hover:bg-zinc-50 shrink-0"
+              onClick={() => setTab('profile')}
+              aria-label={t(lang, 'profile')}
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-[#0D0D10] text-white text-xs font-semibold border border-zinc-800 hover:border-[#D4A017] transition-colors shrink-0"
             >
-              <ShieldCheck className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-700" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setTab('notifications')}
-              aria-label="Notifications"
-              className="relative p-1.5 sm:p-2 rounded-lg border border-zinc-200 hover:bg-zinc-50 shrink-0"
-            >
-              <Bell className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#0D0D10]" />
-              {unreadCount > 0 && (
-                <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-red-600 text-white text-[9px] font-bold flex items-center justify-center">
-                  {unreadCount}
-                </span>
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={handleLogout}
-              title="Sign Out"
-              aria-label="Sign Out"
-              className="md:hidden p-1.5 rounded-lg border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 shrink-0"
-            >
-              <LogOut className="w-3.5 h-3.5" />
+              <UserIcon className="w-3.5 h-3.5 text-[#D4A017]" />
+              <span className="hidden sm:inline max-w-[110px] truncate">{user.full_name}</span>
             </button>
           </div>
         </header>
@@ -625,6 +626,7 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
           )}
           {tab === 'trips' && (
             <PartnerTripsView
+              lang={lang}
               trips={Array.isArray(trips) ? trips : []}
               gpsSharing={gpsSharing}
               onToggleGpsSharing={() => setGpsSharing((v) => !v)}
@@ -633,6 +635,7 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
           )}
           {(tab === 'earnings' || tab === 'wallet') && (
             <PartnerFinanceView
+              lang={lang}
               mode={tab}
               partnerName={user.full_name}
               earnings={earnings}
@@ -653,6 +656,7 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
           )}
           {tab === 'notifications' && (
             <NotificationsView
+              lang={lang}
               notifications={safeNotifications}
               onMarkAllRead={async () => {
                 try {
@@ -665,7 +669,7 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
             />
           )}
           {tab === 'support' && (
-            <SupportView role="partner" tickets={Array.isArray(tickets) ? tickets : []} onRefresh={loadAll} />
+            <SupportView lang={lang} role="partner" tickets={Array.isArray(tickets) ? tickets : []} onRefresh={loadAll} />
           )}
           {tab === 'profile' && (
             <PartnerProfileView
@@ -674,6 +678,8 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
               documents={Array.isArray(documents) ? documents : []}
               tripsCount={Array.isArray(trips) ? trips.filter((tItem) => tItem.status === 'completed').length : 0}
               lang={lang}
+              unreadNotifications={unreadCount}
+              onOpenNotifications={() => setTab('notifications')}
               onUpdated={(updated) => {
                 setUser(updated);
                 setStoredRoleUser('partner', updated);
@@ -698,11 +704,11 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
       {/* Mobile Bottom Navigation */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-30 bg-[#0D0D10] text-white border-t border-zinc-800 grid grid-cols-5 h-16 pb-safe">
         {[
-          { id: 'requests' as PartnerTab, label: lang === 'ur' ? 'ہوم' : 'Home', icon: Home },
-          { id: 'trips' as PartnerTab, label: 'Trips', icon: Navigation },
-          { id: 'earnings' as PartnerTab, label: 'Earnings', icon: TrendingUp },
-          { id: 'documents' as PartnerTab, label: 'Docs', icon: FileCheck },
-          { id: 'profile' as PartnerTab, label: 'Profile', icon: UserIcon },
+          { id: 'requests' as PartnerTab, label: t(lang, 'home'), icon: Home },
+          { id: 'trips' as PartnerTab, label: tr(lang, 'Trips', 'ٹرپس'), icon: Navigation },
+          { id: 'earnings' as PartnerTab, label: t(lang, 'earnings'), icon: TrendingUp },
+          { id: 'documents' as PartnerTab, label: tr(lang, 'Docs', 'دستاویزات'), icon: FileCheck },
+          { id: 'profile' as PartnerTab, label: t(lang, 'profile'), icon: UserIcon },
         ].map((item) => {
           const Icon = item.icon;
           const active = tab === item.id;

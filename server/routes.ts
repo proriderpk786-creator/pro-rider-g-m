@@ -95,6 +95,13 @@ export function registerAppRoutes(app: Express) {
         allowedDays: JSON.parse(getSetting('schedule_allowed_days', '["Mon","Tue","Wed","Thu","Fri","Sat"]')),
         ratePerKm: Number(getSetting('schedule_rate_per_km', '38')),
       },
+      themeConfig: {
+        themeId: getSetting('app_theme', 'classic-ivory'),
+        homeLayout: getSetting('home_layout', 'classic'),
+        authLayout: getSetting('auth_layout', 'hero-sheet'),
+        forceGlobal: getSetting('theme_force_global', '0') === '1',
+        updatedAt: Number(getSetting('theme_updated_at', '0')) || 0,
+      },
       fleet,
       zones,
       packages,

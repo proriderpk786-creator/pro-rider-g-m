@@ -14,7 +14,8 @@ import {
 import { BrandLogo, LanguageToggle, PWAInstallButton } from '../../components/BrandMark';
 import { ProRiderAiCopilot } from '../../components/ProRiderAiCopilot';
 import { useFirebase } from '../../contexts/FirebaseContext';
-import { t } from '../../i18n/translations';
+import { useTheme } from '../../contexts/ThemeContext';
+import { t, tr } from '../../i18n/translations';
 import type {
   AppNotification,
   Booking,
@@ -73,6 +74,7 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
   onChangeLang,
   onNavigate,
 }) => {
+  const { isDark } = useTheme();
   const [token, setToken] = useState<string | null>(() => getRoleToken('passenger'));
   const [user, setUser] = useState<User | null>(() => getStoredRoleUser<User>('passenger'));
   const [tab, setTab] = useState<PassengerTab>('home');
@@ -164,7 +166,9 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
   }, [token, loadDemand]);
 
   useRoleWebSocket('passenger', token, (event, data) => {
-    if (event === 'partner:location' && data?.bookingId) {
+    if (event === 'config:updated') {
+      window.dispatchEvent(new Event('pr:refresh-config'));
+    } else if (event === 'partner:location' && data?.bookingId) {
       setLivePartnerLocations((prev) => ({
         ...prev,
         [data.bookingId]: { lat: data.lat, lng: data.lng },
@@ -256,7 +260,9 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
 
         <div className="space-y-3 pt-4 border-t border-zinc-800">
           <div className="p-3 rounded-xl bg-zinc-900 border border-zinc-800">
-            <p className="text-xs font-bold text-[#D4A017]">Passenger Account</p>
+            <p className="text-xs font-bold text-[#D4A017]">
+              {tr(lang, 'Passenger Account', 'مسافر اکاؤنٹ')}
+            </p>
             <p className="text-xs text-zinc-300 truncate mt-0.5">{user.full_name}</p>
             <p className="text-[11px] text-zinc-500 font-mono">{user.city}</p>
           </div>
@@ -295,51 +301,31 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
             </div>
             <div className="hidden sm:flex items-center gap-1.5 text-xs font-semibold text-zinc-600">
               <MapPin className="w-3.5 h-3.5 text-[#D4A017]" />
-              <span>{user.city}, Pakistan</span>
+              <span>{user.city}, {tr(lang, 'Pakistan', 'پاکستان')}</span>
             </div>
           </div>
 
-          <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             <button
               type="button"
               onClick={() => window.dispatchEvent(new CustomEvent('open-prorider-ai-copilot'))}
-              aria-label="Open AI Voice & Concierge"
-              className="md:hidden inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-[#0D0D10] text-[#D4A017] text-[10px] font-bold border border-[#D4A017]/50 whitespace-nowrap shrink-0"
+              aria-label={tr(lang, 'Open AI Voice & Concierge', 'اے آئی وائس اور مددگار کھولیں')}
+              className="pr-preserve-light md:hidden inline-flex items-center gap-1.5 pl-1 pr-2.5 py-1 rounded-xl bg-gradient-to-r from-[#15151A] via-[#0D0D10] to-[#231B07] text-white text-[11px] font-bold border border-[#D4A017]/80 shadow-sm hover:border-[#F4C430] active:scale-95 transition-all whitespace-nowrap shrink-0"
             >
-              <Sparkles className="w-3 h-3" />
-              <span>AI</span>
+              <span className="w-5 h-5 rounded-lg bg-gradient-to-br from-[#F4C430] to-[#B8860B] text-[#0D0D10] flex items-center justify-center shrink-0">
+                <Sparkles className="w-3 h-3" />
+              </span>
+              <span className="tracking-wide">{tr(lang, 'AI', 'اے آئی')}</span>
             </button>
             <div className="scale-90 sm:scale-100 origin-right shrink-0">
-              <LanguageToggle lang={lang} onChange={onChangeLang} />
+              <LanguageToggle lang={lang} onChange={onChangeLang} dark={isDark} />
             </div>
             <PWAInstallButton />
             <button
               type="button"
-              onClick={() => window.dispatchEvent(new CustomEvent('open-prorider-permissions'))}
-              title={lang === 'ur' ? 'ایپ پرمیشنز' : 'App Permissions'}
-              aria-label="App Permissions"
-              className="p-1.5 sm:p-2 rounded-lg border border-zinc-200 hover:bg-zinc-50 shrink-0"
-            >
-              <ShieldCheck className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-700" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setTab('notifications')}
-              aria-label="Notifications"
-              className="relative p-1.5 sm:p-2 rounded-lg border border-zinc-200 hover:bg-zinc-50 shrink-0"
-            >
-              <Bell className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#0D0D10]" />
-              {unreadCount > 0 && (
-                <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-red-600 text-white text-[9px] font-bold flex items-center justify-center">
-                  {unreadCount}
-                </span>
-              )}
-            </button>
-            <button
-              type="button"
               onClick={() => setTab('profile')}
-              aria-label="Profile"
-              className="flex items-center gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg bg-[#0D0D10] text-white text-xs font-semibold shrink-0"
+              aria-label={t(lang, 'profile')}
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-[#0D0D10] text-white text-xs font-semibold border border-zinc-800 hover:border-[#D4A017] transition-colors shrink-0"
             >
               <UserIcon className="w-3.5 h-3.5 text-[#D4A017]" />
               <span className="hidden sm:inline max-w-[110px] truncate">{user.full_name}</span>
@@ -362,6 +348,7 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
           )}
           {tab === 'bookings' && (
             <PassengerBookingsView
+              lang={lang}
               bookings={safeBookings}
               passengerName={user.full_name}
               onRefresh={loadAll}
@@ -373,6 +360,7 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
           )}
           {tab === 'wallet' && (
             <PassengerWalletView
+              lang={lang}
               passengerName={user.full_name}
               bookings={safeBookings}
               wallet={wallet}
@@ -381,6 +369,7 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
           )}
           {tab === 'notifications' && (
             <NotificationsView
+              lang={lang}
               notifications={safeNotifications}
               onMarkAllRead={async () => {
                 try {
@@ -394,6 +383,7 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
           )}
           {tab === 'support' && (
             <SupportView
+              lang={lang}
               role="passenger"
               tickets={Array.isArray(tickets) ? tickets : []}
               defaultBookingId={supportBookingId}
@@ -402,7 +392,10 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
           )}
           {tab === 'profile' && (
             <PassengerProfileView
+              lang={lang}
               user={user}
+              unreadNotifications={unreadCount}
+              onOpenNotifications={() => setTab('notifications')}
               onUpdated={(updated) => {
                 setUser(updated);
                 setStoredRoleUser('passenger', updated);
@@ -417,7 +410,7 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-30 bg-white/95 backdrop-blur border-t border-zinc-200 grid grid-cols-4 h-14 pb-safe">
         {[
           { id: 'home' as PassengerTab, label: t(lang, 'home'), icon: Home },
-          { id: 'bookings' as PassengerTab, label: 'Rides', icon: CarFront },
+          { id: 'bookings' as PassengerTab, label: t(lang, 'rides'), icon: CarFront },
           { id: 'wallet' as PassengerTab, label: t(lang, 'wallet'), icon: WalletIcon },
           { id: 'profile' as PassengerTab, label: t(lang, 'profile'), icon: UserIcon },
         ].map((item) => {

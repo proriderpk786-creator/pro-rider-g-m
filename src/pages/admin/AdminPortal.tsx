@@ -15,6 +15,7 @@ import {
   LogOut,
   Menu,
   Package,
+  Palette,
   Settings,
   ShieldAlert,
   ShieldCheck,
@@ -25,13 +26,19 @@ import {
   Wallet,
   X,
 } from 'lucide-react';
-import { BrandLogo, VehicleImage } from '../../components/BrandMark';
+import { BrandLogo, LanguageToggle, VehicleImage } from '../../components/BrandMark';
 import { StreetMap } from '../../components/StreetMap';
+import { ThemePreferencesPanel, ThemeQuickToggle } from '../../components/ThemeSwitcher';
+import { tr, trBookingStatus, trVerificationStatus } from '../../i18n/translations';
 import { apiRequest, getRoleToken, setRoleToken, useRoleWebSocket } from '../../utils/api';
 import { downloadBookingPdf } from '../../utils/pdfGenerator';
 import type {
+  AppThemeId,
+  AuthLayoutId,
   Booking,
   FleetCategory,
+  HomeLayoutId,
+  Language,
   MonthlyPackage,
   PassengerAccount,
   ServiceZone,
@@ -47,6 +54,7 @@ import { BookingsManagementTab } from './BookingsManagementTab';
 
 type AdminTab =
   | 'dashboard'
+  | 'theme'
   | 'fleet'
   | 'fares'
   | 'passengers'
@@ -63,10 +71,19 @@ type AdminAuthMode = 'login' | 'setup' | 'recovery';
 
 interface AdminPortalProps {
   currentPath?: string;
+  lang?: Language;
+  onChangeLang?: (l: Language) => void;
   onNavigate?: (path: string) => void;
+  onRefreshConfig?: () => Promise<void> | void;
 }
 
-export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin', onNavigate }) => {
+export const AdminPortal: React.FC<AdminPortalProps> = ({
+  currentPath = '/admin',
+  lang = 'en',
+  onChangeLang,
+  onNavigate,
+  onRefreshConfig,
+}) => {
   const [token, setToken] = useState<string | null>(() => getRoleToken('admin'));
   const [adminUser, setAdminUser] = useState<User | null>(null);
   const [setupCompleted, setSetupCompleted] = useState<boolean | null>(null);
@@ -198,6 +215,10 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
   }, [token, adminUser, currentPath, onNavigate]);
 
   useRoleWebSocket('admin', token, (event) => {
+    if (event === 'config:updated') {
+      window.dispatchEvent(new Event('pr:refresh-config'));
+      return;
+    }
     if (['booking:created', 'booking:updated', 'partner:document_uploaded', 'partner:location', 'support:new'].includes(event)) {
       loadAll();
     }
@@ -353,23 +374,26 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
   };
 
   const passwordRules = (pw: string) => [
-    { ok: pw.length >= 10, label: '10+ characters' },
-    { ok: /[A-Z]/.test(pw), label: 'Uppercase (A-Z)' },
-    { ok: /[a-z]/.test(pw), label: 'Lowercase (a-z)' },
-    { ok: /[0-9]/.test(pw), label: 'Number (0-9)' },
-    { ok: /[^A-Za-z0-9]/.test(pw), label: 'Special symbol (!@#$)' },
+    { ok: pw.length >= 10, label: tr(lang, '10+ characters', 'کم از کم 10 حروف') },
+    { ok: /[A-Z]/.test(pw), label: tr(lang, 'Uppercase (A-Z)', 'بڑا حرف (A-Z)') },
+    { ok: /[a-z]/.test(pw), label: tr(lang, 'Lowercase (a-z)', 'چھوٹا حرف (a-z)') },
+    { ok: /[0-9]/.test(pw), label: tr(lang, 'Number (0-9)', 'ہندسا (0-9)') },
+    { ok: /[^A-Za-z0-9]/.test(pw), label: tr(lang, 'Special symbol (!@#$)', 'خصوصی علامت (!@#$)') },
   ];
 
   if (!token || !adminUser) {
     return (
-      <div className="min-h-screen bg-[#0D0D10] text-white flex flex-col items-center justify-center p-4 sm:p-6">
+      <div dir={lang === 'ur' ? 'rtl' : 'ltr'} className="min-h-screen bg-[#0D0D10] text-white flex flex-col items-center justify-center p-4 sm:p-6">
         <div className="w-full max-w-md rounded-3xl bg-[#16171C] border border-zinc-800 p-6 sm:p-8 space-y-5 shadow-2xl">
-          <div className="flex items-center justify-between gap-3">
-            <BrandLogo dark compact />
-            <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-widest text-[#D4A017]">
-              <Lock className="w-3.5 h-3.5" />
-              Private Admin
-            </span>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <BrandLogo dark compact lang={lang} />
+            <div className="flex items-center gap-1.5">
+              {onChangeLang && <LanguageToggle lang={lang} onChange={onChangeLang} dark />}
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-widest text-[#D4A017]">
+                <Lock className="w-3.5 h-3.5" />
+                {tr(lang, 'Private Admin', 'پرائیویٹ ایڈمن')}
+              </span>
+            </div>
           </div>
 
           {/* One-time Emergency Backup Recovery Key Confirmation Screen */}
@@ -377,10 +401,14 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
             <div className="space-y-4">
               <div className="rounded-2xl bg-emerald-950/50 border border-emerald-700/60 p-4 space-y-2">
                 <p className="text-xs font-bold uppercase tracking-wider text-emerald-300">
-                  Super Admin Credentials Secured
+                  {tr(lang, 'Super Admin Credentials Secured', 'سپرایڈمن اسناد محفوظ ہو گئیں')}
                 </p>
                 <p className="text-xs text-zinc-200 leading-relaxed">
-                  Save your one-time Emergency Backup Recovery Key offline right now. For your security, it will never be shown again.
+                  {tr(
+                    lang,
+                    'Save your one-time Emergency Backup Recovery Key offline right now. For your security, it will never be shown again.',
+                    'اپنی ون ٹائم ایمرجنسی بیک اپ ریکوری کی ابھی آف لائن محفوظ کر لیں۔ سیکیورٹی کی خاطر یہ دوبارہ نہیں دکھائی جائے گی۔'
+                  )}
                 </p>
               </div>
               <div className="rounded-xl bg-zinc-900 border border-[#D4A017]/50 p-4 flex items-center justify-between gap-3">
@@ -393,7 +421,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                   className="shrink-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold text-white"
                 >
                   <Copy className="w-3.5 h-3.5" />
-                  Copy
+                  {tr(lang, 'Copy', 'کاپی')}
                 </button>
               </div>
               <label className="flex items-start gap-2.5 text-xs text-zinc-300 cursor-pointer">
@@ -403,7 +431,13 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                   onChange={(e) => setBackupSavedAck(e.target.checked)}
                   className="mt-0.5 accent-[#D4A017]"
                 />
-                <span>I have copied and stored this Emergency Backup Recovery Key safely.</span>
+                <span>
+                  {tr(
+                    lang,
+                    'I have copied and stored this Emergency Backup Recovery Key safely.',
+                    'میں نے یہ ایمرجنسی بیک اپ ریکوری کی کاپی کر کے محفوظ جگہ رکھ لی ہے۔'
+                  )}
+                </span>
               </label>
               <button
                 type="button"
@@ -416,7 +450,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                 }}
                 className="w-full py-3 rounded-xl bg-[#D4A017] disabled:opacity-40 text-[#0D0D10] text-sm font-bold hover:bg-[#EAB308]"
               >
-                Continue to Admin Dashboard
+                {tr(lang, 'Continue to Admin Dashboard', 'ایڈمن ڈیش بورڈ پر جائیں')}
               </button>
             </div>
           ) : (
@@ -433,7 +467,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                     authMode === 'login' ? 'bg-[#D4A017] text-[#0D0D10] font-bold' : 'text-zinc-400 hover:text-white'
                   }`}
                 >
-                  Sign In
+                  {tr(lang, 'Sign In', 'سائن ان')}
                 </button>
                 <button
                   type="button"
@@ -445,7 +479,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                     authMode === 'setup' ? 'bg-[#D4A017] text-[#0D0D10] font-bold' : 'text-zinc-400 hover:text-white'
                   }`}
                 >
-                  Account Setup
+                  {tr(lang, 'Account Setup', 'اکاؤنٹ سیٹ اپ')}
                 </button>
                 <button
                   type="button"
@@ -457,7 +491,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                     authMode === 'recovery' ? 'bg-[#D4A017] text-[#0D0D10] font-bold' : 'text-zinc-400 hover:text-white'
                   }`}
                 >
-                  Forgot Password
+                  {tr(lang, 'Forgot Password', 'پاس ورڈ بھول گئے')}
                 </button>
               </div>
 
@@ -471,17 +505,27 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
               {authMode === 'login' && (
                 <div className="space-y-4">
                   <div>
-                    <h1 className="font-display text-2xl font-bold">Super Admin Sign In</h1>
+                    <h1 className="font-display text-2xl font-bold">{tr(lang, 'Super Admin Sign In', 'سپر ایڈمن سائن ان')}</h1>
                     <p className="text-xs text-zinc-400 mt-1">
-                      Authorized Super Admin access is verified exclusively on the backend server.
+                      {tr(
+                        lang,
+                        'Authorized Super Admin access is verified exclusively on the backend server.',
+                        'مجاز سپر ایڈمن رسائی کی تصدیق صرف بیک اینڈ سرور پر کی جاتی ہے۔'
+                      )}
                     </p>
                   </div>
 
                   {setupCompleted === false && (
                     <div className="rounded-xl bg-amber-950/50 border border-amber-700/70 p-3.5 text-xs text-amber-200 space-y-2">
-                      <p className="font-semibold">Protected First-Time Password Setup Required</p>
+                      <p className="font-semibold">
+                        {tr(lang, 'Protected First-Time Password Setup Required', 'پہلی بار محفوظ پاس ورڈ سیٹ اپ ضروری ہے')}
+                      </p>
                       <p className="text-amber-200/80">
-                        No password is set by default. Complete the protected setup process to create your own Super Admin password.
+                        {tr(
+                          lang,
+                          'No password is set by default. Complete the protected setup process to create your own Super Admin password.',
+                          'پہلے سے کوئی پاس ورڈ سیٹ نہیں ہے۔ اپنا سپر ایڈمن پاس ورڈ بنانے کے لیے سیٹ اپ مکمل کریں۔'
+                        )}
                       </p>
                       <button
                         type="button"
@@ -491,27 +535,29 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                         }}
                         className="px-3 py-1.5 rounded-lg bg-[#D4A017] text-[#0D0D10] font-bold text-xs"
                       >
-                        Start Account Setup
+                        {tr(lang, 'Start Account Setup', 'اکاؤنٹ سیٹ اپ شروع کریں')}
                       </button>
                     </div>
                   )}
 
                   <form onSubmit={handleLogin} className="space-y-4">
                     <div>
-                      <label className="block text-xs font-semibold text-zinc-300 mb-1">Authorized Super Admin Email</label>
+                      <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                        {tr(lang, 'Authorized Super Admin Email', 'مجاز سپر ایڈمن ای میل')}
+                      </label>
                       <input
                         type="email"
                         required
                         autoComplete="username"
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
-                        placeholder="Enter authorized Super Admin email"
+                        placeholder={tr(lang, 'Enter authorized Super Admin email', 'مجاز سپر ایڈمن ای میل درج کریں')}
                         className="w-full px-3.5 py-3 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
                       />
                     </div>
                     <div>
                       <div className="flex items-center justify-between mb-1">
-                        <label className="text-xs font-semibold text-zinc-300">Password</label>
+                        <label className="text-xs font-semibold text-zinc-300">{tr(lang, 'Password', 'پاس ورڈ')}</label>
                         <button
                           type="button"
                           onClick={() => {
@@ -520,7 +566,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                           }}
                           className="text-[11px] font-semibold text-[#D4A017] hover:underline"
                         >
-                          Forgot Password?
+                          {tr(lang, 'Forgot Password?', 'پاس ورڈ بھول گئے؟')}
                         </button>
                       </div>
                       <div className="relative">
@@ -530,14 +576,14 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                           autoComplete="current-password"
                           value={password}
                           onChange={(e) => setPassword(e.target.value)}
-                          placeholder="Enter your private Super Admin password"
+                          placeholder={tr(lang, 'Enter your private Super Admin password', 'اپنا نجی سپر ایڈمن پاس ورڈ درج کریں')}
                           className="w-full px-3.5 py-3 pr-11 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
                         />
                         <button
                           type="button"
                           onClick={() => setShowPassword((s) => !s)}
                           className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white"
-                          aria-label={showPassword ? 'Hide password' : 'Show password'}
+                          aria-label={showPassword ? tr(lang, 'Hide password', 'پاس ورڈ چھپائیں') : tr(lang, 'Show password', 'پاس ورڈ دکھائیں')}
                         >
                           {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                         </button>
@@ -548,7 +594,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                       disabled={loginBusy}
                       className="w-full py-3 rounded-xl bg-[#D4A017] text-[#0D0D10] text-sm font-bold hover:bg-[#EAB308] min-h-[44px]"
                     >
-                      {loginBusy ? 'Authorizing...' : 'Authorize Super Admin'}
+                      {loginBusy ? tr(lang, 'Authorizing...', 'تصدیق ہو رہی ہے...') : tr(lang, 'Authorize Super Admin', 'سپر ایڈمن سائن ان کریں')}
                     </button>
                   </form>
                 </div>
@@ -558,17 +604,29 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
               {authMode === 'setup' && (
                 <div className="space-y-4">
                   <div>
-                    <h1 className="font-display text-xl sm:text-2xl font-bold">Protected Super Admin Setup</h1>
+                    <h1 className="font-display text-xl sm:text-2xl font-bold">
+                      {tr(lang, 'Protected Super Admin Setup', 'محفوظ سپر ایڈمن سیٹ اپ')}
+                    </h1>
                     <p className="text-xs text-zinc-400 mt-1">
-                      Verify your authorized Super Admin identity with the backend to create your private password and recovery credentials.
+                      {tr(
+                        lang,
+                        'Verify your authorized Super Admin identity with the backend to create your private password and recovery credentials.',
+                        'اپنا نجی پاس ورڈ اور ریکوری اسناد بنانے کے لیے سرور پر اپنی مجاز سپر ایڈمن شناخت کی تصدیق کریں۔'
+                      )}
                     </p>
                   </div>
 
                   {setupCompleted === true && (
                     <div className="rounded-xl bg-zinc-900 border border-zinc-700 p-4 text-xs text-zinc-300 space-y-2">
-                      <p className="font-semibold text-white">Account Setup Already Completed</p>
+                      <p className="font-semibold text-white">
+                        {tr(lang, 'Account Setup Already Completed', 'اکاؤنٹ سیٹ اپ پہلے ہی مکمل ہے')}
+                      </p>
                       <p>
-                        The Super Admin account already has a private password configured. Please sign in or use Forgot Password to securely reset it.
+                        {tr(
+                          lang,
+                          'The Super Admin account already has a private password configured. Please sign in or use Forgot Password to securely reset it.',
+                          'سپر ایڈمن اکاؤنٹ پر نجی پاس ورڈ پہلے سے سیٹ ہے۔ براہِ کرم سائن ان کریں یا پاس ورڈ تبدیل کرنے کے لیے ریکوری استعمال کریں۔'
+                        )}
                       </p>
                       <div className="flex gap-2 pt-1">
                         <button
@@ -576,14 +634,14 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                           onClick={() => setAuthMode('login')}
                           className="px-3 py-1.5 rounded-lg bg-[#D4A017] text-[#0D0D10] font-bold"
                         >
-                          Go to Sign In
+                          {tr(lang, 'Go to Sign In', 'سائن ان پر جائیں')}
                         </button>
                         <button
                           type="button"
                           onClick={() => setAuthMode('recovery')}
                           className="px-3 py-1.5 rounded-lg bg-zinc-800 text-white font-semibold"
                         >
-                          Forgot Password
+                          {tr(lang, 'Forgot Password', 'پاس ورڈ بھول گئے')}
                         </button>
                       </div>
                     </div>
@@ -592,26 +650,28 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                   {setupCompleted !== true && !setupChallenge && (
                     <form onSubmit={handleSetupVerify} className="space-y-3.5">
                       <div>
-                        <label className="block text-xs font-semibold text-zinc-300 mb-1">Authorized Super Admin Email</label>
+                        <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                          {tr(lang, 'Authorized Super Admin Email', 'مجاز سپر ایڈمن ای میل')}
+                        </label>
                         <input
                           type="email"
                           required
                           value={setupEmail}
                           onChange={(e) => setSetupEmail(e.target.value)}
-                          placeholder="Enter authorized Super Admin email"
+                          placeholder={tr(lang, 'Enter authorized Super Admin email', 'مجاز سپر ایڈمن ای میل درج کریں')}
                           className="w-full px-3.5 py-3 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
                         />
                       </div>
                       <div>
                         <label className="block text-xs font-semibold text-zinc-300 mb-1">
-                          Registered Official Support Mobile / WhatsApp
+                          {tr(lang, 'Registered Official Support Mobile / WhatsApp', 'رجسٹرڈ آفیشل سپورٹ موبائل / واٹس ایپ')}
                         </label>
                         <input
                           type="tel"
                           required
                           value={setupPhone}
                           onChange={(e) => setSetupPhone(e.target.value)}
-                          placeholder="Enter registered official mobile number"
+                          placeholder={tr(lang, 'Enter registered official mobile number', 'رجسٹرڈ آفیشل موبائل نمبر درج کریں')}
                           className="w-full px-3.5 py-3 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white font-mono"
                         />
                       </div>
@@ -620,7 +680,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                         disabled={loginBusy}
                         className="w-full py-3 rounded-xl bg-[#D4A017] text-[#0D0D10] text-sm font-bold hover:bg-[#EAB308] min-h-[44px]"
                       >
-                        {loginBusy ? 'Verifying with Server...' : 'Verify Authorized Identity'}
+                        {loginBusy ? tr(lang, 'Verifying with Server...', 'سرور سے تصدیق ہو رہی ہے...') : tr(lang, 'Verify Authorized Identity', 'مجاز شناخت کی تصدیق کریں')}
                       </button>
                     </form>
                   )}
@@ -628,16 +688,22 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                   {setupCompleted !== true && setupChallenge && (
                     <form onSubmit={handleSetupComplete} className="space-y-3.5">
                       <div className="rounded-xl bg-emerald-950/40 border border-emerald-800 px-3 py-2 text-[11px] text-emerald-300">
-                        Identity verified. Create your strong private password &amp; personal recovery passphrase.
+                        {tr(
+                          lang,
+                          'Identity verified. Create your strong private password & personal recovery passphrase.',
+                          'شناخت کی تصدیق ہو گئی۔ اب اپنا مضبوط نجی پاس ورڈ اور ذاتی ریکوری جملہ بنائیں۔'
+                        )}
                       </div>
                       <div>
-                        <label className="block text-xs font-semibold text-zinc-300 mb-1">Create Strong Password</label>
+                        <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                          {tr(lang, 'Create Strong Password', 'مضبوط پاس ورڈ بنائیں')}
+                        </label>
                         <input
                           type="password"
                           required
                           value={setupPassword}
                           onChange={(e) => setSetupPassword(e.target.value)}
-                          placeholder="Min 10 chars, upper, lower, number, symbol"
+                          placeholder={tr(lang, 'Min 10 chars, upper, lower, number, symbol', 'کم از کم 10 حروف، بڑا/چھوٹا حرف، ہندسا اور علامت')}
                           className="w-full px-3.5 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
                         />
                         <div className="grid grid-cols-2 gap-1 mt-2 text-[10px]">
@@ -650,26 +716,32 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                         </div>
                       </div>
                       <div>
-                        <label className="block text-xs font-semibold text-zinc-300 mb-1">Confirm Password</label>
+                        <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                          {tr(lang, 'Confirm Password', 'پاس ورڈ کی تصدیق کریں')}
+                        </label>
                         <input
                           type="password"
                           required
                           value={setupConfirm}
                           onChange={(e) => setSetupConfirm(e.target.value)}
-                          placeholder="Re-enter your new password"
+                          placeholder={tr(lang, 'Re-enter your new password', 'اپنا نیا پاس ورڈ دوبارہ لکھیں')}
                           className="w-full px-3.5 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
                         />
                       </div>
                       <div>
                         <label className="block text-xs font-semibold text-zinc-300 mb-1">
-                          Personal Recovery Passphrase (8+ chars, for Forgot Password)
+                          {tr(
+                            lang,
+                            'Personal Recovery Passphrase (8+ chars, for Forgot Password)',
+                            'ذاتی ریکوری پاس فریز (کم از کم 8 حروف، پاس ورڈ ریکوری کے لیے)'
+                          )}
                         </label>
                         <input
                           type="password"
                           required
                           value={setupPhrase}
                           onChange={(e) => setSetupPhrase(e.target.value)}
-                          placeholder="Create a secret passphrase you remember"
+                          placeholder={tr(lang, 'Create a secret passphrase you remember', 'کوئی خفیہ جملہ لکھیں جو آپ کو یاد رہے')}
                           className="w-full px-3.5 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
                         />
                       </div>
@@ -679,14 +751,16 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                           onClick={() => setSetupChallenge(null)}
                           className="px-4 py-3 rounded-xl border border-zinc-700 text-xs font-semibold text-zinc-300"
                         >
-                          Back
+                          {tr(lang, 'Back', 'واپس')}
                         </button>
                         <button
                           type="submit"
                           disabled={loginBusy}
                           className="flex-1 py-3 rounded-xl bg-[#D4A017] text-[#0D0D10] text-sm font-bold hover:bg-[#EAB308]"
                         >
-                          {loginBusy ? 'Securing Account...' : 'Create Password & Activate Admin'}
+                          {loginBusy
+                            ? tr(lang, 'Securing Account...', 'اکاؤنٹ محفوظ ہو رہا ہے...')
+                            : tr(lang, 'Create Password & Activate Admin', 'پاس ورڈ بنائیں اور ایڈمن فعال کریں')}
                         </button>
                       </div>
                     </form>
@@ -698,38 +772,50 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
               {authMode === 'recovery' && (
                 <div className="space-y-4">
                   <div>
-                    <h1 className="font-display text-xl sm:text-2xl font-bold">Secure Password Recovery</h1>
+                    <h1 className="font-display text-xl sm:text-2xl font-bold">
+                      {tr(lang, 'Secure Password Recovery', 'محفوظ پاس ورڈ ریکوری')}
+                    </h1>
                     <p className="text-xs text-zinc-400 mt-1">
-                      Reset Super Admin password using backend verification and your personal Recovery Passphrase or Backup Recovery Key.
+                      {tr(
+                        lang,
+                        'Reset Super Admin password using backend verification and your personal Recovery Passphrase or Backup Recovery Key.',
+                        'سرور کی تصدیق اور ذاتی ریکوری جملے یا بیک اپ ریکوری کی کے ذریعے سپر ایڈمن پاس ورڈ ری سیٹ کریں۔'
+                      )}
                     </p>
                   </div>
 
                   {!recChallenge ? (
                     <form onSubmit={handleRecoveryVerify} className="space-y-3.5">
                       <div>
-                        <label className="block text-xs font-semibold text-zinc-300 mb-1">Authorized Super Admin Email</label>
+                        <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                          {tr(lang, 'Authorized Super Admin Email', 'مجاز سپر ایڈمن ای میل')}
+                        </label>
                         <input
                           type="email"
                           required
                           value={recEmail}
                           onChange={(e) => setRecEmail(e.target.value)}
-                          placeholder="Enter authorized Super Admin email"
+                          placeholder={tr(lang, 'Enter authorized Super Admin email', 'مجاز سپر ایڈمن ای میل درج کریں')}
                           className="w-full px-3.5 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
                         />
                       </div>
                       <div>
-                        <label className="block text-xs font-semibold text-zinc-300 mb-1">Registered Official Mobile Number</label>
+                        <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                          {tr(lang, 'Registered Official Mobile Number', 'رجسٹرڈ آفیشل موبائل نمبر')}
+                        </label>
                         <input
                           type="tel"
                           required
                           value={recPhone}
                           onChange={(e) => setRecPhone(e.target.value)}
-                          placeholder="Registered official phone"
+                          placeholder={tr(lang, 'Registered official phone', 'رجسٹرڈ آفیشل فون نمبر')}
                           className="w-full px-3.5 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white font-mono"
                         />
                       </div>
                       <div>
-                        <label className="block text-xs font-semibold text-zinc-300 mb-1">Recovery Method</label>
+                        <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                          {tr(lang, 'Recovery Method', 'ریکوری کا طریقہ')}
+                        </label>
                         <div className="grid grid-cols-2 gap-2 text-xs">
                           <button
                             type="button"
@@ -740,7 +826,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                                 : 'border-zinc-700 text-zinc-400'
                             }`}
                           >
-                            Recovery Passphrase
+                            {tr(lang, 'Recovery Passphrase', 'ریکوری جملہ')}
                           </button>
                           <button
                             type="button"
@@ -751,20 +837,26 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                                 : 'border-zinc-700 text-zinc-400'
                             }`}
                           >
-                            Backup Key (PRK-)
+                            {tr(lang, 'Backup Key (PRK-)', 'بیک اپ کی (PRK-)')}
                           </button>
                         </div>
                       </div>
                       <div>
                         <label className="block text-xs font-semibold text-zinc-300 mb-1">
-                          {recMethod === 'backup_key' ? 'Emergency Backup Recovery Key' : 'Personal Recovery Passphrase'}
+                          {recMethod === 'backup_key'
+                            ? tr(lang, 'Emergency Backup Recovery Key', 'ایمرجنسی بیک اپ ریکوری کی')
+                            : tr(lang, 'Personal Recovery Passphrase', 'ذاتی ریکوری پاس فریز')}
                         </label>
                         <input
                           type="password"
                           required
                           value={recSecret}
                           onChange={(e) => setRecSecret(e.target.value)}
-                          placeholder={recMethod === 'backup_key' ? 'PRK-XXXX-XXXX-XXXX-XXXX' : 'Enter recovery passphrase'}
+                          placeholder={
+                            recMethod === 'backup_key'
+                              ? 'PRK-XXXX-XXXX-XXXX-XXXX'
+                              : tr(lang, 'Enter recovery passphrase', 'ریکوری پاس فریز درج کریں')
+                          }
                           className="w-full px-3.5 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white font-mono"
                         />
                       </div>
@@ -773,22 +865,28 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                         disabled={loginBusy}
                         className="w-full py-3 rounded-xl bg-[#D4A017] text-[#0D0D10] text-sm font-bold hover:bg-[#EAB308]"
                       >
-                        {loginBusy ? 'Verifying Recovery...' : 'Verify Recovery Credentials'}
+                        {loginBusy ? tr(lang, 'Verifying Recovery...', 'تصدیق ہو رہی ہے...') : tr(lang, 'Verify Recovery Credentials', 'ریکوری اسناد کی تصدیق کریں')}
                       </button>
                     </form>
                   ) : (
                     <form onSubmit={handleRecoveryReset} className="space-y-3.5">
                       <div className="rounded-xl bg-emerald-950/40 border border-emerald-800 px-3 py-2 text-[11px] text-emerald-300">
-                        Recovery verified. Setting a new password immediately invalidates all prior Admin sessions.
+                        {tr(
+                          lang,
+                          'Recovery verified. Setting a new password immediately invalidates all prior Admin sessions.',
+                          'تصدیق مکمل ہو گئی۔ نیا پاس ورڈ سیٹ کرنے پر تمام پرانے ایڈمن سیشن فوری ختم ہو جائیں گے۔'
+                        )}
                       </div>
                       <div>
-                        <label className="block text-xs font-semibold text-zinc-300 mb-1">New Strong Password</label>
+                        <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                          {tr(lang, 'New Strong Password', 'نیا مضبوط پاس ورڈ')}
+                        </label>
                         <input
                           type="password"
                           required
                           value={recNewPass}
                           onChange={(e) => setRecNewPass(e.target.value)}
-                          placeholder="Min 10 chars, upper, lower, number, symbol"
+                          placeholder={tr(lang, 'Min 10 chars, upper, lower, number, symbol', 'کم از کم 10 حروف، بڑا/چھوٹا حرف، ہندسا اور علامت')}
                           className="w-full px-3.5 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
                         />
                         <div className="grid grid-cols-2 gap-1 mt-2 text-[10px]">
@@ -801,13 +899,15 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                         </div>
                       </div>
                       <div>
-                        <label className="block text-xs font-semibold text-zinc-300 mb-1">Confirm New Password</label>
+                        <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                          {tr(lang, 'Confirm New Password', 'نئے پاس ورڈ کی تصدیق کریں')}
+                        </label>
                         <input
                           type="password"
                           required
                           value={recConfirmPass}
                           onChange={(e) => setRecConfirmPass(e.target.value)}
-                          placeholder="Re-enter new password"
+                          placeholder={tr(lang, 'Re-enter new password', 'نیا پاس ورڈ دوبارہ لکھیں')}
                           className="w-full px-3.5 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white"
                         />
                       </div>
@@ -818,7 +918,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                           onChange={(e) => setRecRotateKey(e.target.checked)}
                           className="accent-[#D4A017]"
                         />
-                        Generate a fresh Emergency Backup Recovery Key
+                        {tr(lang, 'Generate a fresh Emergency Backup Recovery Key', 'نئی ایمرجنسی بیک اپ ریکوری کی بنائیں')}
                       </label>
                       <div className="flex gap-2">
                         <button
@@ -826,14 +926,14 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                           onClick={() => setRecChallenge(null)}
                           className="px-4 py-3 rounded-xl border border-zinc-700 text-xs font-semibold text-zinc-300"
                         >
-                          Back
+                          {tr(lang, 'Back', 'واپس')}
                         </button>
                         <button
                           type="submit"
                           disabled={loginBusy}
                           className="flex-1 py-3 rounded-xl bg-[#D4A017] text-[#0D0D10] text-sm font-bold hover:bg-[#EAB308]"
                         >
-                          {loginBusy ? 'Updating Password...' : 'Reset Password & Sign In'}
+                          {loginBusy ? tr(lang, 'Updating Password...', 'پاس ورڈ اپڈیٹ ہو رہا ہے...') : tr(lang, 'Reset Password & Sign In', 'پاس ورڈ ری سیٹ کر کے سائن ان کریں')}
                         </button>
                       </div>
                     </form>
@@ -848,18 +948,19 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
   }
 
   const navItems: Array<{ id: AdminTab; label: string; icon: any }> = [
-    { id: 'dashboard', label: 'Operations & Live Map', icon: Activity },
-    { id: 'fleet', label: 'Fleet & Vehicle Photos', icon: Car },
-    { id: 'fares', label: 'Fare Tariffs & Multipliers', icon: Sliders },
-    { id: 'passengers', label: 'Passengers & Accounts', icon: UserCheck },
-    { id: 'partners', label: 'Pro Partners & Docs', icon: Users },
-    { id: 'bookings', label: 'Live Bookings & Invoices', icon: ClipboardList },
-    { id: 'zones', label: 'Heat Map & Rickshaw', icon: Flame },
-    { id: 'schedule', label: 'Schedule & App Settings', icon: Settings },
-    { id: 'packages', label: 'Monthly Packages', icon: Package },
-    { id: 'finance', label: 'Wallet & Settlements', icon: Wallet },
-    { id: 'tickets', label: 'Support Tickets', icon: HelpCircle },
-    { id: 'security', label: 'Security & Audit Logs', icon: KeyRound },
+    { id: 'dashboard', label: tr(lang, 'Operations & Live Map', 'آپریشنز اور لائیو نقشہ'), icon: Activity },
+    { id: 'theme', label: tr(lang, 'Theme & Design Studio', 'تھیم اور ڈیزائن اسٹوڈیو'), icon: Palette },
+    { id: 'fleet', label: tr(lang, 'Fleet & Vehicle Photos', 'گاڑیاں اور فوٹوز'), icon: Car },
+    { id: 'fares', label: tr(lang, 'Fare Tariffs & Multipliers', 'کرایہ اور ریٹس سیٹنگز'), icon: Sliders },
+    { id: 'passengers', label: tr(lang, 'Passengers & Accounts', 'مسافر اور اکاؤنٹس'), icon: UserCheck },
+    { id: 'partners', label: tr(lang, 'Pro Partners & Docs', 'پرو پارٹنرز اور دستاویزات'), icon: Users },
+    { id: 'bookings', label: tr(lang, 'Live Bookings & Invoices', 'لائیو بکنگز اور انوائس'), icon: ClipboardList },
+    { id: 'zones', label: tr(lang, 'Heat Map & Rickshaw', 'ہیٹ میپ اور رکشہ'), icon: Flame },
+    { id: 'schedule', label: tr(lang, 'Schedule & App Settings', 'شیڈول اور ایپ سیٹنگز'), icon: Settings },
+    { id: 'packages', label: tr(lang, 'Monthly Packages', 'ماہانہ پیکیجز'), icon: Package },
+    { id: 'finance', label: tr(lang, 'Wallet & Settlements', 'والیٹ اور ادائیگیاں'), icon: Wallet },
+    { id: 'tickets', label: tr(lang, 'Support Tickets', 'سپورٹ ٹکٹس'), icon: HelpCircle },
+    { id: 'security', label: tr(lang, 'Security & Audit Logs', 'سیکیورٹی اور آڈٹ لاگز'), icon: KeyRound },
   ];
 
   const reviewPartner = async (partnerId: string, status: string, approvePendingVehicle = false) => {
@@ -872,7 +973,13 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
         approvePendingVehicle,
       },
     });
-    setToast(`Partner ${partnerId} updated to ${status.toUpperCase()}.`);
+    setToast(
+      tr(
+        lang,
+        `Partner ${partnerId} updated to ${status.toUpperCase()}.`,
+        `پارٹنر ${partnerId} کا اسٹیٹس ${trVerificationStatus(lang, status)} کر دیا گیا۔`
+      )
+    );
     await loadAll();
   };
 
@@ -891,24 +998,28 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
         commission_pct: fareForm.commission_pct,
       },
     });
-    setToast('Fare tariff saved and active for new bookings.');
+    setToast(tr(lang, 'Fare tariff saved and active for new bookings.', 'کرایہ ریٹ محفوظ ہو کر نئی بکنگز پر لاگو ہو گیا ہے۔'));
     await loadAll();
   };
 
   return (
-    <div className="min-h-screen bg-[#F8F8FA] flex flex-col md:flex-row">
+    <div dir={lang === 'ur' ? 'rtl' : 'ltr'} className="min-h-screen bg-[#F8F8FA] flex flex-col md:flex-row">
       {/* Mobile Top Header */}
-      <header className="md:hidden sticky top-0 z-30 bg-[#0D0D10] text-white px-4 h-14 flex items-center justify-between border-b border-zinc-800">
-        <BrandLogo dark compact />
-        <button
-          type="button"
-          onClick={() => setMobileMenuOpen((v) => !v)}
-          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-700 text-xs font-semibold text-[#F4C430]"
-          aria-label="Toggle Admin Menu"
-        >
-          {mobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
-          <span>{navItems.find((i) => i.id === tab)?.label || 'Menu'}</span>
-        </button>
+      <header className="md:hidden sticky top-0 z-30 bg-[#0D0D10] text-white px-3 h-14 flex items-center justify-between gap-2 border-b border-zinc-800">
+        <BrandLogo dark compact lang={lang} />
+        <div className="flex items-center gap-1.5">
+          <ThemeQuickToggle lang={lang} dark />
+          {onChangeLang && <LanguageToggle lang={lang} onChange={onChangeLang} dark />}
+          <button
+            type="button"
+            onClick={() => setMobileMenuOpen((v) => !v)}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-zinc-900 border border-zinc-700 text-xs font-semibold text-[#F4C430]"
+            aria-label={tr(lang, 'Toggle Admin Menu', 'ایڈمن مینو کھولیں')}
+          >
+            {mobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+            <span className="truncate max-w-[100px]">{navItems.find((i) => i.id === tab)?.label || tr(lang, 'Menu', 'مینو')}</span>
+          </button>
+        </div>
       </header>
 
       {/* Obsidian Black Admin Sidebar (Responsive Drawer on Mobile, Sticky Rail on Desktop) */}
@@ -917,12 +1028,18 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
           mobileMenuOpen ? 'flex' : 'hidden'
         } md:flex md:w-64 bg-[#0D0D10] text-white p-5 flex-col justify-between shrink-0 md:sticky md:top-0 md:h-screen z-20`}
       >
-        <div className="space-y-5 overflow-y-auto">
+        <div className="space-y-4 overflow-y-auto">
           <div className="hidden md:flex items-center justify-between">
-            <BrandLogo dark compact />
+            <BrandLogo dark compact lang={lang} />
             <ShieldCheck className="w-4 h-4 text-[#D4A017]" />
           </div>
-          <p className="text-[11px] font-bold uppercase tracking-widest text-[#D4A017]">Admin Panel</p>
+          <div className="hidden md:flex items-center justify-between gap-1.5 pb-1">
+            <ThemeQuickToggle lang={lang} dark />
+            {onChangeLang && <LanguageToggle lang={lang} onChange={onChangeLang} dark />}
+          </div>
+          <p className="text-[11px] font-bold uppercase tracking-widest text-[#D4A017]">
+            {tr(lang, 'Admin Panel', 'ایڈمن پینل')}
+          </p>
 
           <nav className="space-y-1">
             {navItems.map((item) => {
@@ -956,7 +1073,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
             className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold text-zinc-400 hover:text-white hover:bg-zinc-900"
           >
             <LogOut className="w-4 h-4" />
-            Sign Out Admin
+            {tr(lang, 'Sign Out Admin', 'ایڈمن لاگ آؤٹ')}
           </button>
         </div>
       </aside>
@@ -967,7 +1084,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
           <div className="rounded-xl bg-[#0D0D10] text-[#F4C430] px-4 py-2.5 text-xs font-semibold flex items-center justify-between">
             <span>{toast}</span>
             <button type="button" onClick={() => setToast(null)} className="text-zinc-400 hover:text-white">
-              Dismiss
+              {tr(lang, 'Dismiss', 'بند کریں')}
             </button>
           </div>
         )}
@@ -975,25 +1092,27 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
         {/* 1. Dashboard & Full Operational Map */}
         {tab === 'dashboard' && overview && (
           <div className="space-y-6">
-            <h1 className="font-display text-2xl font-bold text-[#0D0D10]">Operations Control Center</h1>
+            <h1 className="font-display text-2xl font-bold text-[#0D0D10]">
+              {tr(lang, 'Operations Control Center', 'آپریشنز کنٹرول سینٹر')}
+            </h1>
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div className="rounded-2xl bg-[#0D0D10] text-white p-5">
-                <span className="text-xs text-zinc-400">Active Bookings</span>
+                <span className="text-xs text-zinc-400">{tr(lang, 'Active Bookings', 'فعال بکنگز')}</span>
                 <div className="font-mono text-2xl font-bold text-[#D4A017] mt-1">{overview.kpis.activeBookings}</div>
               </div>
               <div className="rounded-2xl border border-zinc-200 bg-white p-5">
-                <span className="text-xs text-zinc-500">Pending Partner Reviews</span>
+                <span className="text-xs text-zinc-500">{tr(lang, 'Pending Partner Reviews', 'زیرِ غور پارٹنرز')}</span>
                 <div className="font-mono text-2xl font-bold text-amber-700 mt-1">{overview.kpis.pendingPartners}</div>
               </div>
               <div className="rounded-2xl border border-zinc-200 bg-white p-5">
-                <span className="text-xs text-zinc-500">Passengers / Partners</span>
+                <span className="text-xs text-zinc-500">{tr(lang, 'Passengers / Partners', 'مسافر / پارٹنرز')}</span>
                 <div className="font-mono text-2xl font-bold text-[#0D0D10] mt-1">
                   {overview.kpis.totalPassengers} / {overview.kpis.totalPartners}
                 </div>
               </div>
               <div className="rounded-2xl border border-zinc-200 bg-white p-5">
-                <span className="text-xs text-zinc-500">Platform Commission</span>
+                <span className="text-xs text-zinc-500">{tr(lang, 'Platform Commission', 'پلیٹ فارم کمیشن')}</span>
                 <div className="font-mono text-2xl font-bold text-emerald-700 mt-1">
                   Rs. {Number(overview.kpis.commissionPkr || 0).toLocaleString()}
                 </div>
@@ -1001,7 +1120,9 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
             </div>
 
             <div className="space-y-2">
-              <h2 className="font-display text-base font-bold">Live Operational Street Map (Demand Zones &amp; Active Partners)</h2>
+              <h2 className="font-display text-base font-bold">
+                {tr(lang, 'Live Operational Street Map (Demand Zones & Active Partners)', 'لائیو آپریشنل اسٹریٹ میپ (ڈیمانڈ زونز اور فعال پارٹنرز)')}
+              </h2>
               <StreetMap
                 zones={zones}
                 partnerMarkers={(overview.onlinePartners || [])
@@ -1019,13 +1140,39 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
           </div>
         )}
 
+        {/* Global Theme & Design Studio */}
+        {tab === 'theme' && (
+          <ThemePreferencesPanel
+            lang={lang}
+            isAdminStudio
+            onAdminApplyGlobal={async (payload: {
+              themeId: AppThemeId;
+              homeLayout: HomeLayoutId;
+              authLayout: AuthLayoutId;
+              forceGlobal: boolean;
+            }) => {
+              await apiRequest('/api/admin/theme', {
+                method: 'PUT',
+                role: 'admin',
+                body: payload,
+              });
+              await onRefreshConfig?.();
+              window.dispatchEvent(new Event('pr:refresh-config'));
+              setToast(tr(lang, 'Global theme & layout applied to entire app!', 'گلوبل تھیم اور ڈیزائن پوری ایپ پر لاگو کر دیا گیا ہے!'));
+              await loadAll();
+            }}
+          />
+        )}
+
         {/* 2. Pro Partner & Document Review */}
         {tab === 'partners' && (
           <div className="space-y-5">
-            <h1 className="font-display text-2xl font-bold">Pro Partner Verification &amp; Document Review</h1>
+            <h1 className="font-display text-2xl font-bold">
+              {tr(lang, 'Pro Partner Verification & Document Review', 'پرو پارٹنر تصدیق اور دستاویزات کا جائزہ')}
+            </h1>
             {partners.length === 0 ? (
               <div className="rounded-2xl border border-zinc-200 bg-white p-10 text-center text-sm text-zinc-500">
-                No Pro Partners registered yet.
+                {tr(lang, 'No Pro Partners registered yet.', 'ابھی کوئی پرو پارٹنر رجسٹر نہیں ہوا۔')}
               </div>
             ) : (
               <div className="space-y-4">
@@ -1035,15 +1182,15 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                       <div>
                         <div className="font-display text-lg font-bold">{p.full_name}</div>
                         <div className="text-xs text-zinc-500 font-mono">
-                          {p.phone} · {p.operating_city} · CNIC: {p.cnic_number || 'N/A'} · Licence: {p.licence_number || 'N/A'}
+                          {p.phone} · {p.operating_city} · {tr(lang, 'CNIC', 'شناختی کارڈ')}: {p.cnic_number || 'N/A'} · {tr(lang, 'Licence', 'لائسنس')}: {p.licence_number || 'N/A'}
                         </div>
                         <div className="text-xs text-zinc-600 mt-1">
-                          Vehicle: <strong>{p.vehicle_name || 'N/A'}</strong> ({p.vehicle_number || 'No Plate'}) · Services:{' '}
+                          {tr(lang, 'Vehicle:', 'گاڑی:')} <strong>{p.vehicle_name || 'N/A'}</strong> ({p.vehicle_number || tr(lang, 'No Plate', 'نمبر پلیٹ نہیں')}) · {tr(lang, 'Services:', 'سروسز:')}{' '}
                           {p.service_eligibility.join(', ')}
                         </div>
                       </div>
                       <span className="px-3 py-1 rounded-lg bg-zinc-100 font-mono text-xs font-bold uppercase">
-                        {p.verification_status.replaceAll('_', ' ')}
+                        {trVerificationStatus(lang, p.verification_status)}
                       </span>
                     </div>
 
@@ -1061,7 +1208,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
 
                     <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-zinc-100">
                       <input
-                        placeholder="Admin review notes..."
+                        placeholder={tr(lang, 'Admin review notes...', 'ایڈمن کے ریویو نوٹس...')}
                         value={partnerNotes[p.user_id] ?? p.admin_notes ?? ''}
                         onChange={(e) => setPartnerNotes((n) => ({ ...n, [p.user_id]: e.target.value }))}
                         className="flex-1 min-w-[200px] px-3 py-2 rounded-xl border border-zinc-200 text-xs"
@@ -1071,21 +1218,21 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                         onClick={() => reviewPartner(p.user_id, 'approved', Boolean(p.pending_vehicle_review))}
                         className="px-4 py-2 rounded-xl bg-emerald-700 text-white text-xs font-bold"
                       >
-                        Approve Partner
+                        {tr(lang, 'Approve Partner', 'پارٹنر منظور کریں')}
                       </button>
                       <button
                         type="button"
                         onClick={() => reviewPartner(p.user_id, 'rejected')}
                         className="px-4 py-2 rounded-xl bg-red-600 text-white text-xs font-bold"
                       >
-                        Reject
+                        {tr(lang, 'Reject', 'مسترد کریں')}
                       </button>
                       <button
                         type="button"
                         onClick={() => reviewPartner(p.user_id, 'suspended')}
                         className="px-4 py-2 rounded-xl border border-zinc-300 text-xs font-bold"
                       >
-                        Suspend
+                        {tr(lang, 'Suspend', 'معطل کریں')}
                       </button>
                     </div>
                   </div>
@@ -1099,6 +1246,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
         {tab === 'fleet' && (
           <FleetManagementTab
             fleet={fleet}
+            lang={lang}
             onReload={loadAll}
             onShowToast={(msg) => setToast(msg)}
           />
@@ -1109,6 +1257,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
           <FareManagementTab
             fleet={fleet}
             settings={settings}
+            lang={lang}
             onReload={loadAll}
             onShowToast={(msg) => setToast(msg)}
           />
@@ -1118,6 +1267,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
         {tab === 'passengers' && (
           <PassengerManagementTab
             passengers={passengers}
+            lang={lang}
             onReload={loadAll}
             onShowToast={(msg) => setToast(msg)}
           />
@@ -1127,6 +1277,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
         {tab === 'bookings' && (
           <BookingsManagementTab
             bookings={bookings}
+            lang={lang}
             onReload={loadAll}
             onShowToast={(msg) => setToast(msg)}
           />
@@ -1136,6 +1287,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
         {tab === 'zones' && (
           <ZonesManagementTab
             zones={zones}
+            lang={lang}
             onReload={loadAll}
             onShowToast={(msg) => setToast(msg)}
           />
@@ -1151,14 +1303,14 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                 role: 'admin',
                 body: settings,
               });
-              setToast('Schedule & Go Now limits updated.');
+              setToast(tr(lang, 'Schedule & Go Now limits updated.', 'شیڈول اور گو ناؤ کی حدود اپڈیٹ ہو گئیں۔'));
             }}
             className="max-w-2xl rounded-2xl border border-zinc-200 bg-white p-6 space-y-4"
           >
-            <h1 className="font-display text-xl font-bold">Schedule &amp; Go Now Controls</h1>
+            <h1 className="font-display text-xl font-bold">{tr(lang, 'Schedule & Go Now Controls', 'شیڈول اور گو ناؤ کنٹرولز')}</h1>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
               <div>
-                <label className="block font-semibold text-zinc-600 mb-1">Go Now Min Offer (%)</label>
+                <label className="block font-semibold text-zinc-600 mb-1">{tr(lang, 'Go Now Min Offer (%)', 'گو ناؤ کم از کم آفر (%)')}</label>
                 <input
                   value={settings.go_now_min_offer_pct || '80'}
                   onChange={(e) => setSettings((s) => ({ ...s, go_now_min_offer_pct: e.target.value }))}
@@ -1166,7 +1318,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                 />
               </div>
               <div>
-                <label className="block font-semibold text-zinc-600 mb-1">Go Now Max Offer (%)</label>
+                <label className="block font-semibold text-zinc-600 mb-1">{tr(lang, 'Go Now Max Offer (%)', 'گو ناؤ زیادہ سے زیادہ آفر (%)')}</label>
                 <input
                   value={settings.go_now_max_offer_pct || '135'}
                   onChange={(e) => setSettings((s) => ({ ...s, go_now_max_offer_pct: e.target.value }))}
@@ -1174,7 +1326,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                 />
               </div>
               <div>
-                <label className="block font-semibold text-zinc-600 mb-1">Schedule Default Pickup</label>
+                <label className="block font-semibold text-zinc-600 mb-1">{tr(lang, 'Schedule Default Pickup', 'شیڈول ڈیفالٹ پک اپ وقت')}</label>
                 <input
                   value={settings.schedule_default_pickup || '08:00 AM'}
                   onChange={(e) => setSettings((s) => ({ ...s, schedule_default_pickup: e.target.value }))}
@@ -1182,7 +1334,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                 />
               </div>
               <div>
-                <label className="block font-semibold text-zinc-600 mb-1">Schedule Default Drop</label>
+                <label className="block font-semibold text-zinc-600 mb-1">{tr(lang, 'Schedule Default Drop', 'شیڈول ڈیفالٹ ڈراپ وقت')}</label>
                 <input
                   value={settings.schedule_default_drop || '05:30 PM'}
                   onChange={(e) => setSettings((s) => ({ ...s, schedule_default_drop: e.target.value }))}
@@ -1190,7 +1342,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                 />
               </div>
               <div>
-                <label className="block font-semibold text-zinc-600 mb-1">Schedule Rate (PKR/km)</label>
+                <label className="block font-semibold text-zinc-600 mb-1">{tr(lang, 'Schedule Rate (PKR/km)', 'شیڈول ریٹ (روپے/کلومیٹر)')}</label>
                 <input
                   value={settings.schedule_rate_per_km || '38'}
                   onChange={(e) => setSettings((s) => ({ ...s, schedule_rate_per_km: e.target.value }))}
@@ -1198,7 +1350,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                 />
               </div>
               <div>
-                <label className="block font-semibold text-zinc-600 mb-1">Official Support WhatsApp</label>
+                <label className="block font-semibold text-zinc-600 mb-1">{tr(lang, 'Official Support WhatsApp', 'آفیشل سپورٹ واٹس ایپ')}</label>
                 <input
                   value={settings.support_whatsapp || '03125007782'}
                   onChange={(e) => setSettings((s) => ({ ...s, support_whatsapp: e.target.value }))}
@@ -1207,7 +1359,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
               </div>
             </div>
             <button type="submit" className="px-6 py-2.5 rounded-xl bg-[#D4A017] text-[#0D0D10] text-xs font-bold">
-              Update Settings
+              {tr(lang, 'Update Settings', 'سیٹنگز اپڈیٹ کریں')}
             </button>
           </form>
         )}
@@ -1215,7 +1367,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
         {/* 8. Monthly Packages */}
         {tab === 'packages' && (
           <div className="space-y-5">
-            <h1 className="font-display text-2xl font-bold">Monthly Packages Management</h1>
+            <h1 className="font-display text-2xl font-bold">{tr(lang, 'Monthly Packages Management', 'ماہانہ پیکیجز کا انتظام')}</h1>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {packages.map((p) => (
                 <div key={p.id} className="rounded-2xl border border-zinc-200 bg-white p-5 space-y-3">
@@ -1236,7 +1388,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                       p.is_active === 1 ? 'bg-emerald-700 text-white' : 'bg-zinc-200 text-zinc-700'
                     }`}
                   >
-                    {p.is_active === 1 ? 'Active' : 'Paused'}
+                    {p.is_active === 1 ? tr(lang, 'Active', 'فعال') : tr(lang, 'Paused', 'روکا ہوا')}
                   </button>
                 </div>
               ))}
@@ -1262,7 +1414,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
             >
               <input
                 required
-                placeholder="New Package Name"
+                placeholder={tr(lang, 'New Package Name', 'نئے پیکیج کا نام')}
                 value={newPkgName}
                 onChange={(e) => setNewPkgName(e.target.value)}
                 className="flex-1 min-w-[200px] px-3 py-2 rounded-xl border border-zinc-200 text-xs"
@@ -1274,7 +1426,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                 className="w-32 px-3 py-2 rounded-xl border border-zinc-200 text-xs font-mono"
               />
               <button type="submit" className="px-4 py-2 rounded-xl bg-[#0D0D10] text-white text-xs font-bold">
-                + Add Package
+                {tr(lang, '+ Add Package', '+ پیکیج شامل کریں')}
               </button>
             </form>
           </div>
@@ -1283,24 +1435,26 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
         {/* 9. Finance & Settlements */}
         {tab === 'finance' && (
           <div className="space-y-4">
-            <h1 className="font-display text-2xl font-bold">Financial Ledger &amp; Partner Withdrawals</h1>
+            <h1 className="font-display text-2xl font-bold">{tr(lang, 'Financial Ledger & Partner Withdrawals', 'مالیاتی کھاتہ اور پارٹنر ادائیگیاں')}</h1>
             <div className="rounded-2xl border border-zinc-200 bg-white overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead className="bg-zinc-50 border-b border-zinc-200 text-zinc-500">
                   <tr>
-                    <th className="px-4 py-3">Tx Ref</th>
-                    <th className="px-4 py-3">User</th>
-                    <th className="px-4 py-3">Role</th>
-                    <th className="px-4 py-3">Type</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3 text-right">Amount</th>
-                    <th className="px-4 py-3 text-right">Action</th>
+                    <th className="px-4 py-3">{tr(lang, 'Tx Ref', 'ٹرانزیکشن نمبر')}</th>
+                    <th className="px-4 py-3">{tr(lang, 'User', 'صارف')}</th>
+                    <th className="px-4 py-3">{tr(lang, 'Role', 'کردار')}</th>
+                    <th className="px-4 py-3">{tr(lang, 'Type', 'قسم')}</th>
+                    <th className="px-4 py-3">{tr(lang, 'Status', 'حالت')}</th>
+                    <th className="px-4 py-3 text-right">{tr(lang, 'Amount', 'رقم')}</th>
+                    <th className="px-4 py-3 text-right">{tr(lang, 'Action', 'کارروائی')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100">
                   {transactions.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="px-4 py-8 text-center text-zinc-500">No transactions recorded yet.</td>
+                      <td colSpan={7} className="px-4 py-8 text-center text-zinc-500">
+                        {tr(lang, 'No transactions recorded yet.', 'ابھی کوئی مالیاتی ریکارڈ موجود نہیں۔')}
+                      </td>
                     </tr>
                   ) : (
                     transactions.map((tx: any) => (
@@ -1321,7 +1475,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                               }}
                               className="inline-flex items-center gap-1 px-3 py-1 rounded-lg bg-emerald-700 text-white font-bold"
                             >
-                              <CheckCircle2 className="w-3 h-3" /> Mark Settled
+                              <CheckCircle2 className="w-3 h-3" /> {tr(lang, 'Mark Settled', 'ادائیگی مکمل کریں')}
                             </button>
                           )}
                         </td>
@@ -1337,10 +1491,10 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
         {/* 10. Support Tickets */}
         {tab === 'tickets' && (
           <div className="space-y-4">
-            <h1 className="font-display text-2xl font-bold">Support Tickets</h1>
+            <h1 className="font-display text-2xl font-bold">{tr(lang, 'Support Tickets', 'سپورٹ ٹکٹس')}</h1>
             {tickets.length === 0 ? (
               <div className="rounded-2xl border border-zinc-200 bg-white p-10 text-center text-sm text-zinc-500">
-                No open support tickets.
+                {tr(lang, 'No open support tickets.', 'اس وقت کوئی سپورٹ ٹکٹ نہیں ہے۔')}
               </div>
             ) : (
               <div className="space-y-3">
@@ -1356,7 +1510,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                     <p className="text-xs text-zinc-600">{tkt.message}</p>
                     <div className="flex flex-wrap gap-2 pt-2">
                       <input
-                        placeholder="Write admin reply..."
+                        placeholder={tr(lang, 'Write admin reply...', 'ایڈمن کا جواب لکھیں...')}
                         value={ticketReplies[tkt.id] ?? tkt.admin_reply ?? ''}
                         onChange={(e) => setTicketReplies((r) => ({ ...r, [tkt.id]: e.target.value }))}
                         className="flex-1 min-w-[220px] px-3 py-2 rounded-xl border border-zinc-200 text-xs"
@@ -1367,13 +1521,13 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
                           await apiRequest(`/api/admin/tickets/${tkt.id}/reply`, {
                             method: 'POST',
                             role: 'admin',
-                            body: { reply: ticketReplies[tkt.id] || 'Resolved by Support', status: 'resolved' },
+                            body: { reply: ticketReplies[tkt.id] || tr(lang, 'Resolved by Support', 'سپورٹ ٹیم کی طرف سے حل کر دیا گیا'), status: 'resolved' },
                           });
                           await loadAll();
                         }}
                         className="px-4 py-2 rounded-xl bg-[#0D0D10] text-white text-xs font-bold"
                       >
-                        Send Reply &amp; Resolve
+                        {tr(lang, 'Send Reply & Resolve', 'جواب بھیجیں اور حل کریں')}
                       </button>
                     </div>
                   </div>
@@ -1390,10 +1544,14 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
               <div>
                 <h1 className="font-display text-2xl font-bold flex items-center gap-2">
                   <ShieldAlert className="w-6 h-6 text-[#D4A017]" />
-                  Super Admin Security &amp; Access Audit
+                  {tr(lang, 'Super Admin Security & Access Audit', 'سپر ایڈمن سیکیورٹی اور رسائی آڈٹ')}
                 </h1>
                 <p className="text-xs text-zinc-500 mt-1">
-                  Server-verified authentication, setup, recovery, and blocked-access audit trail.
+                  {tr(
+                    lang,
+                    'Server-verified authentication, setup, recovery, and blocked-access audit trail.',
+                    'سرور سے تصدیق شدہ لاگ ان، سیٹ اپ، ریکوری اور بلاک رسائی کا مکمل ریکارڈ۔'
+                  )}
                 </p>
               </div>
             </div>
@@ -1401,18 +1559,18 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ currentPath = '/admin'
               <table className="w-full text-left text-xs">
                 <thead className="bg-zinc-50 border-b border-zinc-200 text-zinc-500">
                   <tr>
-                    <th className="px-4 py-3">Timestamp</th>
-                    <th className="px-4 py-3">Action</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3">Email</th>
-                    <th className="px-4 py-3">Details</th>
+                    <th className="px-4 py-3">{tr(lang, 'Timestamp', 'وقت')}</th>
+                    <th className="px-4 py-3">{tr(lang, 'Action', 'عمل')}</th>
+                    <th className="px-4 py-3">{tr(lang, 'Status', 'حالت')}</th>
+                    <th className="px-4 py-3">{tr(lang, 'Email', 'ای میل')}</th>
+                    <th className="px-4 py-3">{tr(lang, 'Details', 'تفصیلات')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100">
                   {securityLogs.length === 0 ? (
                     <tr>
                       <td colSpan={5} className="px-4 py-8 text-center text-zinc-500">
-                        No security audit events recorded yet.
+                        {tr(lang, 'No security audit events recorded yet.', 'ابھی کوئی سیکیورٹی آڈٹ ریکارڈ موجود نہیں۔')}
                       </td>
                     </tr>
                   ) : (

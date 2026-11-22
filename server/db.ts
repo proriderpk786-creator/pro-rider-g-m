@@ -713,6 +713,13 @@ function seedInitialData() {
   insertSetting.run('rate_coaster_min', '12');
   insertSetting.run('rate_coaster_max', '25');
 
+  // Global Theme & Layout Studio defaults
+  insertSetting.run('app_theme', 'classic-ivory');
+  insertSetting.run('home_layout', 'classic');
+  insertSetting.run('auth_layout', 'hero-sheet');
+  insertSetting.run('theme_force_global', '0');
+  insertSetting.run('theme_updated_at', '0');
+
   // 6. Seed Demo Pro Partner & Sample Active Trip (If No Bookings Exist)
   const bookingsCount = (db.prepare('SELECT COUNT(*) as c FROM bookings').get() as { c: number }).c;
   if (bookingsCount === 0) {

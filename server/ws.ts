@@ -202,3 +202,12 @@ export function emitToApprovedOnlinePartners(event: string, data: unknown) {
     }
   }
 }
+
+export function emitToAll(event: string, data: unknown) {
+  const payload = JSON.stringify({ event, data });
+  for (const c of clients) {
+    if (c.ws.readyState === WebSocket.OPEN) {
+      c.ws.send(payload);
+    }
+  }
+}

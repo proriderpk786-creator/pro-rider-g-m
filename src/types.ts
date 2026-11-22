@@ -152,6 +152,25 @@ export interface MonthlyPackage {
   is_active: number;
 }
 
+export type AppThemeId =
+  | 'classic-ivory'
+  | 'obsidian-gold'
+  | 'royal-navy'
+  | 'pearl-marble'
+  | 'sovereign-noir';
+
+export type HomeLayoutId = 'classic' | 'sovereign' | 'editorial' | 'executive';
+
+export type AuthLayoutId = 'hero-sheet' | 'classic-card' | 'split-showcase';
+
+export interface ThemeConfig {
+  themeId: AppThemeId;
+  homeLayout: HomeLayoutId;
+  authLayout: AuthLayoutId;
+  forceGlobal: boolean;
+  updatedAt: number;
+}
+
 export interface PublicConfig {
   brand: string;
   tagline: string;
@@ -165,6 +184,7 @@ export interface PublicConfig {
     allowedDays: string[];
     ratePerKm: number;
   };
+  themeConfig?: ThemeConfig;
   fleet: FleetCategory[];
   zones: ServiceZone[];
   packages: MonthlyPackage[];

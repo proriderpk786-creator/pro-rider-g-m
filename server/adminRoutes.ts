@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import type { Express, Response } from 'express';
 import { db } from './db.ts';
 import { requireRole, type AuthedRequest } from './auth.ts';
-import { emitToUser } from './ws.ts';
+import { emitToAll, emitToUser } from './ws.ts';
 
 function genId(prefix: string): string {
   return `${prefix}-${crypto.randomBytes(5).toString('hex').toUpperCase()}`;
@@ -513,13 +513,53 @@ function logAdminAudit(
   app.put('/api/admin/settings', requireRole('admin'), (req: AuthedRequest, res: Response) => {
     const updates = req.body || {};
     const upsert = db.prepare('INSERT OR REPLACE INTO platform_settings (key, value) VALUES (?, ?)');
+    const themeKeys = new Set(['app_theme', 'home_layout', 'auth_layout', 'theme_force_global']);
+    const touchesTheme = Object.keys(updates).some((k) => themeKeys.has(k));
     db.transaction(() => {
       for (const [k, v] of Object.entries(updates)) {
         upsert.run(k, typeof v === 'string' ? v : JSON.stringify(v));
       }
+      if (touchesTheme) {
+        upsert.run('theme_updated_at', String(Date.now()));
+      }
     })();
     logAdminAudit(req, 'UPDATE_PLATFORM_SETTINGS', 'success', `Updated ${Object.keys(updates).length} platform settings`);
+    emitToAll('config:updated', { updatedAt: Date.now() });
     res.json({ updated: true });
+  });
+
+  app.put('/api/admin/theme', requireRole('admin'), (req: AuthedRequest, res: Response) => {
+    const { themeId, homeLayout, authLayout, forceGlobal } = req.body || {};
+    const validThemes = new Set(['classic-ivory', 'obsidian-gold', 'royal-navy', 'pearl-marble', 'sovereign-noir']);
+    const validHomeLayouts = new Set(['classic', 'sovereign', 'editorial', 'executive']);
+    const validAuthLayouts = new Set(['hero-sheet', 'classic-card', 'split-showcase']);
+
+    const nextTheme = validThemes.has(themeId) ? String(themeId) : 'classic-ivory';
+    const nextHome = validHomeLayouts.has(homeLayout) ? String(homeLayout) : 'classic';
+    const nextAuth = validAuthLayouts.has(authLayout) ? String(authLayout) : 'hero-sheet';
+    const nextForce = forceGlobal ? '1' : '0';
+    const updatedAt = Date.now();
+
+    const upsert = db.prepare('INSERT OR REPLACE INTO platform_settings (key, value) VALUES (?, ?)');
+    db.transaction(() => {
+      upsert.run('app_theme', nextTheme);
+      upsert.run('home_layout', nextHome);
+      upsert.run('auth_layout', nextAuth);
+      upsert.run('theme_force_global', nextForce);
+      upsert.run('theme_updated_at', String(updatedAt));
+    })();
+
+    const themeConfig = {
+      themeId: nextTheme,
+      homeLayout: nextHome,
+      authLayout: nextAuth,
+      forceGlobal: nextForce === '1',
+      updatedAt,
+    };
+
+    logAdminAudit(req, 'UPDATE_APP_THEME', 'success', `Theme=${nextTheme}, Home=${nextHome}, Auth=${nextAuth}, Force=${nextForce}`);
+    emitToAll('config:updated', { themeConfig, updatedAt });
+    res.json({ updated: true, themeConfig });
   });
 
   app.get('/api/admin/finance', requireRole('admin'), (_req: AuthedRequest, res: Response) => {

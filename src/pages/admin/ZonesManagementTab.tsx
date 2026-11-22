@@ -11,11 +11,13 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { tr } from '../../i18n/translations';
 import { apiRequest } from '../../utils/api';
-import type { ServiceZone } from '../../types';
+import type { Language, ServiceZone } from '../../types';
 
 interface ZonesManagementTabProps {
   zones: ServiceZone[];
+  lang?: Language;
   onReload: () => Promise<void>;
   onShowToast: (msg: string) => void;
 }
@@ -57,6 +59,7 @@ const ZONE_PRESETS = [
 
 export const ZonesManagementTab: React.FC<ZonesManagementTabProps> = ({
   zones,
+  lang = 'en',
   onReload,
   onShowToast,
 }) => {
@@ -105,7 +108,7 @@ export const ZonesManagementTab: React.FC<ZonesManagementTabProps> = ({
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.city.trim() || !formData.area_name.trim()) {
-      setErrorMsg('City and Area Name are required.');
+      setErrorMsg(tr(lang, 'City and Area Name are required.', 'شہر اور علاقے کا نام درکار ہے۔'));
       return;
     }
     setSaving(true);
@@ -117,35 +120,41 @@ export const ZonesManagementTab: React.FC<ZonesManagementTabProps> = ({
           role: 'admin',
           body: formData,
         });
-        onShowToast(`Service zone "${formData.area_name}, ${formData.city}" created.`);
+        onShowToast(
+          tr(
+            lang,
+            `Service zone "${formData.area_name}, ${formData.city}" created.`,
+            `سروس زون "${formData.area_name}, ${formData.city}" شامل ہو گیا۔`
+          )
+        );
       } else if (modalMode === 'edit' && formData.id) {
         await apiRequest(`/api/admin/zones/${formData.id}`, {
           method: 'PATCH',
           role: 'admin',
           body: formData,
         });
-        onShowToast(`Service zone "${formData.area_name}" updated.`);
+        onShowToast(tr(lang, `Service zone "${formData.area_name}" updated.`, `سروس زون "${formData.area_name}" اپڈیٹ ہو گیا۔`));
       }
       setModalOpen(false);
       await onReload();
     } catch (err: any) {
-      setErrorMsg(err.message || 'Failed to save zone.');
+      setErrorMsg(err.message || tr(lang, 'Failed to save zone.', 'زون محفوظ کرنے میں ناکامی۔'));
     } finally {
       setSaving(false);
     }
   };
 
   const handleDeleteZone = async (id: string, name: string) => {
-    if (!window.confirm(`Are you sure you want to delete operating zone "${name}"?`)) return;
+    if (!window.confirm(tr(lang, `Are you sure you want to delete operating zone "${name}"?`, `کیا آپ واقعی زون "${name}" کو حذف کرنا چاہتے ہیں؟`))) return;
     try {
       await apiRequest(`/api/admin/zones/${id}`, {
         method: 'DELETE',
         role: 'admin',
       });
-      onShowToast(`Zone "${name}" removed.`);
+      onShowToast(tr(lang, `Zone "${name}" removed.`, `زون "${name}" حذف کر دیا گیا۔`));
       await onReload();
     } catch (err: any) {
-      onShowToast(`Failed to delete zone: ${err.message}`);
+      onShowToast(tr(lang, `Failed to delete zone: ${err.message}`, `زون حذف کرنے میں خرابی: ${err.message}`));
     }
   };
 
@@ -156,10 +165,16 @@ export const ZonesManagementTab: React.FC<ZonesManagementTabProps> = ({
         role: 'admin',
         body: { demand_level: nextLevel },
       });
-      onShowToast(`Demand level for "${z.area_name}" set to ${nextLevel.toUpperCase()}.`);
+      onShowToast(
+        tr(
+          lang,
+          `Demand level for "${z.area_name}" set to ${nextLevel.toUpperCase()}.`,
+          `"${z.area_name}" کی ڈیمانڈ سطح ${nextLevel === 'high' ? 'زیادہ' : nextLevel === 'medium' ? 'درمیانی' : 'کم'} کر دی گئی۔`
+        )
+      );
       await onReload();
     } catch (err: any) {
-      onShowToast(`Error updating demand: ${err.message}`);
+      onShowToast(tr(lang, `Error updating demand: ${err.message}`, `ڈیمانڈ اپڈیٹ کرنے میں خرابی: ${err.message}`));
     }
   };
 
@@ -172,11 +187,15 @@ export const ZonesManagementTab: React.FC<ZonesManagementTabProps> = ({
         body: { rickshaw_enabled: nextEnabled },
       });
       onShowToast(
-        `Rickshaw booking for "${z.area_name}" is now ${nextEnabled ? 'ENABLED' : 'DISABLED'}.`
+        tr(
+          lang,
+          `Rickshaw booking for "${z.area_name}" is now ${nextEnabled ? 'ENABLED' : 'DISABLED'}.`,
+          `"${z.area_name}" کے لیے رکشہ بکنگ اب ${nextEnabled ? 'فعال' : 'بند'} ہے۔`
+        )
       );
       await onReload();
     } catch (err: any) {
-      onShowToast(`Error updating rickshaw status: ${err.message}`);
+      onShowToast(tr(lang, `Error updating rickshaw status: ${err.message}`, `رکشہ اسٹیٹس اپڈیٹ کرنے میں خرابی: ${err.message}`));
     }
   };
 
@@ -187,14 +206,17 @@ export const ZonesManagementTab: React.FC<ZonesManagementTabProps> = ({
         <div>
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-lg bg-[#D4A017]/15 text-[#8F6400] text-xs font-bold uppercase tracking-wider mb-2">
             <Flame className="w-3.5 h-3.5" />
-            Operating Zones &amp; Heat Map Demand
+            {tr(lang, 'Operating Zones & Heat Map Demand', 'آپریٹنگ زونز اور ہیٹ میپ ڈیمانڈ')}
           </div>
           <h1 className="font-display text-2xl font-bold text-[#0D0D10]">
-            Operating Zones &amp; Rickshaw Tariffs
+            {tr(lang, 'Operating Zones & Rickshaw Tariffs', 'آپریٹنگ زونز اور رکشہ کرایہ')}
           </h1>
           <p className="text-xs text-zinc-500 mt-1 max-w-2xl">
-            Super Admin controls active city zones, sets D3 demand heat map intensity, and configures
-            local Rickshaw rates and operating hours.
+            {tr(
+              lang,
+              'Super Admin controls active city zones, sets D3 demand heat map intensity, and configures local Rickshaw rates and operating hours.',
+              'سپر ایڈمن شہری زونز، ڈیمانڈ ہیٹ میپ کی شدت اور مقامی رکشہ کے کرایوں اور اوقات کو کنٹرول کرتا ہے۔'
+            )}
           </p>
         </div>
         <button
@@ -203,7 +225,7 @@ export const ZonesManagementTab: React.FC<ZonesManagementTabProps> = ({
           className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-2xl bg-[#0D0D10] hover:bg-zinc-800 text-white font-bold text-xs shadow-md transition-all shrink-0 min-h-[44px]"
         >
           <Plus className="w-4 h-4 text-[#D4A017]" />
-          Add Service Zone
+          {tr(lang, 'Add Service Zone', 'سروس زون شامل کریں')}
         </button>
       </div>
 
@@ -240,19 +262,19 @@ export const ZonesManagementTab: React.FC<ZonesManagementTabProps> = ({
                     onChange={(e) => handleDemandChange(z, e.target.value as any)}
                     className={`px-3 py-1.5 rounded-xl border text-xs font-bold uppercase font-mono cursor-pointer ${demandColor}`}
                   >
-                    <option value="low">Low Demand</option>
-                    <option value="medium">Medium Demand</option>
-                    <option value="high">High Surge Demand</option>
+                    <option value="low">{tr(lang, 'Low Demand', 'کم ڈیمانڈ')}</option>
+                    <option value="medium">{tr(lang, 'Medium Demand', 'درمیانی ڈیمانڈ')}</option>
+                    <option value="high">{tr(lang, 'High Surge Demand', 'زیادہ رش / سرج')}</option>
                   </select>
                 </div>
 
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   <div className="bg-zinc-50 p-2.5 rounded-xl border border-zinc-100">
-                    <span className="text-[10px] uppercase font-bold text-zinc-400 block">Radius</span>
-                    <span className="font-mono font-bold text-zinc-800">{z.radius_km} km</span>
+                    <span className="text-[10px] uppercase font-bold text-zinc-400 block">{tr(lang, 'Radius', 'دائرہ کار')}</span>
+                    <span className="font-mono font-bold text-zinc-800">{z.radius_km} {tr(lang, 'km', 'کلومیٹر')}</span>
                   </div>
                   <div className="bg-zinc-50 p-2.5 rounded-xl border border-zinc-100">
-                    <span className="text-[10px] uppercase font-bold text-zinc-400 block">Center Coordinates</span>
+                    <span className="text-[10px] uppercase font-bold text-zinc-400 block">{tr(lang, 'Center Coordinates', 'مرکزی کوآرڈینیٹس')}</span>
                     <span className="font-mono text-[11px] text-zinc-600 truncate block">
                       {z.center_lat.toFixed(4)}, {z.center_lng.toFixed(4)}
                     </span>
@@ -262,7 +284,7 @@ export const ZonesManagementTab: React.FC<ZonesManagementTabProps> = ({
                 {/* Rickshaw Controls Strip */}
                 <div className="p-3.5 rounded-2xl bg-amber-50/60 border border-amber-200/80 space-y-2">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="font-bold text-[#8F6400]">Rickshaw Booking Tariff:</span>
+                    <span className="font-bold text-[#8F6400]">{tr(lang, 'Rickshaw Booking Tariff:', 'رکشہ بُکنگ کرایہ:')}</span>
                     <button
                       type="button"
                       onClick={() => handleToggleRickshaw(z)}
@@ -272,12 +294,12 @@ export const ZonesManagementTab: React.FC<ZonesManagementTabProps> = ({
                           : 'bg-zinc-200 text-zinc-600'
                       }`}
                     >
-                      {z.rickshaw_enabled === 1 ? 'Enabled' : 'Disabled'}
+                      {z.rickshaw_enabled === 1 ? tr(lang, 'Enabled', 'فعال') : tr(lang, 'Disabled', 'بند')}
                     </button>
                   </div>
                   <div className="flex items-center justify-between text-xs text-zinc-600 font-mono">
                     <span>
-                      Rate: <strong className="text-zinc-900 font-bold">Rs. {z.rickshaw_rate_pkr}/km</strong>
+                      {tr(lang, 'Rate:', 'ریٹ:')} <strong className="text-zinc-900 font-bold">Rs. {z.rickshaw_rate_pkr}/{tr(lang, 'km', 'کلومیٹر')}</strong>
                     </span>
                     <span className="inline-flex items-center gap-1 text-[11px]">
                       <Clock className="w-3 h-3 text-[#D4A017]" /> {z.rickshaw_hours}
@@ -294,13 +316,13 @@ export const ZonesManagementTab: React.FC<ZonesManagementTabProps> = ({
                   className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-800 font-bold text-xs transition-colors"
                 >
                   <Edit3 className="w-3.5 h-3.5" />
-                  Edit Zone
+                  {tr(lang, 'Edit Zone', 'زون ترمیم کریں')}
                 </button>
                 <button
                   type="button"
                   onClick={() => handleDeleteZone(z.id, z.area_name)}
                   className="p-2 rounded-xl text-zinc-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-                  title="Delete zone"
+                  title={tr(lang, 'Delete zone', 'زون حذف کریں')}
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
@@ -321,10 +343,16 @@ export const ZonesManagementTab: React.FC<ZonesManagementTabProps> = ({
                 </div>
                 <div>
                   <h3 className="font-display font-bold text-base">
-                    {modalMode === 'create' ? 'Add Operating Service Zone' : `Edit: ${formData.area_name}`}
+                    {modalMode === 'create'
+                      ? tr(lang, 'Add Operating Service Zone', 'نیا سروس زون شامل کریں')
+                      : `${tr(lang, 'Edit:', 'ترمیم:')} ${formData.area_name}`}
                   </h3>
                   <p className="text-[11px] text-zinc-400">
-                    Defines active dispatch radii, demand heat map coloring, and Rickshaw tariffs.
+                    {tr(
+                      lang,
+                      'Defines active dispatch radii, demand heat map coloring, and Rickshaw tariffs.',
+                      'ڈسپیچ دائرہ کار، ہیٹ میپ رنگ اور رکشہ کرایہ مقرر کرتا ہے۔'
+                    )}
                   </p>
                 </div>
               </div>
@@ -348,7 +376,7 @@ export const ZonesManagementTab: React.FC<ZonesManagementTabProps> = ({
               {modalMode === 'create' && (
                 <div>
                   <label className="block font-bold text-zinc-500 uppercase tracking-wider text-[10px] mb-1.5">
-                    Quick Pakistani City Presets:
+                    {tr(lang, 'Quick Pakistani City Presets:', 'پاکستانی شہروں کے فوری انتخاب:')}
                   </label>
                   <div className="flex flex-wrap gap-1.5">
                     {ZONE_PRESETS.map((p) => (
@@ -367,7 +395,7 @@ export const ZonesManagementTab: React.FC<ZonesManagementTabProps> = ({
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-semibold text-zinc-700 mb-1">City</label>
+                  <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'City', 'شہر')}</label>
                   <input
                     type="text"
                     required
@@ -377,7 +405,7 @@ export const ZonesManagementTab: React.FC<ZonesManagementTabProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="block font-semibold text-zinc-700 mb-1">Area / Sector Name</label>
+                  <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'Area / Sector Name', 'علاقہ / سیکٹر کا نام')}</label>
                   <input
                     type="text"
                     required
@@ -388,7 +416,7 @@ export const ZonesManagementTab: React.FC<ZonesManagementTabProps> = ({
                 </div>
 
                 <div>
-                  <label className="block font-semibold text-zinc-700 mb-1">Center Latitude</label>
+                  <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'Center Latitude', 'مرکزی عرض البلد')}</label>
                   <input
                     type="number"
                     step="0.0001"
@@ -399,7 +427,7 @@ export const ZonesManagementTab: React.FC<ZonesManagementTabProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="block font-semibold text-zinc-700 mb-1">Center Longitude</label>
+                  <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'Center Longitude', 'مرکزی طول البلد')}</label>
                   <input
                     type="number"
                     step="0.0001"
@@ -411,7 +439,7 @@ export const ZonesManagementTab: React.FC<ZonesManagementTabProps> = ({
                 </div>
 
                 <div>
-                  <label className="block font-semibold text-zinc-700 mb-1">Radius (km)</label>
+                  <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'Radius (km)', 'دائرہ کار (کلومیٹر)')}</label>
                   <input
                     type="number"
                     min={1}
@@ -423,15 +451,15 @@ export const ZonesManagementTab: React.FC<ZonesManagementTabProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="block font-semibold text-zinc-700 mb-1">Demand Level</label>
+                  <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'Demand Level', 'ڈیمانڈ کی سطح')}</label>
                   <select
                     value={formData.demand_level}
                     onChange={(e) => setFormData((f) => ({ ...f, demand_level: e.target.value as any }))}
                     className="w-full px-3 py-2 rounded-xl border border-zinc-200 bg-white font-semibold"
                   >
-                    <option value="low">Low Demand</option>
-                    <option value="medium">Medium Demand</option>
-                    <option value="high">High Demand</option>
+                    <option value="low">{tr(lang, 'Low Demand', 'کم ڈیمانڈ')}</option>
+                    <option value="medium">{tr(lang, 'Medium Demand', 'درمیانی ڈیمانڈ')}</option>
+                    <option value="high">{tr(lang, 'High Demand', 'زیادہ ڈیمانڈ')}</option>
                   </select>
                 </div>
               </div>
@@ -439,7 +467,7 @@ export const ZonesManagementTab: React.FC<ZonesManagementTabProps> = ({
               {/* Rickshaw Settings */}
               <div className="p-3.5 rounded-2xl bg-zinc-50 border border-zinc-200 space-y-3">
                 <div className="flex items-center justify-between">
-                  <label className="font-bold text-zinc-800">Rickshaw Service in this Zone</label>
+                  <label className="font-bold text-zinc-800">{tr(lang, 'Rickshaw Service in this Zone', 'اس زون میں رکشہ سروس')}</label>
                   <input
                     type="checkbox"
                     checked={formData.rickshaw_enabled}
@@ -449,7 +477,7 @@ export const ZonesManagementTab: React.FC<ZonesManagementTabProps> = ({
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-zinc-600 font-semibold mb-1">Rickshaw Rate (PKR/km)</label>
+                    <label className="block text-zinc-600 font-semibold mb-1">{tr(lang, 'Rickshaw Rate (PKR/km)', 'رکشہ کرایہ (روپے/کلومیٹر)')}</label>
                     <input
                       type="number"
                       value={formData.rickshaw_rate_pkr}
@@ -458,7 +486,7 @@ export const ZonesManagementTab: React.FC<ZonesManagementTabProps> = ({
                     />
                   </div>
                   <div>
-                    <label className="block text-zinc-600 font-semibold mb-1">Operating Hours</label>
+                    <label className="block text-zinc-600 font-semibold mb-1">{tr(lang, 'Operating Hours', 'سروس کے اوقات')}</label>
                     <input
                       type="text"
                       value={formData.rickshaw_hours}
@@ -475,14 +503,18 @@ export const ZonesManagementTab: React.FC<ZonesManagementTabProps> = ({
                   onClick={() => setModalOpen(false)}
                   className="px-4 py-2.5 rounded-xl border border-zinc-300 font-bold text-zinc-700 hover:bg-zinc-50"
                 >
-                  Cancel
+                  {tr(lang, 'Cancel', 'منسوخ')}
                 </button>
                 <button
                   type="submit"
                   disabled={saving}
                   className="px-6 py-2.5 rounded-xl bg-[#0D0D10] text-white font-bold hover:bg-zinc-800 disabled:opacity-50"
                 >
-                  {saving ? 'Saving...' : modalMode === 'create' ? 'Create Zone' : 'Save Changes'}
+                  {saving
+                    ? tr(lang, 'Saving...', 'محفوظ ہو رہا ہے...')
+                    : modalMode === 'create'
+                    ? tr(lang, 'Create Zone', 'زون بنائیں')
+                    : tr(lang, 'Save Changes', 'تبدیلیاں محفوظ کریں')}
                 </button>
               </div>
             </form>

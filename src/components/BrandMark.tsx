@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Car, Download, Globe, WifiOff } from 'lucide-react';
+import { useTheme } from '../contexts/ThemeContext';
+import { tr } from '../i18n/translations';
 import economyImg from '../assets/images/fleet_economy_1794584047757.jpg';
 import comfortImg from '../assets/images/fleet_comfort_1794584048991.jpg';
 import sedanImg from '../assets/images/fleet_sedan_1794584048087.jpg';
@@ -7,25 +9,35 @@ import premiumImg from '../assets/images/fleet_premium_1794584050155.jpg';
 import heroMobilityImg from '../assets/images/hero_mobility_pakistan_1794584048013.jpg';
 import type { Language } from '../types';
 
-export const BrandLogo: React.FC<{ dark?: boolean; compact?: boolean }> = ({ dark = false, compact = false }) => {
+export const BrandLogo: React.FC<{ dark?: boolean; compact?: boolean; lang?: Language }> = ({
+  dark,
+  compact = false,
+  lang = 'en',
+}) => {
+  const { isDark } = useTheme();
+  const effectiveDark = dark ?? isDark;
   return (
     <div className="inline-flex items-center gap-2.5 select-none shrink-0">
       <img
         src="/assets/aistudio/pmg_3_88102afb.png"
         alt="PRO RIDER AI"
-        className={`${compact ? 'w-8 h-8' : 'w-10 h-10'} rounded-full object-contain shrink-0 shadow-md border border-[#D4A017]/40 bg-black`}
+        className={`${compact ? 'w-8 h-8' : 'w-10 h-10'} rounded-full object-contain shrink-0 shadow-md border border-[#D4A017]/50 bg-black`}
       />
       <div className="flex flex-col leading-none">
         <span
-          className={`font-display font-bold tracking-tight text-base whitespace-nowrap ${
-            dark ? 'text-white' : 'text-[#0D0D10]'
+          className={`font-display font-bold tracking-tight text-base whitespace-nowrap pr-on-accent ${
+            effectiveDark ? '!text-white' : '!text-[#0D0D10]'
           }`}
         >
           PRO RIDER <span className="text-[#D4A017]">AI</span>
         </span>
         {!compact && (
-          <span className={`text-[11px] font-medium tracking-wide mt-0.5 whitespace-nowrap ${dark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-            Travel with Trust
+          <span
+            className={`text-[11px] font-medium tracking-wide mt-0.5 whitespace-nowrap ${
+              effectiveDark ? '!text-zinc-300' : '!text-zinc-500'
+            }`}
+          >
+            {tr(lang, 'Travel with Trust', 'اعتماد کے ساتھ سفر کریں')}
           </span>
         )}
       </div>
@@ -37,11 +49,13 @@ export const LanguageToggle: React.FC<{
   lang: Language;
   onChange: (lang: Language) => void;
   dark?: boolean;
-}> = ({ lang, onChange, dark = false }) => {
+}> = ({ lang, onChange, dark }) => {
+  const { isDark } = useTheme();
+  const effectiveDark = dark ?? isDark;
   return (
     <div
-      className={`inline-flex items-center rounded-lg p-0.5 border text-xs font-medium shrink-0 ${
-        dark ? 'bg-zinc-900 border-zinc-700 text-zinc-300' : 'bg-zinc-100 border-zinc-200 text-zinc-700'
+      className={`pr-preserve-light inline-flex items-center rounded-lg p-0.5 border text-xs font-medium shrink-0 ${
+        effectiveDark ? 'bg-zinc-900 border-zinc-700 text-zinc-200' : 'bg-zinc-100 border-zinc-200 text-zinc-700'
       }`}
     >
       <Globe className="w-3.5 h-3.5 mx-1.5 text-[#D4A017]" />
@@ -49,7 +63,7 @@ export const LanguageToggle: React.FC<{
         type="button"
         onClick={() => onChange('en')}
         className={`px-2 py-1 rounded-md transition-colors whitespace-nowrap ${
-          lang === 'en' ? 'bg-[#0D0D10] text-white' : 'hover:text-[#D4A017]'
+          lang === 'en' ? 'bg-[#0D0D10] text-white font-semibold' : 'hover:text-[#D4A017]'
         }`}
       >
         EN
@@ -72,7 +86,9 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
 }
 
-export const PWAInstallButton: React.FC<{ dark?: boolean }> = ({ dark = false }) => {
+export const PWAInstallButton: React.FC<{ dark?: boolean; lang?: Language }> = ({ dark, lang = 'en' }) => {
+  const { isDark } = useTheme();
+  const effectiveDark = dark ?? isDark;
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isInstalled, setIsInstalled] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
@@ -119,13 +135,13 @@ export const PWAInstallButton: React.FC<{ dark?: boolean }> = ({ dark = false })
         type="button"
         onClick={handleInstall}
         className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 min-h-[36px] ${
-          dark
+          effectiveDark
             ? 'bg-[#D4A017] text-[#0D0D10] hover:bg-[#EAB308]'
             : 'bg-[#0D0D10] text-white hover:bg-zinc-800'
         }`}
       >
         <Download className="w-3.5 h-3.5" />
-        Install App
+        {tr(lang, 'Install App', 'ایپ انسٹال کریں')}
       </button>
     );
   }
@@ -137,26 +153,31 @@ export const PWAInstallButton: React.FC<{ dark?: boolean }> = ({ dark = false })
           type="button"
           onClick={() => setShowIOSGuide(true)}
           className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors whitespace-nowrap shrink-0 ${
-            dark ? 'border-zinc-700 text-zinc-200 hover:bg-zinc-800' : 'border-zinc-300 text-zinc-700 hover:bg-zinc-100'
+            effectiveDark
+              ? 'border-zinc-700 text-zinc-200 hover:bg-zinc-800'
+              : 'border-zinc-300 text-zinc-700 hover:bg-zinc-100'
           }`}
         >
           <Download className="w-3.5 h-3.5" />
-          Install iOS
+          {tr(lang, 'Install iOS', 'آئی فون پر انسٹال')}
         </button>
         {showIOSGuide && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
             <div className="w-full max-w-sm rounded-2xl bg-white p-6 border border-zinc-200 text-[#0D0D10]">
-              <h3 className="text-base font-bold font-display">Install PRO RIDER AI on iPhone / iPad</h3>
+              <h3 className="text-base font-bold font-display">
+                {tr(lang, 'Install PRO RIDER AI on iPhone / iPad', 'آئی فون / آئی پیڈ پر پرو رائیڈر اے آئی انسٹال کریں')}
+              </h3>
               <p className="mt-2 text-sm text-zinc-600 leading-relaxed">
-                1. Tap the <strong>Share</strong> icon in Safari toolbar.<br />
-                2. Scroll down and select <strong>Add to Home Screen</strong>.
+                {tr(lang, '1. Tap the Share icon in Safari toolbar.', '1. سفاری بار میں Share آئیکن پر کلک کریں۔')}
+                <br />
+                {tr(lang, '2. Scroll down and select Add to Home Screen.', '2. نیچے Add to Home Screen منتخب کریں۔')}
               </p>
               <button
                 type="button"
                 onClick={() => setShowIOSGuide(false)}
                 className="mt-4 w-full rounded-xl bg-[#0D0D10] py-2.5 text-sm font-semibold text-white"
               >
-                Close
+                {tr(lang, 'Close', 'بند کریں')}
               </button>
             </div>
           </div>
@@ -168,7 +189,7 @@ export const PWAInstallButton: React.FC<{ dark?: boolean }> = ({ dark = false })
   return null;
 };
 
-export const OfflineIndicator: React.FC = () => {
+export const OfflineIndicator: React.FC<{ lang?: Language }> = ({ lang = 'en' }) => {
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
 
   useEffect(() => {
@@ -187,7 +208,7 @@ export const OfflineIndicator: React.FC = () => {
   return (
     <div className="fixed bottom-20 md:bottom-4 left-4 z-50 flex items-center gap-2 rounded-lg bg-amber-600 px-3 py-2 text-xs font-semibold text-white shadow-lg">
       <WifiOff className="w-3.5 h-3.5" />
-      Offline Mode — Cached views active
+      {tr(lang, 'Offline Mode — Cached views active', 'آف لائن موڈ — محفوظ شدہ صفحات فعال ہیں')}
     </div>
   );
 };
