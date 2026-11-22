@@ -39,6 +39,15 @@ export interface User {
   created_at: string;
 }
 
+export interface ShowcaseGalleryItem {
+  id: string;
+  url: string;
+  caption: string;
+  category?: 'selfie' | 'vehicle' | 'gallery';
+  is_public: number;
+  created_at: string;
+}
+
 export interface PartnerProfile {
   user_id: string;
   verification_status: VerificationStatus;
@@ -59,6 +68,15 @@ export interface PartnerProfile {
   last_location_at: string | null;
   admin_notes: string;
   pending_vehicle_review?: any;
+  handle?: string;
+  bio?: string;
+  cover_photo_url?: string;
+  cover_is_public?: number;
+  avatar_url?: string;
+  avatar_is_public?: number;
+  profile_published?: number;
+  profile_template?: 'clean_light' | 'obsidian_gold' | 'emerald_pro';
+  showcase_gallery?: ShowcaseGalleryItem[];
 }
 
 export interface PartnerDocument {
@@ -70,6 +88,7 @@ export interface PartnerDocument {
   status: 'pending' | 'approved' | 'rejected';
   expiry_date: string;
   review_notes: string;
+  is_public?: number;
   uploaded_at: string;
 }
 

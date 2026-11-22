@@ -1,5 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { Car, Download, Globe, WifiOff } from 'lucide-react';
+import economyImg from '../assets/images/fleet_economy_1794584047757.jpg';
+import comfortImg from '../assets/images/fleet_comfort_1794584048991.jpg';
+import sedanImg from '../assets/images/fleet_sedan_1794584048087.jpg';
+import premiumImg from '../assets/images/fleet_premium_1794584050155.jpg';
+import heroMobilityImg from '../assets/images/hero_mobility_pakistan_1794584048013.jpg';
 import type { Language } from '../types';
 
 export const BrandLogo: React.FC<{ dark?: boolean; compact?: boolean }> = ({ dark = false, compact = false }) => {
@@ -187,13 +192,22 @@ export const OfflineIndicator: React.FC = () => {
   );
 };
 
+const BUNDLED_IMAGE_MAP: Record<string, string> = {
+  '/src/assets/images/fleet_economy_1794584047757.jpg': economyImg,
+  '/src/assets/images/fleet_comfort_1794584048991.jpg': comfortImg,
+  '/src/assets/images/fleet_sedan_1794584048087.jpg': sedanImg,
+  '/src/assets/images/fleet_premium_1794584050155.jpg': premiumImg,
+  '/src/assets/images/hero_mobility_pakistan_1794584048013.jpg': heroMobilityImg,
+};
+
 export const VehicleImage: React.FC<{ src?: string; alt: string; className?: string }> = ({
   src,
   alt,
   className = 'w-20 h-14',
 }) => {
   const [failed, setFailed] = useState(false);
-  if (!src || failed) {
+  const resolvedSrc = src ? BUNDLED_IMAGE_MAP[src] || src : undefined;
+  if (!resolvedSrc || failed) {
     return (
       <div
         className={`${className} rounded-lg bg-gradient-to-br from-zinc-100 to-zinc-200 border border-zinc-200 flex items-center justify-center text-zinc-500 shrink-0`}
@@ -204,7 +218,7 @@ export const VehicleImage: React.FC<{ src?: string; alt: string; className?: str
   }
   return (
     <img
-      src={src}
+      src={resolvedSrc}
       alt={alt}
       referrerPolicy="no-referrer"
       onError={() => setFailed(true)}

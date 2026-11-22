@@ -3,7 +3,10 @@ import {
   ArrowLeft,
   CarFront,
   CheckCircle2,
+  Eye,
+  EyeOff,
   FileCheck2,
+  Loader2,
   Lock,
   Phone,
   ShieldAlert,
@@ -14,6 +17,7 @@ import { BrandLogo, LanguageToggle, VehicleImage } from '../../components/BrandM
 import { DEFAULT_PUBLIC_CONFIG } from '../../config/defaultConfig';
 import { formatFirebaseAuthError, useFirebase } from '../../contexts/FirebaseContext';
 import { apiRequest, isBackendOfflineError, setRoleToken, setStoredRoleUser } from '../../utils/api';
+import { compressAndReadUploadFile } from '../../utils/imageUpload';
 import type {
   Language,
   PartnerDocument,
@@ -708,11 +712,23 @@ const DOC_SLOTS: Array<{ type: PartnerDocument['doc_type']; label: string; hasEx
 // Screens 18, 19, 26, 27: Partner Registration, Vehicle Management & Document Verification
 export const PartnerVerificationAndVehicleView: React.FC<{
   mode: 'documents' | 'vehicle';
+  lang?: Language;
   profile: PartnerProfile;
   documents: PartnerDocument[];
   config: PublicConfig | null;
   onRefresh: () => Promise<void>;
-}> = ({ mode, profile, documents, config, onRefresh }) => {
+  onLocalDocumentSaved?: (doc: PartnerDocument) => void;
+  onToggleDocVisibility?: (docType: PartnerDocument['doc_type'], isPublic: boolean) => Promise<void> | void;
+}> = ({
+  mode,
+  lang = 'en',
+  profile,
+  documents,
+  config,
+  onRefresh,
+  onLocalDocumentSaved,
+  onToggleDocVisibility,
+}) => {
   const fleetCategories = (
     config?.fleet?.length ? config.fleet : DEFAULT_PUBLIC_CONFIG.fleet
   ).filter((f) => f.is_active === 1);
@@ -746,6 +762,7 @@ export const PartnerVerificationAndVehicleView: React.FC<{
 
   const [expiryDrafts, setExpiryDrafts] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [uploadingSlot, setUploadingSlot] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
   const statusLabels: Record<string, { label: string; color: string }> = {
@@ -790,35 +807,65 @@ export const PartnerVerificationAndVehicleView: React.FC<{
     }
   };
 
-  const handleUpload = (docType: PartnerDocument['doc_type'], file: File) => {
-    if (file.size > 2_000_000) {
-      setMsg('Please choose an image smaller than 2MB.');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = async () => {
+  const handleUpload = async (docType: PartnerDocument['doc_type'], file: File) => {
+    setUploadingSlot(docType);
+    setMsg(null);
+    const defaultPublic = docType === 'profile_photo' || docType === 'vehicle_photo';
+    const existingDoc = documents.find((d) => d.doc_type === docType);
+    const resolvedPublic =
+      typeof existingDoc?.is_public === 'number' ? existingDoc.is_public === 1 : defaultPublic;
+
+    try {
+      const { dataUrl, fileName } = await compressAndReadUploadFile(file, 1280, 0.82);
+      const localDoc: PartnerDocument = {
+        id: existingDoc?.id || `DOC-${Date.now()}`,
+        partner_id: profile.user_id,
+        doc_type: docType,
+        file_name: fileName,
+        file_data_url: dataUrl,
+        status: 'pending',
+        expiry_date: expiryDrafts[docType] || existingDoc?.expiry_date || '',
+        review_notes: '',
+        is_public: resolvedPublic ? 1 : 0,
+        uploaded_at: new Date().toISOString(),
+      };
+
       try {
-        await apiRequest('/api/partner/documents', {
+        const res = await apiRequest<{ uploaded?: boolean; document?: PartnerDocument }>('/api/partner/documents', {
           method: 'POST',
           role: 'partner',
           body: {
             docType,
-            fileName: file.name,
-            fileDataUrl: reader.result,
+            fileName,
+            fileDataUrl: dataUrl,
             expiryDate: expiryDrafts[docType] || '',
+            isPublic: resolvedPublic,
           },
         });
-        setMsg(`${docType.replaceAll('_', ' ')} uploaded for Admin review.`);
+        onLocalDocumentSaved?.(res.document || localDoc);
         await onRefresh();
-      } catch (err: any) {
-        setMsg(err.message);
+      } catch (apiErr: any) {
+        if (isBackendOfflineError(apiErr)) {
+          onLocalDocumentSaved?.(localDoc);
+        } else {
+          throw apiErr;
+        }
       }
-    };
-    reader.readAsDataURL(file);
+
+      setMsg(
+        lang === 'ur'
+          ? `${docType.replaceAll('_', ' ')} کامیابی سے اپ لوڈ ہو گیا ہے۔`
+          : `${docType.replaceAll('_', ' ')} uploaded successfully for Admin review.`
+      );
+    } catch (err: any) {
+      setMsg(err?.message || 'Upload failed. Please try another photo.');
+    } finally {
+      setUploadingSlot(null);
+    }
   };
 
   return (
-    <div className="space-y-6 w-full min-w-0 overflow-x-hidden">
+    <div className="space-y-6 w-full min-w-0 overflow-x-clip">
       {/* Verification Status Banner */}
       <div className="rounded-2xl border border-zinc-200 bg-white p-5 flex flex-wrap items-center justify-between gap-4">
         <div className="space-y-1">
@@ -1024,71 +1071,124 @@ export const PartnerVerificationAndVehicleView: React.FC<{
         </button>
       </form>
 
-      {/* Screen 27: Document Upload Slots */}
+      {/* Screen 27: Document Upload Slots with Per-Photo Privacy Lock Toggle */}
       {mode === 'documents' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {DOC_SLOTS.map((slot) => {
-            const uploaded = documents.find((d) => d.doc_type === slot.type);
-            return (
-              <div key={slot.type} className="rounded-2xl border border-zinc-200 bg-white p-4 flex flex-col justify-between space-y-3">
-                <div>
-                  <div className="flex items-center justify-between gap-2 text-xs">
-                    <span className="font-bold text-[#0D0D10]">{slot.label}</span>
-                    {uploaded ? (
-                      <span
-                        className={`font-semibold uppercase ${
-                          uploaded.status === 'approved'
-                            ? 'text-emerald-700'
-                            : uploaded.status === 'rejected'
-                            ? 'text-red-700'
-                            : 'text-amber-700'
-                        }`}
-                      >
-                        {uploaded.status}
-                      </span>
-                    ) : (
-                      <span className="text-zinc-400">Missing</span>
+        <div className="space-y-3">
+          <div className="rounded-xl bg-zinc-50 border border-zinc-200 px-3.5 py-2.5 text-xs text-zinc-600 flex flex-wrap items-center justify-between gap-2">
+            <span>
+              {lang === 'ur'
+                ? 'ہر تصویر کے اوپر آنکھ / لاک بٹن سے آپ پبلک ویزیبلٹی آن یا بند کر سکتے ہیں۔ ایڈمن تمام دستاویزات دیکھ سکتا ہے۔'
+                : 'Use the privacy button on each photo to show or hide it from Passengers. Admin always sees uploaded verification docs.'}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {DOC_SLOTS.map((slot) => {
+              const uploaded = documents.find((d) => d.doc_type === slot.type);
+              const defaultPublic = slot.type === 'profile_photo' || slot.type === 'vehicle_photo';
+              const isPublic = uploaded ? uploaded.is_public === 1 : defaultPublic;
+              const isBusy = uploadingSlot === slot.type;
+
+              return (
+                <div key={slot.type} className="rounded-2xl border border-zinc-200 bg-white p-4 flex flex-col justify-between space-y-3">
+                  <div>
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <span className="font-bold text-[#0D0D10]">{slot.label}</span>
+                      {uploaded ? (
+                        <span
+                          className={`font-semibold uppercase ${
+                            uploaded.status === 'approved'
+                              ? 'text-emerald-700'
+                              : uploaded.status === 'rejected'
+                              ? 'text-red-700'
+                              : 'text-amber-700'
+                          }`}
+                        >
+                          {uploaded.status}
+                        </span>
+                      ) : (
+                        <span className="text-zinc-400">Missing</span>
+                      )}
+                    </div>
+
+                    {uploaded?.file_data_url && (
+                      <div className="relative mt-2.5 rounded-xl overflow-hidden border border-zinc-200 bg-zinc-100">
+                        <img
+                          src={uploaded.file_data_url}
+                          alt={slot.label}
+                          className={`w-full h-32 object-cover transition-opacity ${
+                            !isPublic ? 'opacity-80' : ''
+                          }`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => onToggleDocVisibility?.(slot.type, !isPublic)}
+                          className={`absolute top-2 right-2 inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold shadow-sm backdrop-blur ${
+                            isPublic
+                              ? 'bg-emerald-700/95 text-white'
+                              : 'bg-[#0D0D10]/90 text-[#F4C430]'
+                          }`}
+                        >
+                          {isPublic ? (
+                            <>
+                              <Eye className="w-3 h-3" />
+                              <span>{lang === 'ur' ? 'پبلک آن' : 'Public'}</span>
+                            </>
+                          ) : (
+                            <>
+                              <EyeOff className="w-3 h-3" />
+                              <span>{lang === 'ur' ? 'بند · ایڈمن' : 'Locked · Admin Only'}</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    )}
+                    {uploaded?.review_notes && (
+                      <p className="mt-1.5 text-[11px] text-red-700">Note: {uploaded.review_notes}</p>
                     )}
                   </div>
 
-                  {uploaded?.file_data_url && (
-                    <img
-                      src={uploaded.file_data_url}
-                      alt={slot.label}
-                      className="mt-2.5 w-full h-28 object-cover rounded-xl border border-zinc-200"
-                    />
-                  )}
-                  {uploaded?.review_notes && (
-                    <p className="mt-1.5 text-[11px] text-red-700">Note: {uploaded.review_notes}</p>
-                  )}
+                  <div className="space-y-2 pt-2 border-t border-zinc-100">
+                    {slot.hasExpiry && (
+                      <input
+                        type="date"
+                        value={expiryDrafts[slot.type] ?? uploaded?.expiry_date ?? ''}
+                        onChange={(e) => setExpiryDrafts((d) => ({ ...d, [slot.type]: e.target.value }))}
+                        className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-200 text-xs"
+                      />
+                    )}
+                    <label className="w-full min-h-[40px] inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-xs font-semibold text-[#0D0D10] cursor-pointer transition-colors">
+                      {isBusy ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-[#D4A017]" />
+                      ) : uploaded ? (
+                        <FileCheck2 className="w-3.5 h-3.5 text-[#D4A017]" />
+                      ) : (
+                        <Upload className="w-3.5 h-3.5" />
+                      )}
+                      {isBusy
+                        ? lang === 'ur'
+                          ? 'اپ لوڈ ہو رہا ہے...'
+                          : 'Compressing & Uploading...'
+                        : uploaded
+                        ? 'Re-upload Document'
+                        : 'Upload Photo / File'}
+                      <input
+                        type="file"
+                        accept="image/*,.pdf"
+                        disabled={isBusy}
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          e.target.value = '';
+                          if (file) void handleUpload(slot.type, file);
+                        }}
+                      />
+                    </label>
+                  </div>
                 </div>
-
-                <div className="space-y-2 pt-2 border-t border-zinc-100">
-                  {slot.hasExpiry && (
-                    <input
-                      type="date"
-                      value={expiryDrafts[slot.type] ?? uploaded?.expiry_date ?? ''}
-                      onChange={(e) => setExpiryDrafts((d) => ({ ...d, [slot.type]: e.target.value }))}
-                      className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-200 text-xs"
-                    />
-                  )}
-                  <label className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-xs font-semibold text-[#0D0D10] cursor-pointer transition-colors">
-                    {uploaded ? <FileCheck2 className="w-3.5 h-3.5 text-[#D4A017]" /> : <Upload className="w-3.5 h-3.5" />}
-                    {uploaded ? 'Re-upload Document' : 'Upload File'}
-                    <input
-                      type="file"
-                      accept="image/*,.pdf"
-                      className="hidden"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) handleUpload(slot.type, file);
-                      }}
-                    />
-                  </label>
-                </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
       )}
     </div>

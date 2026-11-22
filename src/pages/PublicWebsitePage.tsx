@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   Users,
 } from 'lucide-react';
+import heroMobilityImg from '../assets/images/hero_mobility_pakistan_1794584048013.jpg';
 import { BrandLogo, LanguageToggle, PWAInstallButton, VehicleImage } from '../components/BrandMark';
 import { ProRiderAiCopilot } from '../components/ProRiderAiCopilot';
 import type { Language, PublicConfig } from '../types';
@@ -121,13 +122,12 @@ export const PublicWebsitePage: React.FC<PublicWebsitePageProps> = ({
           </div>
 
           <div className="lg:col-span-6 flex items-center justify-center">
-            <div className="hero-image-container relative w-full aspect-[16/10] sm:aspect-[16/9] lg:aspect-[16/10] min-h-[280px] max-h-[500px] rounded-3xl overflow-hidden border border-zinc-200 bg-[#0D0D10] shadow-xl flex items-center justify-center">
+            <div className="hero-image-container relative w-full aspect-[16/9] lg:aspect-[16/10] lg:min-h-[360px] max-h-[500px] rounded-2xl sm:rounded-3xl overflow-hidden border border-zinc-200 bg-[#0D0D10] shadow-xl flex items-center justify-center">
               <img
-                src="/src/assets/images/hero_mobility_pakistan_1794584048013.jpg"
+                src={heroMobilityImg}
                 alt="PRO RIDER AI Fleet"
                 referrerPolicy="no-referrer"
                 className="hero-image-cover w-full h-full object-cover object-center"
-                style={{ objectFit: 'cover', objectPosition: 'center' }}
                 loading="eager"
               />
             </div>

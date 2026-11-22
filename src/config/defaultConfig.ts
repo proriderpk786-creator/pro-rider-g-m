@@ -194,7 +194,7 @@ export const DEFAULT_PUBLIC_CONFIG: PublicConfig = {
       slug: 'coaster',
       name: 'Coaster / Group Transport · کوسٹر',
       tagline: '28 seats · 15 bags · Coaster (28-seater corporate & university)',
-      image_url: 'https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?auto=format&fit=crop&w=600&q=80',
+      image_url: '/assets/aistudio/IMG_20261122_060311_220_97064aac.jpg',
       seating_capacity: 28,
       base_fare_pkr: 800,
       per_km_min_pkr: 12,

@@ -114,6 +114,15 @@ export function initDatabase() {
       last_location_at TEXT,
       admin_notes TEXT DEFAULT '',
       pending_vehicle_review TEXT DEFAULT '',
+      handle TEXT DEFAULT '',
+      bio TEXT DEFAULT '',
+      cover_photo_url TEXT DEFAULT '',
+      cover_is_public INTEGER NOT NULL DEFAULT 1,
+      avatar_url TEXT DEFAULT '',
+      avatar_is_public INTEGER NOT NULL DEFAULT 1,
+      profile_published INTEGER NOT NULL DEFAULT 0,
+      profile_template TEXT DEFAULT 'clean_light',
+      showcase_gallery TEXT NOT NULL DEFAULT '[]',
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -126,6 +135,7 @@ export function initDatabase() {
       status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected')),
       expiry_date TEXT DEFAULT '',
       review_notes TEXT DEFAULT '',
+      is_public INTEGER NOT NULL DEFAULT 0,
       uploaded_at TEXT NOT NULL DEFAULT (datetime('now')),
       UNIQUE(partner_id, doc_type)
     );
@@ -302,6 +312,31 @@ export function initDatabase() {
   if (!existingCols.has('admin_setup_completed')) {
     db.exec(`ALTER TABLE users ADD COLUMN admin_setup_completed INTEGER NOT NULL DEFAULT 0`);
   }
+
+  const profileCols = new Set(
+    (db.prepare(`PRAGMA table_info(partner_profiles)`).all() as Array<{ name: string }>).map((c) => c.name)
+  );
+  const profileMigrations: Array<[string, string]> = [
+    ['handle', `ALTER TABLE partner_profiles ADD COLUMN handle TEXT DEFAULT ''`],
+    ['bio', `ALTER TABLE partner_profiles ADD COLUMN bio TEXT DEFAULT ''`],
+    ['cover_photo_url', `ALTER TABLE partner_profiles ADD COLUMN cover_photo_url TEXT DEFAULT ''`],
+    ['cover_is_public', `ALTER TABLE partner_profiles ADD COLUMN cover_is_public INTEGER NOT NULL DEFAULT 1`],
+    ['avatar_url', `ALTER TABLE partner_profiles ADD COLUMN avatar_url TEXT DEFAULT ''`],
+    ['avatar_is_public', `ALTER TABLE partner_profiles ADD COLUMN avatar_is_public INTEGER NOT NULL DEFAULT 1`],
+    ['profile_published', `ALTER TABLE partner_profiles ADD COLUMN profile_published INTEGER NOT NULL DEFAULT 0`],
+    ['profile_template', `ALTER TABLE partner_profiles ADD COLUMN profile_template TEXT DEFAULT 'clean_light'`],
+    ['showcase_gallery', `ALTER TABLE partner_profiles ADD COLUMN showcase_gallery TEXT NOT NULL DEFAULT '[]'`],
+  ];
+  for (const [col, sql] of profileMigrations) {
+    if (!profileCols.has(col)) db.exec(sql);
+  }
+
+  const docCols = new Set(
+    (db.prepare(`PRAGMA table_info(partner_documents)`).all() as Array<{ name: string }>).map((c) => c.name)
+  );
+  if (!docCols.has('is_public')) {
+    db.exec(`ALTER TABLE partner_documents ADD COLUMN is_public INTEGER NOT NULL DEFAULT 0`);
+  }
   if (!existingCols.has('recovery_phrase_hash')) {
     db.exec(`ALTER TABLE users ADD COLUMN recovery_phrase_hash TEXT DEFAULT ''`);
   }
@@ -351,7 +386,7 @@ function seedInitialData() {
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
       tagline = excluded.tagline,
-      image_url = CASE WHEN fleet_categories.image_url = '' OR fleet_categories.image_url IS NULL OR fleet_categories.image_url LIKE 'https://images.unsplash.com/photo-1541899481282%' OR fleet_categories.image_url LIKE 'https://images.unsplash.com/photo-1559297434%' OR fleet_categories.image_url LIKE 'https://images.unsplash.com/photo-1568605117036%' OR fleet_categories.image_url LIKE 'https://images.unsplash.com/photo-1582639590011%' THEN excluded.image_url ELSE fleet_categories.image_url END,
+      image_url = CASE WHEN fleet_categories.image_url = '' OR fleet_categories.image_url IS NULL OR fleet_categories.image_url LIKE 'https://images.unsplash.com/photo-1541899481282%' OR fleet_categories.image_url LIKE 'https://images.unsplash.com/photo-1559297434%' OR fleet_categories.image_url LIKE 'https://images.unsplash.com/photo-1568605117036%' OR fleet_categories.image_url LIKE 'https://images.unsplash.com/photo-1582639590011%' OR fleet_categories.image_url LIKE 'https://images.unsplash.com/photo-1544620347%' THEN excluded.image_url ELSE fleet_categories.image_url END,
       seating_capacity = excluded.seating_capacity,
       base_fare_pkr = excluded.base_fare_pkr,
       per_km_min_pkr = excluded.per_km_min_pkr,
@@ -528,7 +563,7 @@ function seedInitialData() {
       slug: 'coaster',
       name: 'Coaster / Group Transport · کوسٹر',
       tagline: '28 seats · 15 bags · Coaster (28-seater corporate & university)',
-      image_url: 'https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?auto=format&fit=crop&w=600&q=80',
+      image_url: '/assets/aistudio/IMG_20261122_060311_220_97064aac.jpg',
       seating_capacity: 28,
       base_fare_pkr: 800,
       per_km_min_pkr: 12,

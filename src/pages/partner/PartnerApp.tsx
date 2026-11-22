@@ -55,6 +55,29 @@ import { PartnerRequestsView, PartnerTripsView } from './PartnerRequestsAndTrips
 
 const PARTNER_PROFILE_STORAGE_KEY = 'pr_profile_partner';
 
+function getPartnerDocsStorageKey(userId?: string | null) {
+  return `pr_partner_docs_${userId || 'guest'}`;
+}
+
+function readStoredPartnerDocs(userId?: string | null): PartnerDocument[] {
+  try {
+    const raw = localStorage.getItem(getPartnerDocsStorageKey(userId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as PartnerDocument[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeStoredPartnerDocs(userId: string | undefined | null, docs: PartnerDocument[]) {
+  try {
+    localStorage.setItem(getPartnerDocsStorageKey(userId), JSON.stringify(docs));
+  } catch {
+    // ignore quota errors
+  }
+}
+
 function readStoredPartnerProfile(): PartnerProfile | null {
   try {
     const raw = localStorage.getItem(PARTNER_PROFILE_STORAGE_KEY);
@@ -92,7 +115,9 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
   const [token, setToken] = useState<string | null>(() => getRoleToken('partner'));
   const [user, setUser] = useState<User | null>(() => getStoredRoleUser<User>('partner'));
   const [profile, setProfile] = useState<PartnerProfile | null>(() => readStoredPartnerProfile());
-  const [documents, setDocuments] = useState<PartnerDocument[]>([]);
+  const [documents, setDocuments] = useState<PartnerDocument[]>(() =>
+    readStoredPartnerDocs(getStoredRoleUser<User>('partner')?.id)
+  );
   const [tab, setTab] = useState<PartnerTab>('requests');
 
   const [requests, setRequests] = useState<Booking[]>([]);
@@ -165,7 +190,9 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
           // ignore
         }
       }
-      setDocuments(Array.isArray(profRes?.documents) ? profRes.documents : []);
+      const serverDocs = Array.isArray(profRes?.documents) ? profRes.documents : [];
+      setDocuments(serverDocs);
+      writeStoredPartnerDocs(profRes?.user?.id || user?.id, serverDocs);
       setApproved(Boolean(reqRes?.approved));
       setRequests(Array.isArray(reqRes?.requests) ? reqRes.requests : []);
       setTrips(Array.isArray(tripRes?.trips) ? tripRes.trips : []);
@@ -186,9 +213,14 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
       void loadDemand();
     } catch (err) {
       if (isBackendOfflineError(err) || token.startsWith('pr_fb_')) {
-        setUser((prev) => prev || getStoredRoleUser<User>('partner'));
+        const localUser = user || getStoredRoleUser<User>('partner');
+        setUser((prev) => prev || localUser);
         const localProfile = profile || readStoredPartnerProfile();
         setProfile((prev) => prev || localProfile);
+        const storedDocs = readStoredPartnerDocs(localUser?.id || localProfile?.user_id);
+        if (storedDocs.length > 0) {
+          setDocuments(storedDocs);
+        }
         setApproved(Boolean(localProfile && localProfile.verification_status === 'approved'));
         try {
           const raw = localStorage.getItem('pr_local_bookings_passenger');
@@ -320,6 +352,41 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
       setTab('documents');
     }
   };
+
+  const handleLocalDocumentSaved = useCallback(
+    (doc: PartnerDocument) => {
+      setDocuments((prev) => {
+        const next = [doc, ...prev.filter((d) => d.doc_type !== doc.doc_type)];
+        writeStoredPartnerDocs(user?.id || profile?.user_id, next);
+        return next;
+      });
+    },
+    [user?.id, profile?.user_id]
+  );
+
+  const handleToggleDocVisibility = useCallback(
+    async (docType: PartnerDocument['doc_type'], isPublic: boolean) => {
+      setDocuments((prev) => {
+        const next = prev.map((d) =>
+          d.doc_type === docType ? { ...d, is_public: isPublic ? 1 : 0 } : d
+        );
+        writeStoredPartnerDocs(user?.id || profile?.user_id, next);
+        return next;
+      });
+      try {
+        await apiRequest(`/api/partner/documents/${docType}/visibility`, {
+          method: 'PATCH',
+          role: 'partner',
+          body: { isPublic },
+        });
+      } catch (err) {
+        if (!isBackendOfflineError(err)) {
+          await loadAll();
+        }
+      }
+    },
+    [user?.id, profile?.user_id, loadAll]
+  );
 
   const { signOutFirebase } = useFirebase();
 
@@ -575,10 +642,13 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
           {(tab === 'vehicle' || tab === 'documents') && (
             <PartnerVerificationAndVehicleView
               mode={tab}
+              lang={lang}
               profile={profile}
               documents={Array.isArray(documents) ? documents : []}
               config={config}
               onRefresh={loadAll}
+              onLocalDocumentSaved={handleLocalDocumentSaved}
+              onToggleDocVisibility={handleToggleDocVisibility}
             />
           )}
           {tab === 'notifications' && (
@@ -600,10 +670,25 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
           {tab === 'profile' && (
             <PartnerProfileView
               user={user}
+              profile={profile}
+              documents={Array.isArray(documents) ? documents : []}
+              tripsCount={Array.isArray(trips) ? trips.filter((tItem) => tItem.status === 'completed').length : 0}
+              lang={lang}
               onUpdated={(updated) => {
                 setUser(updated);
                 setStoredRoleUser('partner', updated);
               }}
+              onProfileUpdated={(updatedProfile) => {
+                setProfile(updatedProfile);
+                try {
+                  localStorage.setItem(PARTNER_PROFILE_STORAGE_KEY, JSON.stringify(updatedProfile));
+                } catch {
+                  // ignore
+                }
+              }}
+              onLocalDocumentSaved={handleLocalDocumentSaved}
+              onToggleDocVisibility={handleToggleDocVisibility}
+              onRefresh={loadAll}
               onLogout={handleLogout}
             />
           )}

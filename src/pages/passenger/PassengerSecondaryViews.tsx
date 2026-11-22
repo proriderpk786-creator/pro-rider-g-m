@@ -5,12 +5,16 @@ import {
   CreditCard,
   Download,
   HelpCircle,
+  Lock,
   PhoneCall,
   Radio,
   Share2,
   ShieldAlert,
+  ShieldCheck,
   Star,
+  UserCheck,
   Wallet as WalletIcon,
+  X,
 } from 'lucide-react';
 import { ShareTripStatusModal } from '../../components/ShareTripStatusModal';
 import { apiRequest } from '../../utils/api';
@@ -35,6 +39,21 @@ export const PassengerBookingsView: React.FC<{
   const [stars, setStars] = useState(5);
   const [comment, setComment] = useState('');
   const [shareBooking, setShareBooking] = useState<Booking | null>(null);
+  const [driverPreview, setDriverPreview] = useState<{
+    loading: boolean;
+    error?: string;
+    data?: any;
+  } | null>(null);
+
+  const openDriverPublicProfile = async (partnerId: string) => {
+    setDriverPreview({ loading: true });
+    try {
+      const data = await apiRequest<any>(`/api/partners/${partnerId}/public-profile`);
+      setDriverPreview({ loading: false, data });
+    } catch (err: any) {
+      setDriverPreview({ loading: false, error: err?.message || 'Driver showcase not available offline.' });
+    }
+  };
 
   const filtered = bookings.filter((b) => {
     if (tab === 'upcoming') return b.booking_mode === 'schedule' && ['searching', 'negotiating', 'confirmed'].includes(b.status);
@@ -143,6 +162,16 @@ export const PassengerBookingsView: React.FC<{
                   <HelpCircle className="w-3.5 h-3.5" />
                   Contact Support
                 </button>
+                {b.partner_id && (
+                  <button
+                    type="button"
+                    onClick={() => void openDriverPublicProfile(b.partner_id!)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-200 bg-zinc-50 text-xs font-semibold hover:bg-zinc-100"
+                  >
+                    <UserCheck className="w-3.5 h-3.5 text-[#D4A017]" />
+                    {b.partner_name ? `${b.partner_name} · Profile` : 'Driver Profile'}
+                  </button>
+                )}
                 {b.status === 'completed' && !b.my_rating && (
                   <button
                     type="button"
@@ -199,6 +228,106 @@ export const PassengerBookingsView: React.FC<{
         passengerName={passengerName}
         lang="en"
       />
+
+      {driverPreview && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full max-h-[86vh] overflow-y-auto shadow-2xl border border-zinc-200">
+            <div className="px-5 py-3.5 border-b border-zinc-100 flex items-center justify-between sticky top-0 bg-white z-10">
+              <span className="font-display font-bold text-sm text-[#0D0D10]">Pro Partner Profile</span>
+              <button
+                type="button"
+                onClick={() => setDriverPreview(null)}
+                className="p-1.5 rounded-lg hover:bg-zinc-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            {driverPreview.loading ? (
+              <div className="p-8 text-center text-xs text-zinc-500">Loading Pro Partner profile...</div>
+            ) : driverPreview.error ? (
+              <div className="p-6 text-center text-xs text-red-700">{driverPreview.error}</div>
+            ) : !driverPreview.data?.published ? (
+              <div className="p-8 text-center space-y-2">
+                <Lock className="w-9 h-9 text-[#D4A017] mx-auto" />
+                <h4 className="font-display font-bold text-base text-[#0D0D10]">
+                  {driverPreview.data?.full_name || 'Verified Driver'}
+                </h4>
+                <p className="text-xs text-zinc-600">
+                  This driver has set their public showcase photos to Private (Admin Verified).
+                </p>
+              </div>
+            ) : (
+              <div className="pb-6">
+                <div className="h-36 bg-[#0D0D10]">
+                  {driverPreview.data.cover_photo_url ? (
+                    <img
+                      src={driverPreview.data.cover_photo_url}
+                      alt="Driver Cover"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : null}
+                </div>
+                <div className="px-5 -mt-10">
+                  <div className="w-20 h-20 rounded-full border-4 border-white bg-[#0D0D10] overflow-hidden flex items-center justify-center shadow">
+                    {driverPreview.data.avatar_url ? (
+                      <img
+                        src={driverPreview.data.avatar_url}
+                        alt={driverPreview.data.full_name}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <UserCheck className="w-7 h-7 text-[#D4A017]" />
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 mt-2">
+                    <h4 className="font-display font-bold text-lg text-[#0D0D10]">
+                      {driverPreview.data.full_name}
+                    </h4>
+                    {driverPreview.data.verification_status === 'approved' && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+                        <ShieldCheck className="w-3 h-3" /> Verified
+                      </span>
+                    )}
+                  </div>
+                  {driverPreview.data.handle && (
+                    <p className="text-xs font-mono text-zinc-500">@{driverPreview.data.handle}</p>
+                  )}
+                  {driverPreview.data.bio && (
+                    <p className="text-xs text-zinc-600 mt-1">{driverPreview.data.bio}</p>
+                  )}
+                  <p className="text-xs text-zinc-500 mt-2">
+                    {driverPreview.data.vehicle_name} · {driverPreview.data.vehicle_number} ·{' '}
+                    {driverPreview.data.completedTrips || 0} Completed Trips
+                  </p>
+                  {((driverPreview.data.gallery && driverPreview.data.gallery.length > 0) ||
+                    (driverPreview.data.publicDocuments && driverPreview.data.publicDocuments.length > 0)) && (
+                    <div className="grid grid-cols-2 gap-2 mt-4">
+                      {(driverPreview.data.gallery || []).map((g: any) => (
+                        <img
+                          key={g.id}
+                          src={g.url}
+                          alt={g.caption || 'Showcase'}
+                          className="w-full h-24 object-cover rounded-xl border border-zinc-200"
+                        />
+                      ))}
+                      {(driverPreview.data.publicDocuments || [])
+                        .filter((d: any) => d.doc_type !== 'profile_photo')
+                        .map((d: any) => (
+                          <img
+                            key={d.id}
+                            src={d.file_data_url}
+                            alt={d.doc_type}
+                            className="w-full h-24 object-cover rounded-xl border border-zinc-200"
+                          />
+                        ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

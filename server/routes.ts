@@ -1636,10 +1636,20 @@ export function registerAppRoutes(app: Express) {
       .get(req.auth!.sub);
     const partnerProfile = db.prepare('SELECT * FROM partner_profiles WHERE user_id = ?').get(req.auth!.sub) as any;
     const documents = db.prepare('SELECT * FROM partner_documents WHERE partner_id = ? ORDER BY uploaded_at DESC').all(req.auth!.sub);
+    let showcaseGallery: any[] = [];
+    try {
+      showcaseGallery = JSON.parse(partnerProfile?.showcase_gallery || '[]');
+    } catch {
+      showcaseGallery = [];
+    }
     res.json({
       user,
       partnerProfile: partnerProfile
-        ? { ...partnerProfile, service_eligibility: JSON.parse(partnerProfile.service_eligibility || '[]') }
+        ? {
+            ...partnerProfile,
+            service_eligibility: JSON.parse(partnerProfile.service_eligibility || '[]'),
+            showcase_gallery: Array.isArray(showcaseGallery) ? showcaseGallery : [],
+          }
         : null,
       documents,
     });
@@ -1733,38 +1743,218 @@ export function registerAppRoutes(app: Express) {
   });
 
   app.post('/api/partner/documents', requireRole('partner'), (req: AuthedRequest, res: Response) => {
-    const { docType, fileName, fileDataUrl, expiryDate } = req.body || {};
+    const { docType, fileName, fileDataUrl, expiryDate, isPublic } = req.body || {};
     const validTypes = ['profile_photo', 'cnic_front', 'cnic_back', 'driving_licence', 'vehicle_registration', 'vehicle_photo'];
     if (!validTypes.includes(docType) || !fileName || !fileDataUrl) {
       res.status(400).json({ error: 'Document type, file name, and uploaded file data are required.' });
       return;
     }
-    if (String(fileDataUrl).length > 3_500_000) {
-      res.status(413).json({ error: 'Uploaded file exceeds 2.5MB size limit.' });
+    if (String(fileDataUrl).length > 8_000_000) {
+      res.status(413).json({ error: 'Uploaded file exceeds size limit after compression.' });
       return;
     }
 
+    const defaultPublic = docType === 'profile_photo' || docType === 'vehicle_photo' ? 1 : 0;
+    const resolvedPublic = typeof isPublic === 'boolean' ? (isPublic ? 1 : 0) : defaultPublic;
+
     db.prepare(`
-      INSERT INTO partner_documents (id, partner_id, doc_type, file_name, file_data_url, status, expiry_date)
-      VALUES (?, ?, ?, ?, ?, 'pending', ?)
+      INSERT INTO partner_documents (id, partner_id, doc_type, file_name, file_data_url, status, expiry_date, is_public)
+      VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
       ON CONFLICT(partner_id, doc_type) DO UPDATE SET
         file_name = excluded.file_name,
         file_data_url = excluded.file_data_url,
         status = 'pending',
         expiry_date = excluded.expiry_date,
+        is_public = excluded.is_public,
         review_notes = '',
         uploaded_at = datetime('now')
-    `).run(genId('DOC'), req.auth!.sub, docType, String(fileName), String(fileDataUrl), expiryDate ? String(expiryDate) : '');
+    `).run(
+      genId('DOC'),
+      req.auth!.sub,
+      docType,
+      String(fileName),
+      String(fileDataUrl),
+      expiryDate ? String(expiryDate) : '',
+      resolvedPublic
+    );
+
+    if (docType === 'profile_photo') {
+      db.prepare(`UPDATE partner_profiles SET avatar_url = ?, updated_at = datetime('now') WHERE user_id = ?`).run(
+        String(fileDataUrl),
+        req.auth!.sub
+      );
+    }
 
     const current = db.prepare('SELECT verification_status FROM partner_profiles WHERE user_id = ?').get(req.auth!.sub) as any;
+    let nextStatus = current?.verification_status || 'under_review';
     if (current && ['not_registered', 'incomplete', 'documents_pending', 'rejected'].includes(current.verification_status)) {
+      nextStatus = 'under_review';
       db.prepare(`UPDATE partner_profiles SET verification_status = 'under_review', updated_at = datetime('now') WHERE user_id = ?`).run(
         req.auth!.sub
       );
     }
 
+    const savedDoc = db
+      .prepare('SELECT * FROM partner_documents WHERE partner_id = ? AND doc_type = ?')
+      .get(req.auth!.sub, docType);
+
     emitToRole('admin', 'partner:document_uploaded', { partnerId: req.auth!.sub, docType });
-    res.status(201).json({ uploaded: true });
+    res.status(201).json({ uploaded: true, document: savedDoc, verificationStatus: nextStatus });
+  });
+
+  app.patch('/api/partner/documents/:docType/visibility', requireRole('partner'), (req: AuthedRequest, res: Response) => {
+    const docType = String(req.params.docType || '');
+    const isPublic = req.body?.isPublic ? 1 : 0;
+    const result = db
+      .prepare('UPDATE partner_documents SET is_public = ? WHERE partner_id = ? AND doc_type = ?')
+      .run(isPublic, req.auth!.sub, docType);
+    if (!result.changes) {
+      res.status(404).json({ error: 'Document not uploaded yet.' });
+      return;
+    }
+    const updated = db
+      .prepare('SELECT * FROM partner_documents WHERE partner_id = ? AND doc_type = ?')
+      .get(req.auth!.sub, docType);
+    res.json({ document: updated });
+  });
+
+  app.put('/api/partner/showcase', requireRole('partner'), (req: AuthedRequest, res: Response) => {
+    const {
+      fullName,
+      handle,
+      bio,
+      coverPhotoUrl,
+      coverIsPublic,
+      avatarUrl,
+      avatarIsPublic,
+      profilePublished,
+      profileTemplate,
+      showcaseGallery,
+    } = req.body || {};
+
+    const cleanGallery = Array.isArray(showcaseGallery)
+      ? showcaseGallery.slice(0, 12).map((item: any, idx: number) => ({
+          id: String(item?.id || `GAL-${Date.now()}-${idx}`),
+          url: String(item?.url || ''),
+          caption: String(item?.caption || '').slice(0, 140),
+          category: ['selfie', 'vehicle', 'gallery'].includes(item?.category) ? item.category : 'gallery',
+          is_public: item?.is_public === 0 ? 0 : 1,
+          created_at: String(item?.created_at || new Date().toISOString()),
+        })).filter((g: any) => Boolean(g.url))
+      : null;
+
+    const allowedTemplates = ['clean_light', 'obsidian_gold', 'emerald_pro'];
+    const safeTemplate = allowedTemplates.includes(profileTemplate) ? profileTemplate : null;
+
+    if (fullName && String(fullName).trim()) {
+      db.prepare('UPDATE users SET full_name = ? WHERE id = ?').run(String(fullName).trim(), req.auth!.sub);
+    }
+
+    db.prepare(`
+      UPDATE partner_profiles
+      SET handle = COALESCE(?, handle),
+          bio = COALESCE(?, bio),
+          cover_photo_url = COALESCE(?, cover_photo_url),
+          cover_is_public = COALESCE(?, cover_is_public),
+          avatar_url = COALESCE(?, avatar_url),
+          avatar_is_public = COALESCE(?, avatar_is_public),
+          profile_published = COALESCE(?, profile_published),
+          profile_template = COALESCE(?, profile_template),
+          showcase_gallery = COALESCE(?, showcase_gallery),
+          updated_at = datetime('now')
+      WHERE user_id = ?
+    `).run(
+      typeof handle === 'string' ? handle.replace(/[^a-zA-Z0-9._-]/g, '').slice(0, 40) : null,
+      typeof bio === 'string' ? bio.slice(0, 280) : null,
+      typeof coverPhotoUrl === 'string' ? coverPhotoUrl : null,
+      typeof coverIsPublic === 'boolean' ? (coverIsPublic ? 1 : 0) : null,
+      typeof avatarUrl === 'string' ? avatarUrl : null,
+      typeof avatarIsPublic === 'boolean' ? (avatarIsPublic ? 1 : 0) : null,
+      typeof profilePublished === 'boolean' ? (profilePublished ? 1 : 0) : null,
+      safeTemplate,
+      cleanGallery ? JSON.stringify(cleanGallery) : null,
+      req.auth!.sub
+    );
+
+    const updatedProfile = db.prepare('SELECT * FROM partner_profiles WHERE user_id = ?').get(req.auth!.sub) as any;
+    const updatedUser = db
+      .prepare('SELECT id, role, full_name, phone, whatsapp, email, city, operating_area, phone_verified, created_at FROM users WHERE id = ?')
+      .get(req.auth!.sub);
+    res.json({
+      user: updatedUser,
+      partnerProfile: {
+        ...updatedProfile,
+        service_eligibility: JSON.parse(updatedProfile.service_eligibility || '[]'),
+        showcase_gallery: JSON.parse(updatedProfile.showcase_gallery || '[]'),
+      },
+    });
+  });
+
+  app.get('/api/partners/:id/public-profile', (req: Request, res: Response) => {
+    const partnerId = String(req.params.id || '');
+    const row = db
+      .prepare(`
+        SELECT u.id, u.full_name, u.city, u.operating_area,
+               pp.verification_status, pp.vehicle_category_id, pp.vehicle_name, pp.vehicle_number, pp.seating_capacity,
+               pp.handle, pp.bio, pp.cover_photo_url, pp.cover_is_public, pp.avatar_url, pp.avatar_is_public,
+               pp.profile_published, pp.profile_template, pp.showcase_gallery
+        FROM users u
+        JOIN partner_profiles pp ON pp.user_id = u.id
+        WHERE u.id = ? AND u.role = 'partner'
+      `)
+      .get(partnerId) as any;
+
+    if (!row) {
+      res.status(404).json({ error: 'Partner not found' });
+      return;
+    }
+
+    if (!row.profile_published) {
+      res.json({
+        published: false,
+        id: row.id,
+        full_name: row.full_name,
+        city: row.city,
+        verification_status: row.verification_status,
+      });
+      return;
+    }
+
+    const completedTrips = (
+      db.prepare(`SELECT COUNT(*) as c FROM bookings WHERE partner_id = ? AND status = 'completed'`).get(partnerId) as { c: number }
+    ).c;
+
+    const docs = db
+      .prepare('SELECT id, doc_type, file_name, file_data_url, status, is_public, uploaded_at FROM partner_documents WHERE partner_id = ? AND is_public = 1')
+      .all(partnerId);
+
+    let gallery: any[] = [];
+    try {
+      const parsed = JSON.parse(row.showcase_gallery || '[]');
+      gallery = Array.isArray(parsed) ? parsed.filter((g: any) => g && g.is_public === 1) : [];
+    } catch {
+      gallery = [];
+    }
+
+    res.json({
+      published: true,
+      id: row.id,
+      full_name: row.full_name,
+      handle: row.handle || '',
+      bio: row.bio || '',
+      city: row.city,
+      operating_area: row.operating_area || '',
+      verification_status: row.verification_status,
+      vehicle_name: row.vehicle_name || '',
+      vehicle_number: row.vehicle_number || '',
+      seating_capacity: row.seating_capacity || 4,
+      profile_template: row.profile_template || 'clean_light',
+      cover_photo_url: row.cover_is_public ? row.cover_photo_url || '' : '',
+      avatar_url: row.avatar_is_public ? row.avatar_url || '' : '',
+      completedTrips,
+      gallery,
+      publicDocuments: docs,
+    });
   });
 
   app.post('/api/partner/availability', requireRole('partner'), (req: AuthedRequest, res: Response) => {
