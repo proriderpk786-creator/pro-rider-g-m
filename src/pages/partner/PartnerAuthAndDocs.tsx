@@ -27,7 +27,7 @@ import type {
   User,
 } from '../../types';
 
-// Screen 17: Pro Partner Login / Registration (Google, Facebook, Email, Phone SMS OTP)
+// Screen 17: Pro Partner Login / Registration (Google & Email Active; Facebook & Phone OTP Coming Soon)
 export const PartnerAuth: React.FC<{
   lang: Language;
   onChangeLang: (l: Language) => void;
@@ -36,20 +36,16 @@ export const PartnerAuth: React.FC<{
 }> = ({ lang, onChangeLang, onAuthenticated, onBackWelcome }) => {
   const {
     signInWithGooglePopup,
-    signInWithFacebookPopup,
     registerWithFirebaseEmail,
     signInWithFirebaseEmail,
     resendFirebaseEmailVerification,
     reloadFirebaseUser,
     sendFirebasePasswordReset,
-    sendFirebasePhoneOtp,
-    confirmFirebasePhoneOtp,
     redirectAuthUser,
     redirectError,
     clearRedirectState,
   } = useFirebase();
 
-  const [authMethod, setAuthMethod] = useState<'email' | 'phone'>('email');
   const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
@@ -59,11 +55,6 @@ export const PartnerAuth: React.FC<{
   const [operatingArea, setOperatingArea] = useState('');
   const [vehicleCategoryId, setVehicleCategoryId] = useState('fleet-sedan');
   const [password, setPassword] = useState('');
-  const [otpCode, setOtpCode] = useState('');
-  const [phoneStep, setPhoneStep] = useState<'input' | 'verify'>('input');
-  const [confirmationResult, setConfirmationResult] = useState<any>(null);
-  const [serverOtpDevCode, setServerOtpDevCode] = useState<string | null>(null);
-  const [phoneAuthSource, setPhoneAuthSource] = useState<'firebase' | 'server'>('firebase');
   const [emailVerificationPending, setEmailVerificationPending] = useState(false);
 
   const [loading, setLoading] = useState(false);
@@ -78,8 +69,8 @@ export const PartnerAuth: React.FC<{
       id: fbUser.uid,
       role: 'partner',
       full_name: fbUser.displayName || fallbackName || fbUser.email?.split('@')[0] || 'Pro Partner',
-      phone: fbUser.phoneNumber || phone || '03001234567',
-      whatsapp: whatsapp || fbUser.phoneNumber || phone || '03001234567',
+      phone: fbUser.phoneNumber || phone || '',
+      whatsapp: whatsapp || fbUser.phoneNumber || phone || '',
       email: fbUser.email || email || `${fbUser.uid}@prorider.pk`,
       city,
       operating_area: operatingArea || 'City Center',
@@ -172,7 +163,7 @@ export const PartnerAuth: React.FC<{
       .getIdToken()
       .then((tk) => (active ? finalizePartnerSession(tk, redirectAuthUser) : undefined))
       .catch((err) => {
-        if (active) setError(formatFirebaseAuthError(err, 'Social Login'));
+        if (active) setError(formatFirebaseAuthError(err, 'Google'));
       })
       .finally(() => {
         clearRedirectState();
@@ -197,112 +188,48 @@ export const PartnerAuth: React.FC<{
     }
   };
 
-  const handleFacebookSignIn = async () => {
-    setError(null);
-    setInfo(null);
-    setLoading(true);
-    try {
-      const { idToken, user: fbUser } = await signInWithFacebookPopup('partner', city, lang);
-      await finalizePartnerSession(idToken, fbUser);
-    } catch (err: any) {
-      setError(formatFirebaseAuthError(err, 'Facebook'));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSendPhoneOtp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setInfo(null);
-    if (!phone || phone.replace(/\D+/g, '').length < 10) {
-      setError('Please enter a valid mobile number (e.g. 03001234567).');
-      return;
-    }
-    setLoading(true);
-    try {
-      const confirmation = await sendFirebasePhoneOtp(phone, 'recaptcha-partner-phone');
-      setConfirmationResult(confirmation);
-      setPhoneAuthSource('firebase');
-      setServerOtpDevCode(null);
-      setPhoneStep('verify');
-      setInfo(`6-digit SMS OTP code sent to ${phone}.`);
-    } catch (fbErr: any) {
-      try {
-        const res = await apiRequest<{ message: string; devOtpCode?: string }>('/api/auth/otp/send', {
-          method: 'POST',
-          body: { phone, role: 'partner', purpose: 'login' },
-        });
-        setPhoneAuthSource('server');
-        setServerOtpDevCode(res.devOtpCode || null);
-        setPhoneStep('verify');
-        setInfo(res.message || `Verification OTP sent to ${phone}.`);
-      } catch {
-        setError(formatFirebaseAuthError(fbErr, 'Phone SMS'));
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleVerifyPhoneOtp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setInfo(null);
-    if (!otpCode || otpCode.trim().length !== 6) {
-      setError('Please enter the 6-digit SMS verification code.');
-      return;
-    }
-    setLoading(true);
-    try {
-      if (phoneAuthSource === 'firebase' && confirmationResult) {
-        const { idToken, user: fbUser } = await confirmFirebasePhoneOtp(
-          confirmationResult,
-          otpCode,
-          'partner',
-          city,
-          lang
-        );
-        await finalizePartnerSession(idToken, fbUser, fullName || `Partner ${phone.slice(-4)}`);
-      } else {
-        await apiRequest('/api/auth/otp/verify', {
-          method: 'POST',
-          body: { phone, role: 'partner', code: otpCode.trim() },
-        });
-        const res = await apiRequest<{ token: string; user: User; partnerProfile: PartnerProfile }>(
-          '/api/auth/partner/login',
-          { method: 'POST', body: { identifier: phone, password: password || 'PhoneVerifiedLogin123!' } }
-        );
-        setRoleToken('partner', res.token);
-        setStoredRoleUser('partner', res.user);
-        onAuthenticated(res.token, res.user, res.partnerProfile);
-      }
-    } catch (err: any) {
-      setError(formatFirebaseAuthError(err, 'Phone OTP'));
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setInfo(null);
 
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      setError(
+        lang === 'ur'
+          ? 'درست ای میل ایڈریس درج کریں۔'
+          : 'Please enter the email address associated with your Pro Partner account.'
+      );
+      return;
+    }
+
     if (mode === 'forgot') {
-      if (!email || !email.includes('@')) {
-        setError('Please enter the email address associated with your Pro Partner account.');
-        return;
-      }
       setLoading(true);
       try {
-        await sendFirebasePasswordReset(email);
-        setInfo(`Password reset link sent to ${email}.`);
+        await sendFirebasePasswordReset(cleanEmail);
+        setInfo(
+          lang === 'ur'
+            ? `پاس ورڈ ری سیٹ لنک ${cleanEmail} پر بھیجا گیا ہے۔`
+            : `Password reset link sent to ${cleanEmail}. Check your inbox and Spam folder.`
+        );
       } catch (err: any) {
-        setError(formatFirebaseAuthError(err, 'Password Reset'));
+        try {
+          const fallback = await apiRequest<{ message: string }>('/api/auth/forgot-password', {
+            method: 'POST',
+            body: { phone: phone || cleanEmail, role: 'partner' },
+          });
+          setInfo(fallback.message);
+        } catch {
+          setError(formatFirebaseAuthError(err, 'Password Reset'));
+        }
       } finally {
         setLoading(false);
       }
+      return;
+    }
+
+    if (!password || password.length < 6) {
+      setError(lang === 'ur' ? 'پاس ورڈ کم از کم 6 حروف کا ہونا ضروری ہے۔' : 'Password must be at least 6 characters.');
       return;
     }
 
@@ -310,8 +237,23 @@ export const PartnerAuth: React.FC<{
     try {
       if (mode === 'login') {
         try {
+          const res = await apiRequest<{ token: string; user: User; partnerProfile: PartnerProfile }>(
+            '/api/auth/partner/login',
+            { method: 'POST', body: { identifier: cleanEmail, password } }
+          );
+          setRoleToken('partner', res.token);
+          setStoredRoleUser('partner', res.user);
+          try {
+            localStorage.setItem('pr_profile_partner', JSON.stringify(res.partnerProfile));
+          } catch {
+            // ignore
+          }
+          onAuthenticated(res.token, res.user, res.partnerProfile);
+          return;
+        } catch (apiErr: any) {
+          if (!isBackendOfflineError(apiErr) && apiErr?.status !== 401) throw apiErr;
           const fbRes = await signInWithFirebaseEmail({
-            email,
+            email: cleanEmail,
             password,
             role: 'partner',
             city,
@@ -319,57 +261,88 @@ export const PartnerAuth: React.FC<{
           });
           if (!fbRes.emailVerified) {
             setEmailVerificationPending(true);
-            setInfo(`Verification email sent to ${email}. Please click the link and tap "I've Verified — Continue".`);
-            setLoading(false);
+            setInfo(
+              lang === 'ur'
+                ? `براہ کرم ${cleanEmail} کی تصدیق لنک کے ذریعے مکمل کریں۔`
+                : `Verification email sent to ${cleanEmail}. Please click the link and tap "I've Verified — Continue".`
+            );
             return;
           }
           await finalizePartnerSession(fbRes.idToken, fbRes.user);
+        }
+      } else {
+        const selectedRegisterFleet =
+          DEFAULT_PUBLIC_CONFIG.fleet.find((f) => f.id === vehicleCategoryId) || DEFAULT_PUBLIC_CONFIG.fleet[3];
+
+        try {
+          const fbRes = await registerWithFirebaseEmail({
+            fullName,
+            email: cleanEmail,
+            password,
+            role: 'partner',
+            city,
+            lang,
+          });
+          void apiRequest('/api/auth/partner/register', {
+            method: 'POST',
+            body: {
+              fullName,
+              phone: phone.trim(),
+              whatsapp: whatsapp.trim() || phone.trim(),
+              email: cleanEmail,
+              city,
+              operatingArea,
+              password,
+              vehicleCategoryId: selectedRegisterFleet.id,
+              seatingCapacity: selectedRegisterFleet.seating_capacity,
+            },
+          }).catch(() => {});
+
+          if (fbRes.emailVerified) {
+            await finalizePartnerSession(fbRes.idToken, fbRes.user, fullName);
+          } else {
+            setEmailVerificationPending(true);
+            setInfo(
+              lang === 'ur'
+                ? `تصدیقی لنک ${cleanEmail} پر بھیجا گیا ہے۔ ای میل میں لنک کھول کر نیچے بٹن دبائیں۔`
+                : `Verification email sent to ${cleanEmail}. Open your inbox and verify before continuing.`
+            );
+          }
         } catch (fbErr: any) {
-          try {
+          const code = String(fbErr?.code || '');
+          if (
+            code === 'auth/operation-not-allowed' ||
+            code === 'auth/unauthorized-domain' ||
+            code === 'auth/network-request-failed'
+          ) {
             const res = await apiRequest<{ token: string; user: User; partnerProfile: PartnerProfile }>(
-              '/api/auth/partner/login',
-              { method: 'POST', body: { identifier: email || phone, password } }
+              '/api/auth/partner/register',
+              {
+                method: 'POST',
+                body: {
+                  fullName,
+                  phone: phone.trim(),
+                  whatsapp: whatsapp.trim() || phone.trim(),
+                  email: cleanEmail,
+                  city,
+                  operatingArea,
+                  password,
+                  vehicleCategoryId: selectedRegisterFleet.id,
+                  seatingCapacity: selectedRegisterFleet.seating_capacity,
+                },
+              }
             );
             setRoleToken('partner', res.token);
             setStoredRoleUser('partner', res.user);
+            try {
+              localStorage.setItem('pr_profile_partner', JSON.stringify(res.partnerProfile));
+            } catch {
+              // ignore
+            }
             onAuthenticated(res.token, res.user, res.partnerProfile);
             return;
-          } catch (apiErr) {
-            if (!isBackendOfflineError(apiErr)) throw apiErr;
-            throw fbErr;
           }
-        }
-      } else {
-        const fbRes = await registerWithFirebaseEmail({
-          fullName,
-          email,
-          password,
-          role: 'partner',
-          city,
-          lang,
-        });
-        const selectedRegisterFleet =
-          DEFAULT_PUBLIC_CONFIG.fleet.find((f) => f.id === vehicleCategoryId) || DEFAULT_PUBLIC_CONFIG.fleet[3];
-        void apiRequest('/api/auth/partner/register', {
-          method: 'POST',
-          body: {
-            fullName,
-            phone,
-            whatsapp,
-            email,
-            city,
-            operatingArea,
-            password,
-            vehicleCategoryId: selectedRegisterFleet.id,
-            seatingCapacity: selectedRegisterFleet.seating_capacity,
-          },
-        }).catch(() => {});
-
-        if (fbRes.emailVerified) {
-          await finalizePartnerSession(fbRes.idToken, fbRes.user, fullName);
-        } else {
-          setEmailVerificationPending(true);
-          setInfo(`Verification email sent to ${email}. Open your inbox and verify before continuing.`);
+          throw fbErr;
         }
       }
     } catch (err: any) {
@@ -394,80 +367,67 @@ export const PartnerAuth: React.FC<{
       </header>
 
       <main className="flex-1 flex items-center justify-center p-4 py-10">
-        <div className="w-full max-w-md rounded-3xl bg-[#16171C] border border-zinc-800 p-6 sm:p-8 space-y-6">
+        <div className="w-full max-w-md rounded-3xl bg-[#16171C] border border-zinc-800 p-6 sm:p-8 space-y-5">
           <div>
             <p className="text-xs font-bold uppercase tracking-widest text-[#D4A017]">Pro Partner Portal</p>
             <h1 className="font-display text-2xl font-bold mt-1">
               {mode === 'login' ? 'Pro Partner Sign In' : mode === 'register' ? 'Become a Pro Partner' : 'Reset Password'}
             </h1>
             <p className="text-xs text-zinc-400 mt-1">
-              Sign in with Google, Facebook, Email Verification, or Phone SMS OTP.
+              {lang === 'ur'
+                ? 'Google یا اپنے ای میل اور پاس ورڈ کے ذریعے ڈرائیور پورٹل میں داخل ہوں۔'
+                : 'Sign in with Google or your Email & Password.'}
             </p>
           </div>
-
-          <div id="recaptcha-partner-phone" />
 
           {!emailVerificationPending && (
             <>
               <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-zinc-900 text-xs font-semibold">
                 <button
                   type="button"
-                  onClick={() => { setMode('login'); setPhoneStep('input'); setError(null); setInfo(null); }}
+                  onClick={() => {
+                    setMode('login');
+                    setError(null);
+                    setInfo(null);
+                  }}
                   className={`py-2 rounded-lg ${mode === 'login' ? 'bg-[#D4A017] text-[#0D0D10] font-bold' : 'text-zinc-400'}`}
                 >
-                  Login
+                  {lang === 'ur' ? 'لاگ اِن' : 'Login'}
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setMode('register'); setPhoneStep('input'); setError(null); setInfo(null); }}
+                  onClick={() => {
+                    setMode('register');
+                    setError(null);
+                    setInfo(null);
+                  }}
                   className={`py-2 rounded-lg ${mode === 'register' ? 'bg-[#D4A017] text-[#0D0D10] font-bold' : 'text-zinc-400'}`}
                 >
-                  Register
+                  {lang === 'ur' ? 'رجسٹر' : 'Register'}
                 </button>
               </div>
 
               {mode !== 'forgot' && (
                 <>
-                  <div className="grid grid-cols-2 gap-3">
-                    <button
-                      type="button"
-                      disabled={loading}
-                      onClick={handleGoogleSignIn}
-                      className="flex items-center justify-center gap-2 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-white text-xs font-bold hover:bg-zinc-800 disabled:opacity-60"
-                    >
-                      <svg className="w-4 h-4" viewBox="0 0 24 24" aria-hidden="true">
-                        <path fill="#EA4335" d="M12 10.2v3.9h5.5c-.2 1.3-1.5 3.9-5.5 3.9-3.3 0-6-2.7-6-6s2.7-6 6-6c1.9 0 3.1.8 3.9 1.5l2.7-2.6C16.9 3.3 14.7 2.4 12 2.4 6.7 2.4 2.4 6.7 2.4 12s4.3 9.6 9.6 9.6c5.5 0 9.2-3.9 9.2-9.4 0-.6-.1-1.1-.2-1.6H12z" />
-                      </svg>
-                      Google
-                    </button>
-                    <button
-                      type="button"
-                      disabled={loading}
-                      onClick={handleFacebookSignIn}
-                      className="flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#1877F2] hover:bg-[#1565C0] text-white text-xs font-bold disabled:opacity-60"
-                    >
-                      <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
-                        <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" />
-                      </svg>
-                      Facebook
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={handleGoogleSignIn}
+                    className="w-full flex items-center justify-center gap-2.5 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-white text-xs font-bold hover:bg-zinc-800 disabled:opacity-60"
+                  >
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" aria-hidden="true">
+                      <path fill="#EA4335" d="M12 10.2v3.9h5.5c-.2 1.3-1.5 3.9-5.5 3.9-3.3 0-6-2.7-6-6s2.7-6 6-6c1.9 0 3.1.8 3.9 1.5l2.7-2.6C16.9 3.3 14.7 2.4 12 2.4 6.7 2.4 2.4 6.7 2.4 12s4.3 9.6 9.6 9.6c5.5 0 9.2-3.9 9.2-9.4 0-.6-.1-1.1-.2-1.6H12z" />
+                    </svg>
+                    {lang === 'ur' ? 'Google کے ساتھ جاری رکھیں' : 'Continue with Google'}
+                  </button>
 
-                  <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-zinc-900 text-xs font-semibold">
-                    <button
-                      type="button"
-                      onClick={() => { setAuthMethod('email'); setPhoneStep('input'); setError(null); }}
-                      className={`py-2 rounded-lg ${authMethod === 'email' ? 'bg-zinc-800 text-white' : 'text-zinc-400'}`}
-                    >
-                      Email Verification
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { setAuthMethod('phone'); setPhoneStep('input'); setError(null); }}
-                      className={`py-2 rounded-lg ${authMethod === 'phone' ? 'bg-zinc-800 text-white' : 'text-zinc-400'}`}
-                    >
-                      Phone SMS OTP
-                    </button>
+                  <div className="relative flex items-center justify-center">
+                    <div className="absolute inset-0 flex items-center">
+                      <div className="w-full border-t border-zinc-800" />
+                    </div>
+                    <span className="relative bg-[#16171C] px-3 text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">
+                      {lang === 'ur' ? 'یا ای میل کے ساتھ' : 'Or continue with Email'}
+                    </span>
                   </div>
                 </>
               )}
@@ -513,52 +473,6 @@ export const PartnerAuth: React.FC<{
                 Resend Verification Email
               </button>
             </div>
-          ) : authMethod === 'phone' && mode !== 'forgot' ? (
-            phoneStep === 'input' ? (
-              <form onSubmit={handleSendPhoneOtp} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-semibold text-zinc-300 mb-1">Mobile Number</label>
-                  <div className="relative">
-                    <Phone className="w-4 h-4 text-zinc-500 absolute left-3 top-3" />
-                    <input
-                      required
-                      value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                      placeholder="03001234567"
-                      className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-sm text-white font-mono"
-                    />
-                  </div>
-                </div>
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full py-3 rounded-xl bg-[#D4A017] text-[#0D0D10] text-sm font-bold hover:bg-[#EAB308]"
-                >
-                  {loading ? 'Sending SMS OTP...' : 'Send 6-Digit SMS OTP'}
-                </button>
-              </form>
-            ) : (
-              <form onSubmit={handleVerifyPhoneOtp} className="space-y-4">
-                {serverOtpDevCode && (
-                  <p className="text-xs text-amber-300 font-mono text-center">Local Dev OTP: {serverOtpDevCode}</p>
-                )}
-                <input
-                  required
-                  maxLength={6}
-                  value={otpCode}
-                  onChange={(e) => setOtpCode(e.target.value)}
-                  placeholder="Enter 6-digit OTP"
-                  className="w-full text-center tracking-[0.6em] py-3 rounded-xl border border-[#D4A017] bg-zinc-900 text-lg text-white font-mono"
-                />
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full py-3 rounded-xl bg-[#D4A017] text-[#0D0D10] text-sm font-bold"
-                >
-                  {loading ? 'Verifying...' : 'Verify SMS OTP & Sign In'}
-                </button>
-              </form>
-            )
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
               {mode === 'register' && (
@@ -593,7 +507,7 @@ export const PartnerAuth: React.FC<{
                 <>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-semibold text-zinc-300 mb-1">Mobile Number</label>
+                      <label className="block text-xs font-semibold text-zinc-300 mb-1">Mobile (Optional)</label>
                       <input
                         value={phone}
                         onChange={(e) => setPhone(e.target.value)}
@@ -680,12 +594,54 @@ export const PartnerAuth: React.FC<{
                 {loading
                   ? 'Processing...'
                   : mode === 'login'
-                  ? 'Sign In as Pro Partner'
+                  ? 'Sign In with Email'
                   : mode === 'register'
-                  ? 'Register & Verify Email'
+                  ? 'Register with Email'
                   : 'Send Password Reset Email'}
               </button>
             </form>
+          )}
+
+          {/* DIMMED, DISABLED CIRCULAR "COMING SOON" BUTTONS AT BOTTOM (Facebook & Phone OTP) */}
+          {!emailVerificationPending && (
+            <div className="pt-3 border-t border-zinc-800 flex flex-col items-center gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+                {lang === 'ur' ? 'فیس بک اور فون او ٹی پی · کمنگ سون' : 'Facebook & Phone SMS OTP · Coming Soon'}
+              </span>
+              <div className="flex items-center justify-center gap-4">
+                <div className="flex flex-col items-center gap-1 opacity-45 select-none">
+                  <button
+                    type="button"
+                    disabled
+                    aria-disabled="true"
+                    title="Facebook Login — Coming Soon (Under Meta Review)"
+                    className="w-10 h-10 rounded-full bg-zinc-900 border border-zinc-700 flex items-center justify-center text-[#1877F2] cursor-not-allowed"
+                  >
+                    <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" />
+                    </svg>
+                  </button>
+                  <span className="text-[9px] font-semibold text-zinc-500">
+                    {lang === 'ur' ? 'کمنگ سون' : 'Coming Soon'}
+                  </span>
+                </div>
+
+                <div className="flex flex-col items-center gap-1 opacity-45 select-none">
+                  <button
+                    type="button"
+                    disabled
+                    aria-disabled="true"
+                    title="Phone SMS OTP — Coming Soon"
+                    className="w-10 h-10 rounded-full bg-zinc-900 border border-zinc-700 flex items-center justify-center text-zinc-400 cursor-not-allowed"
+                  >
+                    <Phone className="w-4 h-4" />
+                  </button>
+                  <span className="text-[9px] font-semibold text-zinc-500">
+                    {lang === 'ur' ? 'کمنگ سون' : 'Coming Soon'}
+                  </span>
+                </div>
+              </div>
+            </div>
           )}
 
           <div className="flex justify-between text-xs text-zinc-400 pt-2 border-t border-zinc-800">

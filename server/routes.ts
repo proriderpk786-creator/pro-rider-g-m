@@ -485,23 +485,36 @@ export function registerAppRoutes(app: Express) {
   // ===========================================================================
   app.post('/api/auth/passenger/register', (req: Request, res: Response) => {
     const { fullName, phone, whatsapp, email, password, city, acceptedPolicy } = req.body || {};
-    if (!fullName || !phone || !password || !acceptedPolicy) {
-      res.status(400).json({ error: 'Full name, mobile number, password, and privacy policy acceptance are required.' });
+    const rawPhone = String(phone || '').trim();
+    const cleanEmail = email ? String(email).trim().toLowerCase() : '';
+    if (!fullName || (!rawPhone && !cleanEmail) || !password || acceptedPolicy === false) {
+      res.status(400).json({ error: 'Full name, email or mobile number, and password are required.' });
       return;
     }
     if (String(password).length < 6) {
       res.status(400).json({ error: 'Password must be at least 6 characters.' });
       return;
     }
-    const cleanPhone = String(phone).trim();
-    const cleanEmail = email ? String(email).trim().toLowerCase() : '';
 
-    const existing = db
-      .prepare('SELECT id FROM users WHERE phone = ? AND role = ?')
-      .get(cleanPhone, 'passenger');
-    if (existing) {
-      res.status(409).json({ error: 'A Passenger account with this mobile number already exists.' });
-      return;
+    if (cleanEmail) {
+      const existingEmail = db
+        .prepare('SELECT id FROM users WHERE lower(email) = lower(?) AND role = ?')
+        .get(cleanEmail, 'passenger');
+      if (existingEmail) {
+        res.status(409).json({ error: 'A Passenger account with this email already exists. Please sign in instead.' });
+        return;
+      }
+    }
+
+    const cleanPhone = rawPhone || `E-${crypto.randomBytes(4).toString('hex')}`;
+    if (rawPhone) {
+      const existingPhone = db
+        .prepare('SELECT id FROM users WHERE phone = ? AND role = ?')
+        .get(cleanPhone, 'passenger');
+      if (existingPhone) {
+        res.status(409).json({ error: 'A Passenger account with this mobile number already exists.' });
+        return;
+      }
     }
 
     const id = genId('PSG');
@@ -512,7 +525,7 @@ export function registerAppRoutes(app: Express) {
       id,
       String(fullName).trim(),
       cleanPhone,
-      whatsapp ? String(whatsapp).trim() : cleanPhone,
+      whatsapp ? String(whatsapp).trim() : rawPhone || '',
       cleanEmail,
       hashPassword(String(password)),
       city ? String(city).trim() : 'Islamabad'
@@ -537,7 +550,7 @@ export function registerAppRoutes(app: Express) {
       .get('passenger', ident, ident) as any;
 
     if (!user || !verifyPassword(String(password), user.password_hash)) {
-      res.status(401).json({ error: 'Invalid Passenger credentials.' });
+      res.status(401).json({ error: 'Invalid Passenger email/phone or password.' });
       return;
     }
     if (user.status === 'suspended') {
@@ -561,25 +574,38 @@ export function registerAppRoutes(app: Express) {
       vehicleCategoryId,
       seatingCapacity,
     } = req.body || {};
-    if (!fullName || !phone || !password || !city) {
-      res.status(400).json({ error: 'Full name, mobile number, password, and city are required.' });
+    const rawPhone = String(phone || '').trim();
+    const cleanEmail = email ? String(email).trim().toLowerCase() : '';
+    if (!fullName || (!rawPhone && !cleanEmail) || !password || !city) {
+      res.status(400).json({ error: 'Full name, email or mobile number, password, and city are required.' });
       return;
     }
     if (String(password).length < 6) {
       res.status(400).json({ error: 'Password must be at least 6 characters.' });
       return;
     }
-    const cleanPhone = String(phone).trim();
-    const cleanEmail = email ? String(email).trim().toLowerCase() : '';
     const chosenCategory = vehicleCategoryId ? String(vehicleCategoryId).trim() : '';
     const chosenSeats = seatingCapacity ? Number(seatingCapacity) : chosenCategory === 'fleet-van-7' ? 7 : 4;
 
-    const existing = db
-      .prepare('SELECT id FROM users WHERE phone = ? AND role = ?')
-      .get(cleanPhone, 'partner');
-    if (existing) {
-      res.status(409).json({ error: 'A Pro Partner account with this mobile number already exists.' });
-      return;
+    if (cleanEmail) {
+      const existingEmail = db
+        .prepare('SELECT id FROM users WHERE lower(email) = lower(?) AND role = ?')
+        .get(cleanEmail, 'partner');
+      if (existingEmail) {
+        res.status(409).json({ error: 'A Pro Partner account with this email already exists. Please sign in instead.' });
+        return;
+      }
+    }
+
+    const cleanPhone = rawPhone || `E-${crypto.randomBytes(4).toString('hex')}`;
+    if (rawPhone) {
+      const existing = db
+        .prepare('SELECT id FROM users WHERE phone = ? AND role = ?')
+        .get(cleanPhone, 'partner');
+      if (existing) {
+        res.status(409).json({ error: 'A Pro Partner account with this mobile number already exists.' });
+        return;
+      }
     }
 
     const id = genId('PRT');
@@ -591,7 +617,7 @@ export function registerAppRoutes(app: Express) {
         id,
         String(fullName).trim(),
         cleanPhone,
-        whatsapp ? String(whatsapp).trim() : cleanPhone,
+        whatsapp ? String(whatsapp).trim() : rawPhone || '',
         cleanEmail,
         hashPassword(String(password)),
         String(city).trim(),
