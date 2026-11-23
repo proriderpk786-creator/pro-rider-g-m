@@ -3,6 +3,7 @@ import {
   Bell,
   Camera,
   Check,
+  ChevronRight,
   Download,
   Edit3,
   Eye,
@@ -19,9 +20,10 @@ import {
   Trash2,
   TrendingUp,
   UserCheck,
+  Wallet as WalletIcon,
   X,
 } from 'lucide-react';
-import { ThemePreferencesPanel } from '../../components/ThemeSwitcher';
+import { ProfileThemeRowButton } from '../../components/ThemeSwitcher';
 import { tr } from '../../i18n/translations';
 import { apiRequest, isBackendOfflineError } from '../../utils/api';
 import { compressAndReadUploadFile } from '../../utils/imageUpload';
@@ -45,6 +47,9 @@ export const PartnerFinanceView: React.FC<{
     totalCommission: number;
     netEarnings: number;
     availableBalancePkr: number;
+    minRequiredWalletPkr?: number;
+    instantCommissionPct?: number;
+    commissionDeductionMode?: string;
     pendingSettlementsPkr: number;
     paidWithdrawalsPkr: number;
     completedTrips: any[];
@@ -52,11 +57,45 @@ export const PartnerFinanceView: React.FC<{
   };
   onRefresh: () => Promise<void>;
 }> = ({ mode, partnerName, lang = 'en', earnings, onRefresh }) => {
+  const [topupAmount, setTopupAmount] = useState('1000');
+  const [topupMethod, setTopupMethod] = useState<'jazzcash' | 'easypaisa' | 'bank_transfer'>('jazzcash');
   const [withdrawAmount, setWithdrawAmount] = useState('1000');
   const [withdrawMethod, setWithdrawMethod] = useState<'bank_transfer' | 'jazzcash' | 'easypaisa'>('bank_transfer');
   const [accountDetails, setAccountDetails] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+
+  const minReq = earnings.minRequiredWalletPkr ?? 500;
+  const commPct = earnings.instantCommissionPct ?? 15;
+  const eligibleInstant = earnings.availableBalancePkr >= minReq;
+
+  const handleTopup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setMsg(null);
+    try {
+      const res = await apiRequest<{ txRef: string; amountPkr: number; availableBalancePkr: number }>('/api/partner/wallet/topup', {
+        method: 'POST',
+        role: 'partner',
+        body: {
+          amountPkr: Number(topupAmount),
+          method: topupMethod,
+        },
+      });
+      setMsg(
+        tr(
+          lang,
+          `Wallet credited with Rs. ${res.amountPkr.toLocaleString()} (${res.txRef}). New balance: Rs. ${res.availableBalancePkr.toLocaleString()}.`,
+          `والیٹ میں Rs. ${res.amountPkr.toLocaleString()} شامل ہو گئے (${res.txRef})۔ نیا بیلنس: Rs. ${res.availableBalancePkr.toLocaleString()}۔`
+        )
+      );
+      await onRefresh();
+    } catch (err: any) {
+      setMsg(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const handleWithdraw = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -122,6 +161,11 @@ export const PartnerFinanceView: React.FC<{
           <div className="font-mono text-2xl font-bold text-[#D4A017] mt-1 tabular-nums">
             Rs. {earnings.availableBalancePkr.toLocaleString()}
           </div>
+          <div className={`text-[11px] font-bold mt-2 ${eligibleInstant ? 'text-emerald-400' : 'text-red-400'}`}>
+            {eligibleInstant
+              ? tr(lang, `Ready for Instant Rides (${commPct}% comm.)`, `فوری رائیڈز کے لیے تیار (${commPct}% کمیشن)`)
+              : tr(lang, `Min Rs. ${minReq.toLocaleString()} required`, `کم از کم Rs. ${minReq.toLocaleString()} درکار`)}
+          </div>
         </div>
         <div className="rounded-2xl border border-zinc-200 bg-white p-5">
           <span className="text-xs text-zinc-500">
@@ -152,68 +196,144 @@ export const PartnerFinanceView: React.FC<{
       {msg && <div className="rounded-xl bg-[#0D0D10] text-[#F4C430] px-4 py-2.5 text-xs font-semibold">{msg}</div>}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        <form onSubmit={handleWithdraw} className="lg:col-span-5 rounded-2xl border border-zinc-200 bg-white p-5 space-y-4">
-          <h3 className="font-display font-bold text-base flex items-center gap-2">
-            <Landmark className="w-4 h-4 text-[#D4A017]" />{' '}
-            {tr(lang, 'Request Settlement Withdrawal', 'رقم نکلوانے کی درخواست')}
-          </h3>
-          <div className="text-xs text-zinc-500 flex justify-between gap-2 flex-wrap">
-            <span>
-              {tr(lang, 'Pending Settlements:', 'زیر التواء ادائیگیاں:')}{' '}
-              <strong className="font-mono text-[#0D0D10]">Rs. {earnings.pendingSettlementsPkr.toLocaleString()}</strong>
-            </span>
-            <span>
-              {tr(lang, 'Paid Out:', 'ادا شدہ:')}{' '}
-              <strong className="font-mono text-emerald-700">Rs. {earnings.paidWithdrawalsPkr.toLocaleString()}</strong>
-            </span>
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">
-              {tr(lang, 'Amount (Min Rs. 500)', 'رقم (کم از کم 500 روپے)')}
-            </label>
-            <input
-              type="number"
-              min={500}
-              required
-              value={withdrawAmount}
-              onChange={(e) => setWithdrawAmount(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl border border-zinc-200 font-mono text-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">
-              {tr(lang, 'Payout Method', 'ادائیگی کا طریقہ')}
-            </label>
-            <select
-              value={withdrawMethod}
-              onChange={(e) => setWithdrawMethod(e.target.value as any)}
-              className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm bg-white"
+        <div className="lg:col-span-5 space-y-5">
+          {/* Partner Wallet Top-Up Card (for Instant Booking Commission & Minimum Balance) */}
+          <form onSubmit={handleTopup} className="rounded-2xl border-2 border-[#D4A017]/60 bg-[#FAF6EC] p-5 space-y-4">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="font-display font-bold text-base flex items-center gap-2 text-[#0D0D10]">
+                <WalletIcon className="w-4 h-4 text-[#B8860B]" />
+                {tr(lang, 'Top Up Partner Wallet', 'والیٹ ریچارج (ٹاپ اپ)')}
+              </h3>
+              <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-[#0D0D10] text-[#F4C430]">
+                Min Rs. {minReq.toLocaleString()}
+              </span>
+            </div>
+            <p className="text-[11px] text-zinc-700 leading-relaxed">
+              {tr(
+                lang,
+                `Instant Booking acceptance requires at least Rs. ${minReq.toLocaleString()} balance. Admin commission (${commPct}%) deducts automatically upon confirmation.`,
+                `فوری بکنگ قبول کرنے کے لیے کم از کم ${minReq.toLocaleString()} روپے بیلنس لازمی ہے۔ کمیشن (${commPct}%) خودکار کٹوتی ہوگا۔`
+              )}
+            </p>
+            <div className="grid grid-cols-4 gap-1.5">
+              {[500, 1000, 2000, 5000].map((amt) => (
+                <button
+                  key={amt}
+                  type="button"
+                  onClick={() => setTopupAmount(String(amt))}
+                  className={`py-1.5 rounded-lg border text-[11px] font-mono font-bold transition-colors ${
+                    Number(topupAmount) === amt
+                      ? 'bg-[#0D0D10] border-[#0D0D10] text-[#F4C430]'
+                      : 'bg-white border-zinc-300 text-[#0D0D10] hover:border-[#0D0D10]'
+                  }`}
+                >
+                  +{amt}
+                </button>
+              ))}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                  {tr(lang, 'Top-Up Amount (PKR)', 'ٹاپ اپ رقم')}
+                </label>
+                <input
+                  type="number"
+                  min={100}
+                  max={250000}
+                  required
+                  value={topupAmount}
+                  onChange={(e) => setTopupAmount(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-zinc-300 bg-white font-mono text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                  {tr(lang, 'Payment Method', 'طریقہ ادائیگی')}
+                </label>
+                <select
+                  value={topupMethod}
+                  onChange={(e) => setTopupMethod(e.target.value as any)}
+                  className="w-full px-3 py-2 rounded-xl border border-zinc-300 text-sm bg-white"
+                >
+                  <option value="jazzcash">{tr(lang, 'JazzCash', 'جاز کیش')}</option>
+                  <option value="easypaisa">{tr(lang, 'EasyPaisa', 'ایزی پیسہ')}</option>
+                  <option value="bank_transfer">{tr(lang, 'Bank IBAN Transfer', 'بینک ٹرانسفر')}</option>
+                </select>
+              </div>
+            </div>
+            <button
+              type="submit"
+              disabled={busy}
+              className="w-full py-2.5 rounded-xl bg-[#0D0D10] text-[#F4C430] text-xs font-extrabold hover:bg-zinc-900 disabled:opacity-50"
             >
-              <option value="bank_transfer">{tr(lang, 'Bank IBAN Transfer', 'بینک آئی بی اے این ٹرانسفر')}</option>
-              <option value="jazzcash">{tr(lang, 'JazzCash', 'جاز کیش')}</option>
-              <option value="easypaisa">{tr(lang, 'EasyPaisa', 'ایزی پیسہ')}</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">
-              {tr(lang, 'Account / IBAN / Mobile', 'اکاؤنٹ / آئی بی اے این / موبائل نمبر')}
-            </label>
-            <input
-              required
-              value={accountDetails}
-              onChange={(e) => setAccountDetails(e.target.value)}
-              placeholder="PKXX... or 03XXXXXXXXX"
-              className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm font-mono"
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={busy}
-            className="w-full py-2.5 rounded-xl bg-[#D4A017] text-[#0D0D10] text-xs font-bold hover:bg-[#EAB308]"
-          >
-            {tr(lang, 'Submit Withdrawal Request', 'ودڈرال درخواست جمع کریں')}
-          </button>
-        </form>
+              {tr(lang, 'Add Funds to Partner Wallet', 'والیٹ میں رقم جمع کریں')}
+            </button>
+          </form>
+
+          {/* Settlement Withdrawal Card */}
+          <form onSubmit={handleWithdraw} className="rounded-2xl border border-zinc-200 bg-white p-5 space-y-4">
+            <h3 className="font-display font-bold text-base flex items-center gap-2">
+              <Landmark className="w-4 h-4 text-[#D4A017]" />{' '}
+              {tr(lang, 'Request Settlement Withdrawal', 'رقم نکلوانے کی درخواست')}
+            </h3>
+            <div className="text-xs text-zinc-500 flex justify-between gap-2 flex-wrap">
+              <span>
+                {tr(lang, 'Pending Settlements:', 'زیر التواء ادائیگیاں:')}{' '}
+                <strong className="font-mono text-[#0D0D10]">Rs. {earnings.pendingSettlementsPkr.toLocaleString()}</strong>
+              </span>
+              <span>
+                {tr(lang, 'Paid Out:', 'ادا شدہ:')}{' '}
+                <strong className="font-mono text-emerald-700">Rs. {earnings.paidWithdrawalsPkr.toLocaleString()}</strong>
+              </span>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-zinc-600 mb-1">
+                {tr(lang, 'Amount (Min Rs. 500)', 'رقم (کم از کم 500 روپے)')}
+              </label>
+              <input
+                type="number"
+                min={500}
+                required
+                value={withdrawAmount}
+                onChange={(e) => setWithdrawAmount(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-zinc-200 font-mono text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-zinc-600 mb-1">
+                {tr(lang, 'Payout Method', 'ادائیگی کا طریقہ')}
+              </label>
+              <select
+                value={withdrawMethod}
+                onChange={(e) => setWithdrawMethod(e.target.value as any)}
+                className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm bg-white"
+              >
+                <option value="bank_transfer">{tr(lang, 'Bank IBAN Transfer', 'بینک آئی بی اے این ٹرانسفر')}</option>
+                <option value="jazzcash">{tr(lang, 'JazzCash', 'جاز کیش')}</option>
+                <option value="easypaisa">{tr(lang, 'EasyPaisa', 'ایزی پیسہ')}</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-zinc-600 mb-1">
+                {tr(lang, 'Account / IBAN / Mobile', 'اکاؤنٹ / آئی بی اے این / موبائل نمبر')}
+              </label>
+              <input
+                required
+                value={accountDetails}
+                onChange={(e) => setAccountDetails(e.target.value)}
+                placeholder="PKXX... or 03XXXXXXXXX"
+                className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm font-mono"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={busy || earnings.availableBalancePkr < 500}
+              className="w-full py-2.5 rounded-xl bg-[#D4A017] text-[#0D0D10] text-xs font-bold hover:bg-[#EAB308] disabled:opacity-50"
+            >
+              {tr(lang, 'Submit Withdrawal Request', 'ودڈرال درخواست جمع کریں')}
+            </button>
+          </form>
+        </div>
 
         <div className="lg:col-span-7 rounded-2xl border border-zinc-200 bg-white overflow-hidden">
           <div className="px-5 py-4 border-b border-zinc-100 font-display font-bold text-sm flex items-center gap-2">
@@ -357,7 +477,7 @@ export const PartnerProfileView: React.FC<{
     profile.bio ||
       `${profile.vehicle_name || 'Verified Transport Partner'} · ${profile.operating_city || user.city || 'Islamabad'}`
   );
-  const [whatsapp, setWhatsapp] = useState(user.whatsapp || '');
+  const [whatsapp, setWhatsapp] = useState(/^[GER]-/i.test(user.whatsapp || '') ? '' : (user.whatsapp || ''));
   const [city, setCity] = useState(user.city || profile.operating_city || 'Islamabad');
   const [operatingArea, setOperatingArea] = useState(user.operating_area || '');
 
@@ -1121,11 +1241,14 @@ export const PartnerProfileView: React.FC<{
                 </p>
               </div>
             </div>
-            {unreadNotifications > 0 && (
-              <span className="font-mono text-xs font-bold px-2.5 py-1 rounded-lg bg-red-600 text-white shrink-0">
-                {unreadNotifications}
-              </span>
-            )}
+            <div className="flex items-center gap-2 shrink-0">
+              {unreadNotifications > 0 && (
+                <span className="font-mono text-xs font-bold px-2.5 py-1 rounded-lg bg-red-600 text-white shrink-0">
+                  {unreadNotifications}
+                </span>
+              )}
+              <ChevronRight className="w-4 h-4 text-zinc-400" />
+            </div>
           </button>
         )}
 
@@ -1147,11 +1270,12 @@ export const PartnerProfileView: React.FC<{
               </p>
             </div>
           </div>
+          <ChevronRight className="w-4 h-4 text-zinc-400 shrink-0" />
         </button>
-      </div>
 
-      {/* Personal Color Theme Selector Inside Profile Settings */}
-      <ThemePreferencesPanel lang={lang} />
+        {/* Compact Theme Button Row */}
+        <ProfileThemeRowButton lang={lang} />
+      </div>
 
       {/* Showcase Display & Document Photos Privacy Grid (On-image Lock Toggle on EVERY Photo) */}
       <div className="space-y-3">

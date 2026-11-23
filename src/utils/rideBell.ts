@@ -34,23 +34,26 @@ export const RIDE_BELL_OPTIONS: RideBellOption[] = [
   },
 ];
 
-const BELL_STORAGE_KEY = 'pr_partner_bell_sound';
+const PARTNER_BELL_STORAGE_KEY = 'pr_partner_bell_sound';
+const PASSENGER_BELL_STORAGE_KEY = 'pr_passenger_bell_sound';
 
-export function getSavedRideBellSound(): RideBellSoundId {
+export function getSavedRideBellSound(role: 'passenger' | 'partner' = 'partner'): RideBellSoundId {
+  const key = role === 'passenger' ? PASSENGER_BELL_STORAGE_KEY : PARTNER_BELL_STORAGE_KEY;
   try {
-    const val = localStorage.getItem(BELL_STORAGE_KEY);
+    const val = localStorage.getItem(key);
     if (val === 'classic_bell' || val === 'urgent_dispatch' || val === 'soft_gold' || val === 'muted') {
       return val;
     }
   } catch {
     // ignore storage restrictions
   }
-  return 'classic_bell';
+  return role === 'passenger' ? 'soft_gold' : 'classic_bell';
 }
 
-export function saveRideBellSound(sound: RideBellSoundId): void {
+export function saveRideBellSound(sound: RideBellSoundId, role: 'passenger' | 'partner' = 'partner'): void {
+  const key = role === 'passenger' ? PASSENGER_BELL_STORAGE_KEY : PARTNER_BELL_STORAGE_KEY;
   try {
-    localStorage.setItem(BELL_STORAGE_KEY, sound);
+    localStorage.setItem(key, sound);
   } catch {
     // ignore
   }

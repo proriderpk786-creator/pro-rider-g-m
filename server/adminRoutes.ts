@@ -19,6 +19,14 @@ export function registerAdminRoutes(app: Express) {
       db.prepare(`SELECT COUNT(*) as c FROM bookings WHERE status IN ('searching', 'negotiating', 'confirmed', 'on_the_way', 'arrived', 'started')`).get() as any
     ).c;
     const completedBookings = (db.prepare(`SELECT COUNT(*) as c FROM bookings WHERE status = 'completed'`).get() as any).c;
+    const pendingMonthlyAppsCount = (
+      db.prepare(`
+        SELECT COUNT(*) as c
+        FROM booking_applications ba
+        JOIN bookings b ON b.id = ba.booking_id
+        WHERE ba.status = 'pending' AND b.partner_id IS NULL AND b.status IN ('searching', 'negotiating')
+      `).get() as any
+    ).c;
     const revenueRow = db
       .prepare(`SELECT COALESCE(SUM(total_bill_pkr), 0) AS gmv, COALESCE(SUM(commission_pkr), 0) AS commission FROM bookings WHERE status = 'completed'`)
       .get() as { gmv: number; commission: number };
@@ -48,6 +56,7 @@ export function registerAdminRoutes(app: Express) {
         pendingPartners,
         activeBookings,
         completedBookings,
+        pendingMonthlyAppsCount,
         gmvPkr: revenueRow.gmv,
         commissionPkr: revenueRow.commission,
       },
@@ -60,7 +69,12 @@ export function registerAdminRoutes(app: Express) {
     const partners = db
       .prepare(`
         SELECT u.id, u.full_name, u.phone, u.whatsapp, u.email, u.city, u.operating_area, u.phone_verified, u.status AS user_status, u.created_at,
-               pp.*
+               pp.*,
+               MAX(0, (
+                 (SELECT COALESCE(SUM(amount_pkr), 0) FROM wallet_transactions WHERE user_id = u.id AND role = 'partner' AND status = 'confirmed' AND type IN ('credit', 'settlement')) -
+                 (SELECT COALESCE(SUM(amount_pkr), 0) FROM wallet_transactions WHERE user_id = u.id AND role = 'partner' AND status = 'confirmed' AND type IN ('commission', 'withdrawal')) -
+                 (SELECT COALESCE(SUM(amount_pkr), 0) FROM wallet_transactions WHERE user_id = u.id AND role = 'partner' AND status = 'pending' AND type = 'withdrawal')
+               )) AS wallet_balance_pkr
         FROM users u
         JOIN partner_profiles pp ON pp.user_id = u.id
         WHERE u.role = 'partner'
@@ -155,6 +169,49 @@ export function registerAdminRoutes(app: Express) {
     res.json({ updated: true });
   });
 
+  app.post('/api/admin/partners/:id/wallet', requireRole('admin'), (req: AuthedRequest, res: Response) => {
+    const partnerId = req.params.id;
+    const { amountPkr, type, note } = req.body || {};
+    const amt = Math.round(Number(amountPkr));
+    const txType = type === 'debit' ? 'commission' : 'credit';
+    if (!Number.isFinite(amt) || amt <= 0 || amt > 500000) {
+      res.status(400).json({ error: 'Amount must be between Rs. 1 and Rs. 500,000.' });
+      return;
+    }
+    const partner = db.prepare(`SELECT id, full_name FROM users WHERE id = ? AND role = 'partner'`).get(partnerId) as any;
+    if (!partner) {
+      res.status(404).json({ error: 'Pro Partner not found.' });
+      return;
+    }
+
+    const txRef = `ADM-WAL-${crypto.randomInt(100000, 999999)}`;
+    db.prepare(`
+      INSERT INTO wallet_transactions (id, tx_ref, user_id, role, type, amount_pkr, payment_method, status, description)
+      VALUES (?, ?, ?, 'partner', ?, ?, 'admin_adjustment', 'confirmed', ?)
+    `).run(
+      genId('WTX'),
+      txRef,
+      partnerId,
+      txType,
+      amt,
+      note ? String(note).trim() : `Admin wallet ${txType === 'credit' ? 'top-up credit' : 'debit'} (${txRef})`
+    );
+
+    db.prepare(`
+      INSERT INTO notifications (id, user_id, role, category, title, body)
+      VALUES (?, ?, 'partner', 'Payment Updates', ?, ?)
+    `).run(
+      genId('NTF'),
+      partnerId,
+      txType === 'credit' ? `Wallet Credited Rs. ${amt.toLocaleString()}` : `Wallet Debited Rs. ${amt.toLocaleString()}`,
+      note ? String(note).trim() : `Admin adjusted your wallet (${txRef}).`
+    );
+
+    emitToUser(partnerId, 'partner', 'notification:new', { title: 'Wallet Updated' });
+    logAdminAudit(req, 'ADMIN_PARTNER_WALLET', 'success', `${txType.toUpperCase()} Rs. ${amt} for partner ${partnerId} (${txRef})`);
+    res.json({ ok: true, txRef });
+  });
+
   app.get('/api/admin/bookings', requireRole('admin'), (_req: AuthedRequest, res: Response) => {
     const bookings = db
       .prepare(`
@@ -168,8 +225,199 @@ export function registerAdminRoutes(app: Express) {
         LEFT JOIN users d ON d.id = b.partner_id
         ORDER BY b.created_at DESC
       `)
-      .all();
-    res.json({ bookings });
+      .all() as any[];
+
+    const appsStmt = db.prepare(`
+      SELECT ba.*,
+             u.full_name AS partner_name,
+             u.phone AS partner_phone,
+             u.whatsapp AS partner_whatsapp,
+             u.email AS partner_email,
+             u.city AS partner_city,
+             pp.vehicle_name AS partner_vehicle_name,
+             pp.vehicle_number AS partner_vehicle_number,
+             pp.seating_capacity AS partner_seating_capacity,
+             pp.verification_status AS partner_verification_status,
+             pp.operating_city AS partner_operating_city,
+             (SELECT COUNT(*) FROM bookings cb WHERE cb.partner_id = ba.partner_id AND cb.status = 'completed') AS completed_trips,
+             (SELECT ROUND(AVG(br.rating), 1) FROM booking_ratings br WHERE br.partner_id = ba.partner_id) AS avg_rating,
+             MAX(0, (
+               (SELECT COALESCE(SUM(amount_pkr), 0) FROM wallet_transactions WHERE user_id = ba.partner_id AND role = 'partner' AND status = 'confirmed' AND type IN ('credit', 'settlement')) -
+               (SELECT COALESCE(SUM(amount_pkr), 0) FROM wallet_transactions WHERE user_id = ba.partner_id AND role = 'partner' AND status = 'confirmed' AND type IN ('commission', 'withdrawal')) -
+               (SELECT COALESCE(SUM(amount_pkr), 0) FROM wallet_transactions WHERE user_id = ba.partner_id AND role = 'partner' AND status = 'pending' AND type = 'withdrawal')
+             )) AS wallet_balance_pkr
+      FROM booking_applications ba
+      JOIN users u ON u.id = ba.partner_id
+      LEFT JOIN partner_profiles pp ON pp.user_id = ba.partner_id
+      WHERE ba.booking_id = ?
+      ORDER BY CASE WHEN ba.status = 'approved' THEN 0 WHEN ba.status = 'pending' THEN 1 ELSE 2 END, ba.created_at ASC
+    `);
+
+    const enriched = bookings.map((b) => {
+      const applications = appsStmt.all(b.id) as any[];
+      return {
+        ...b,
+        applications,
+        total_applicants_count: applications.filter((a) => a.status === 'pending').length,
+      };
+    });
+
+    res.json({ bookings: enriched });
+  });
+
+  app.post('/api/admin/bookings/:id/approve-partner', requireRole('admin'), (req: AuthedRequest, res: Response) => {
+    const bookingId = req.params.id;
+    const { applicationId, partnerId, agreedFarePkr } = req.body || {};
+
+    const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(bookingId) as any;
+    if (!booking) {
+      res.status(404).json({ error: 'Booking not found.' });
+      return;
+    }
+    if (['completed', 'cancelled'].includes(booking.status)) {
+      res.status(400).json({ error: 'Cannot assign a partner to a completed or cancelled booking.' });
+      return;
+    }
+
+    let targetPartnerId = partnerId ? String(partnerId) : '';
+    let targetApp: any = null;
+    if (applicationId) {
+      targetApp = db
+        .prepare('SELECT * FROM booking_applications WHERE id = ? AND booking_id = ?')
+        .get(String(applicationId), bookingId);
+      if (!targetApp) {
+        res.status(404).json({ error: 'Driver application not found for this booking.' });
+        return;
+      }
+      targetPartnerId = targetApp.partner_id;
+    }
+
+    if (!targetPartnerId) {
+      res.status(400).json({ error: 'partnerId or applicationId is required.' });
+      return;
+    }
+
+    const partnerUser = db
+      .prepare(`SELECT u.id, u.full_name, u.phone, pp.verification_status, pp.vehicle_name, pp.vehicle_number FROM users u LEFT JOIN partner_profiles pp ON pp.user_id = u.id WHERE u.id = ? AND u.role = 'partner'`)
+      .get(targetPartnerId) as any;
+    if (!partnerUser) {
+      res.status(404).json({ error: 'Target Pro Partner not found.' });
+      return;
+    }
+
+    const fleet = db.prepare('SELECT commission_pct FROM fleet_categories WHERE id = ?').get(booking.vehicle_category_id) as any;
+    const useGlobal = db.prepare(`SELECT value FROM platform_settings WHERE key = 'use_global_instant_commission'`).get() as any;
+    const globalPctRow = db.prepare(`SELECT value FROM platform_settings WHERE key = 'instant_commission_pct'`).get() as any;
+    const commPct =
+      useGlobal?.value === '1' && Number.isFinite(Number(globalPctRow?.value))
+        ? Number(globalPctRow.value)
+        : Number(booking.commission_pct || fleet?.commission_pct || 15);
+
+    const agreed = Number.isFinite(Number(agreedFarePkr)) && Number(agreedFarePkr) > 0
+      ? Math.round(Number(agreedFarePkr))
+      : Number(targetApp?.proposed_fare_pkr || booking.agreed_fare_pkr || booking.proposed_fare_pkr);
+    const commissionPkr = Math.round((agreed * commPct) / 100);
+
+    const rejectedApps = db
+      .prepare(`SELECT id, partner_id FROM booking_applications WHERE booking_id = ? AND partner_id != ? AND status = 'pending'`)
+      .all(bookingId, targetPartnerId) as Array<{ id: string; partner_id: string }>;
+
+    db.transaction(() => {
+      db.prepare(`
+        UPDATE bookings
+        SET partner_id = ?, agreed_fare_pkr = ?, total_bill_pkr = ?, commission_pct = ?, commission_pkr = ?,
+            status = 'confirmed', confirmed_at = COALESCE(confirmed_at, datetime('now')), updated_at = datetime('now')
+        WHERE id = ?
+      `).run(targetPartnerId, agreed, agreed, commPct, commissionPkr, bookingId);
+
+      db.prepare(`
+        UPDATE booking_applications
+        SET status = 'approved', reviewed_at = datetime('now'), updated_at = datetime('now')
+        WHERE booking_id = ? AND partner_id = ?
+      `).run(bookingId, targetPartnerId);
+
+      db.prepare(`
+        UPDATE booking_applications
+        SET status = 'rejected', reviewed_at = datetime('now'), updated_at = datetime('now')
+        WHERE booking_id = ? AND partner_id != ? AND status = 'pending'
+      `).run(bookingId, targetPartnerId);
+
+      db.prepare(`UPDATE booking_offers SET status = 'rejected' WHERE booking_id = ? AND status = 'pending'`).run(bookingId);
+    })();
+
+    db.prepare(`
+      INSERT INTO notifications (id, user_id, role, category, title, body, booking_id)
+      VALUES (?, ?, 'passenger', 'Booking Updates', ?, ?, ?)
+    `).run(
+      genId('NTF'),
+      booking.passenger_id,
+      `Monthly Driver Assigned (${bookingId})`,
+      `Admin approved ${partnerUser.full_name} (${partnerUser.vehicle_name || 'Verified Vehicle'} • ${partnerUser.phone}) for your booking at Rs. ${agreed.toLocaleString()}.`,
+      bookingId
+    );
+
+    db.prepare(`
+      INSERT INTO notifications (id, user_id, role, category, title, body, booking_id)
+      VALUES (?, ?, 'partner', 'Booking Confirmations', ?, ?, ?)
+    `).run(
+      genId('NTF'),
+      targetPartnerId,
+      `Booking ${bookingId} Approved by Admin!`,
+      `Admin approved your application for Monthly ${booking.service_type.replaceAll('_', ' ')} at Rs. ${agreed.toLocaleString()}. Check My Trips to start.`,
+      bookingId
+    );
+
+    for (const rej of rejectedApps) {
+      db.prepare(`
+        INSERT INTO notifications (id, user_id, role, category, title, body, booking_id)
+        VALUES (?, ?, 'partner', 'Booking Updates', ?, ?, ?)
+      `).run(
+        genId('NTF'),
+        rej.partner_id,
+        `Booking ${bookingId} Assigned`,
+        `Admin assigned booking ${bookingId} to another Pro Partner. Browse other open monthly requests!`,
+        bookingId
+      );
+      emitToUser(rej.partner_id, 'partner', 'booking:updated', { bookingId, status: 'confirmed' });
+    }
+
+    emitToUser(booking.passenger_id, 'passenger', 'booking:updated', { bookingId, status: 'confirmed' });
+    emitToUser(targetPartnerId, 'partner', 'booking:updated', { bookingId, status: 'confirmed' });
+    emitToAll('booking:updated', { bookingId, status: 'confirmed' });
+
+    logAdminAudit(req, 'APPROVE_MONTHLY_PARTNER', 'success', `Assigned partner ${partnerUser.full_name} (${targetPartnerId}) to booking ${bookingId}`);
+    res.json({ approved: true, partnerId: targetPartnerId });
+  });
+
+  app.post('/api/admin/bookings/:id/applications/:appId/reject', requireRole('admin'), (req: AuthedRequest, res: Response) => {
+    const bookingId = req.params.id;
+    const appId = req.params.appId;
+    const appRow = db
+      .prepare('SELECT * FROM booking_applications WHERE id = ? AND booking_id = ?')
+      .get(appId, bookingId) as any;
+    if (!appRow) {
+      res.status(404).json({ error: 'Application not found.' });
+      return;
+    }
+
+    db.prepare(`
+      UPDATE booking_applications SET status = 'rejected', reviewed_at = datetime('now'), updated_at = datetime('now') WHERE id = ?
+    `).run(appId);
+
+    db.prepare(`
+      INSERT INTO notifications (id, user_id, role, category, title, body, booking_id)
+      VALUES (?, ?, 'partner', 'Booking Updates', ?, ?, ?)
+    `).run(
+      genId('NTF'),
+      appRow.partner_id,
+      `Application Declined (${bookingId})`,
+      `Your application for booking ${bookingId} was not selected by Admin.`,
+      bookingId
+    );
+
+    emitToUser(appRow.partner_id, 'partner', 'booking:updated', { bookingId });
+    logAdminAudit(req, 'REJECT_BOOKING_APPLICATION', 'success', `Rejected application ${appId} on booking ${bookingId}`);
+    res.json({ rejected: true });
   });
 
 function logAdminAudit(
@@ -485,19 +733,53 @@ function logAdminAudit(
 
   app.patch('/api/admin/bookings/:id', requireRole('admin'), (req: AuthedRequest, res: Response) => {
     const b = req.body || {};
+    const existing = db.prepare('SELECT * FROM bookings WHERE id = ?').get(req.params.id) as any;
+    if (!existing) {
+      res.status(404).json({ error: 'Booking not found' });
+      return;
+    }
+
     db.prepare(`
       UPDATE bookings
       SET status = COALESCE(?, status),
           payment_status = COALESCE(?, payment_status),
           notes = COALESCE(?, notes),
+          confirmed_at = CASE WHEN ? = 'confirmed' AND confirmed_at IS NULL THEN datetime('now') ELSE confirmed_at END,
           updated_at = datetime('now')
       WHERE id = ?
     `).run(
       b.status ?? null,
       b.payment_status ?? null,
       b.notes ?? null,
+      b.status ?? null,
       req.params.id
     );
+
+    const nextStatus = b.status || existing.status;
+    if (b.status && b.status !== existing.status) {
+      if (nextStatus === 'confirmed') {
+        db.prepare(`
+          INSERT INTO notifications (id, user_id, role, category, title, body, booking_id)
+          VALUES (?, ?, 'passenger', 'Booking Updates', ?, ?, ?)
+        `).run(
+          genId('NTF'),
+          existing.passenger_id,
+          `Booking ${existing.id} Confirmed`,
+          'Your booking has been confirmed and moved to Active rides.',
+          existing.id
+        );
+      }
+      emitToUser(existing.passenger_id, 'passenger', 'booking:updated', {
+        bookingId: existing.id,
+        status: nextStatus,
+      });
+      if (existing.partner_id) {
+        emitToUser(existing.partner_id, 'partner', 'booking:updated', {
+          bookingId: existing.id,
+          status: nextStatus,
+        });
+      }
+    }
 
     logAdminAudit(req, 'UPDATE_BOOKING', 'success', `Updated booking ${req.params.id} (Status: ${b.status || 'unchanged'})`);
     res.json({ updated: true });

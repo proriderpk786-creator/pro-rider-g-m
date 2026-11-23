@@ -240,11 +240,20 @@ export const ThemeProvider: React.FC<{
     }
   }, [adminDefault]);
 
-  // Apply data-theme attribute onto <html> for CSS tokens & dark/light theming
+  // Apply data-theme attribute & live CSS custom properties onto <html> and <body>
   useEffect(() => {
     const meta = APP_THEMES.find((t) => t.id === themeId) || APP_THEMES[0];
-    document.documentElement.setAttribute('data-theme', meta.id);
-    document.documentElement.style.colorScheme = meta.isDark ? 'dark' : 'light';
+    const root = document.documentElement;
+    root.setAttribute('data-theme', meta.id);
+    root.style.colorScheme = meta.isDark ? 'dark' : 'light';
+    root.style.setProperty('--pr-bg', meta.bgHex);
+    root.style.setProperty('--pr-surface', meta.surfaceHex);
+    root.style.setProperty('--pr-text', meta.textHex);
+    root.style.setProperty('--pr-accent', meta.accentHex);
+    if (document.body) {
+      document.body.style.backgroundColor = meta.bgHex;
+      document.body.style.color = meta.textHex;
+    }
   }, [themeId]);
 
   const setThemeId = useCallback((id: AppThemeId) => {

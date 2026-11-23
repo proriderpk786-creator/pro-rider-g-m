@@ -57,11 +57,40 @@ const PAKISTAN_LANDMARK_FALLBACK: SearchOption[] = [
   { id: 'pk_gulshan_khi', label: 'Gulshan-e-Iqbal Block 13, Karachi', lat: 24.9182, lng: 67.0971 },
 ];
 
+function haversineKmLocal(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function nearestPakistanLandmarkLabel(lat: number, lng: number): string | null {
+  let best: SearchOption | null = null;
+  let bestDist = Infinity;
+  for (const item of PAKISTAN_LANDMARK_FALLBACK) {
+    if (typeof item.lat !== 'number' || typeof item.lng !== 'number') continue;
+    const d = haversineKmLocal(lat, lng, item.lat, item.lng);
+    if (d < bestDist) {
+      bestDist = d;
+      best = item;
+    }
+  }
+  if (best && bestDist <= 4) {
+    return bestDist < 0.25 ? best.label : `Near ${best.label}`;
+  }
+  return null;
+}
+
 export async function reverseGeocodePakistan(lat: number, lng: number): Promise<string> {
   // 1. Try local backend if online
   try {
     const rev = await apiRequest<{ label: string }>(`/api/map/reverse?lat=${lat}&lng=${lng}`);
-    if (rev?.label) return rev.label;
+    if (rev?.label && !/^-?\d+\.\d+,\s*-?\d+\.\d+$/.test(rev.label.trim())) {
+      return rev.label;
+    }
   } catch {
     // Fallback to direct Photon / OSM in static hosting
   }
@@ -69,7 +98,7 @@ export async function reverseGeocodePakistan(lat: number, lng: number): Promise<
   // 2. Fast Photon reverse geocoding
   try {
     const photonRes = await fetch(`https://photon.komoot.io/reverse?lat=${lat}&lon=${lng}`, {
-      signal: AbortSignal.timeout(4500),
+      signal: AbortSignal.timeout(2500),
     });
     if (photonRes.ok) {
       const data = await photonRes.json();
@@ -89,7 +118,7 @@ export async function reverseGeocodePakistan(lat: number, lng: number): Promise<
   try {
     const nomRes = await fetch(
       `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&accept-language=en`,
-      { signal: AbortSignal.timeout(5500) }
+      { signal: AbortSignal.timeout(3000) }
     );
     if (nomRes.ok) {
       const data = await nomRes.json();
@@ -98,10 +127,10 @@ export async function reverseGeocodePakistan(lat: number, lng: number): Promise<
       }
     }
   } catch {
-    // Fallback to coordinate label
+    // Fallback to nearest landmark or coordinate label
   }
 
-  return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+  return nearestPakistanLandmarkLabel(lat, lng) || `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
 }
 
 function isQuotaError(err: unknown): boolean {
@@ -115,6 +144,8 @@ function isQuotaError(err: unknown): boolean {
     msg.includes('OverQuota')
   );
 }
+
+const RAW_COORDS_RE = /^-?\d+(?:\.\d+)?,\s*-?\d+(?:\.\d+)?$/;
 
 const LocationAutocompleteInner: React.FC<
   LocationAutocompleteProps & {
@@ -135,7 +166,8 @@ const LocationAutocompleteInner: React.FC<
 }) => {
   const sessionTokenRef = useRef<google.maps.places.AutocompleteSessionToken | null>(null);
 
-  const [query, setQuery] = useState(compactBar ? '' : value?.label || '');
+  const initialCleanLabel = value?.label && !RAW_COORDS_RE.test(value.label.trim()) ? value.label : '';
+  const [query, setQuery] = useState(initialCleanLabel);
   const [results, setResults] = useState<SearchOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
@@ -144,10 +176,14 @@ const LocationAutocompleteInner: React.FC<
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!compactBar) {
-      setQuery(value?.label || '');
+    if (!value?.label) {
+      setQuery('');
+      return;
     }
-  }, [value, compactBar]);
+    if (!RAW_COORDS_RE.test(value.label.trim())) {
+      setQuery(value.label);
+    }
+  }, [value?.label, value?.lat, value?.lng]);
 
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
@@ -161,7 +197,7 @@ const LocationAutocompleteInner: React.FC<
 
   useEffect(() => {
     const trimmed = query.trim();
-    if (!open || trimmed.length < 2 || (!compactBar && value && trimmed === value.label)) {
+    if (!open || trimmed.length < 2 || (value && trimmed === value.label)) {
       return;
     }
 
@@ -372,7 +408,12 @@ const LocationAutocompleteInner: React.FC<
             disabled={disabled}
             value={query}
             placeholder={placeholder}
-            onFocus={() => setOpen(true)}
+            onFocus={(e) => {
+              setOpen(true);
+              if (value?.label && e.currentTarget.value === value.label) {
+                e.currentTarget.select();
+              }
+            }}
             onChange={(e) => {
               setQuery(e.target.value);
               setOpen(true);

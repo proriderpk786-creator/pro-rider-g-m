@@ -256,14 +256,39 @@ const BUNDLED_IMAGE_MAP: Record<string, string> = {
   '/src/assets/images/hero_mobility_pakistan_1794584048013.jpg': heroMobilityImg,
 };
 
-export const VehicleImage: React.FC<{ src?: string; alt: string; className?: string }> = ({
+function resolveFallbackFleetImage(alt?: string, slug?: string): string | undefined {
+  const key = `${slug || ''} ${alt || ''}`.toLowerCase();
+  if (key.includes('luxury') || key.includes('premium') || key.includes('suv') || key.includes('fortuner')) {
+    return premiumImg;
+  }
+  if (key.includes('sedan') || key.includes('corolla') || key.includes('civic')) {
+    return sedanImg;
+  }
+  if (key.includes('comfort') || key.includes('van') || key.includes('coaster')) {
+    return comfortImg;
+  }
+  if (key.includes('economy') || key.includes('alto') || key.includes('cultus') || key.includes('wagon') || key.includes('bike') || key.includes('rickshaw')) {
+    return economyImg;
+  }
+  return comfortImg;
+}
+
+export const VehicleImage: React.FC<{ src?: string; alt: string; className?: string; categorySlug?: string }> = ({
   src,
   alt,
   className = 'w-20 h-14',
+  categorySlug,
 }) => {
   const [failed, setFailed] = useState(false);
-  const resolvedSrc = src ? BUNDLED_IMAGE_MAP[src] || src : undefined;
-  if (!resolvedSrc || failed) {
+  useEffect(() => {
+    setFailed(false);
+  }, [src]);
+
+  const directSrc = src ? BUNDLED_IMAGE_MAP[src] || src : undefined;
+  const fallbackSrc = resolveFallbackFleetImage(alt, categorySlug);
+  const effectiveSrc = !failed && directSrc ? directSrc : fallbackSrc;
+
+  if (!effectiveSrc) {
     return (
       <div
         className={`${className} rounded-lg bg-gradient-to-br from-zinc-100 to-zinc-200 border border-zinc-200 flex items-center justify-center text-zinc-500 shrink-0`}
@@ -274,10 +299,12 @@ export const VehicleImage: React.FC<{ src?: string; alt: string; className?: str
   }
   return (
     <img
-      src={resolvedSrc}
+      src={effectiveSrc}
       alt={alt}
       referrerPolicy="no-referrer"
-      onError={() => setFailed(true)}
+      onError={() => {
+        if (!failed) setFailed(true);
+      }}
       className={`${className} object-cover rounded-lg bg-white shrink-0`}
     />
   );

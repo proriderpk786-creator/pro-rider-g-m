@@ -5,8 +5,9 @@ import firebaseConfig from '../firebase-applet-config.json';
 
 const app = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
 
-// CRITICAL: Must pass firebaseConfig.firestoreDatabaseId for named Firestore Enterprise DB
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+// Pass firestoreDatabaseId when configured for a named Firestore Enterprise DB
+const configuredDatabaseId = (firebaseConfig as { firestoreDatabaseId?: string }).firestoreDatabaseId;
+export const db = configuredDatabaseId ? getFirestore(app, configuredDatabaseId) : getFirestore(app);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });

@@ -168,3 +168,15 @@ export function trDay(lang: Language, day: string): string {
   };
   return map[day] || day;
 }
+
+export function formatVehicleLabel(rawName?: string | null, lang: Language = 'en'): string {
+  if (!rawName) return lang === 'ur' ? 'گاڑی' : 'Vehicle';
+  const parts = String(rawName)
+    .split('·')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (parts.length >= 2) {
+    return lang === 'ur' ? parts[1] : parts[0];
+  }
+  return parts[0] || String(rawName);
+}

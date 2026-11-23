@@ -8,6 +8,7 @@ import {
   Download,
   Eye,
   EyeOff,
+  FileSpreadsheet,
   Flame,
   HelpCircle,
   KeyRound,
@@ -27,6 +28,7 @@ import {
   X,
 } from 'lucide-react';
 import { BrandLogo, LanguageToggle, VehicleImage } from '../../components/BrandMark';
+import { GoogleSheetsSyncPanel } from '../../components/GoogleSheetsSyncPanel';
 import { StreetMap } from '../../components/StreetMap';
 import { ThemePreferencesPanel, ThemeQuickToggle } from '../../components/ThemeSwitcher';
 import { tr, trBookingStatus, trVerificationStatus } from '../../i18n/translations';
@@ -64,6 +66,7 @@ type AdminTab =
   | 'schedule'
   | 'packages'
   | 'finance'
+  | 'sheets'
   | 'tickets'
   | 'security';
 
@@ -181,17 +184,39 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         apiRequest<{ passengers: PassengerAccount[] }>('/api/admin/passengers', { role: 'admin' }),
       ]);
       setAdminUser(me.user);
-      setOverview(ov);
-      setPartners(prt.partners);
-      setBookings(bks.bookings);
-      setFleet(flt.fleet);
-      setZones(zns.zones);
-      setPackages(pkgs.packages);
-      setSettings(stg.settings);
-      setTransactions(fin.transactions);
-      setTickets(tkt.tickets);
-      setSecurityLogs(sec.logs);
-      setPassengers(psg.passengers || []);
+      const safeOv: any = ov || {};
+      setOverview(
+        safeOv.kpis
+          ? safeOv
+          : {
+              kpis: {
+                totalPassengers: Array.isArray(psg?.passengers) ? psg.passengers.length : 0,
+                totalPartners: Array.isArray(prt?.partners) ? prt.partners.length : 0,
+                pendingPartners: 0,
+                activeBookings: Array.isArray(bks?.bookings)
+                  ? bks.bookings.filter((b: Booking) =>
+                      ['searching', 'negotiating', 'confirmed', 'on_the_way', 'arrived', 'started'].includes(b.status)
+                    ).length
+                  : 0,
+                completedBookings: 0,
+                pendingMonthlyAppsCount: 0,
+                gmvPkr: 0,
+                commissionPkr: 0,
+              },
+              onlinePartners: Array.isArray(safeOv.onlinePartners) ? safeOv.onlinePartners : [],
+              mapBookings: Array.isArray(safeOv.mapBookings) ? safeOv.mapBookings : [],
+            }
+      );
+      setPartners(Array.isArray(prt?.partners) ? prt.partners : []);
+      setBookings(Array.isArray(bks?.bookings) ? bks.bookings : []);
+      setFleet(Array.isArray(flt?.fleet) ? flt.fleet : []);
+      setZones(Array.isArray(zns?.zones) ? zns.zones : []);
+      setPackages(Array.isArray(pkgs?.packages) ? pkgs.packages : []);
+      setSettings(stg?.settings || {});
+      setTransactions(Array.isArray(fin?.transactions) ? fin.transactions : []);
+      setTickets(Array.isArray(tkt?.tickets) ? tkt.tickets : []);
+      setSecurityLogs(Array.isArray(sec?.logs) ? sec.logs : []);
+      setPassengers(Array.isArray(psg?.passengers) ? psg.passengers : []);
 
       if (flt.fleet.length > 0 && !selectedFleetId) {
         setSelectedFleetId(flt.fleet[0].id);
@@ -211,7 +236,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
           created_at: new Date().toISOString(),
         };
         setAdminUser((prev) => prev || superAdminUser);
-        setOverview((prev: any) => prev || { totalBookings: 1, totalPartners: 1, totalPassengers: 1, activeRides: 0 });
         const allBookings: Booking[] = [];
         try {
           for (let i = 0; i < localStorage.length; i++) {
@@ -230,6 +254,29 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
           // ignore
         }
         setBookings(allBookings);
+        const activeCount = allBookings.filter((b) =>
+          ['searching', 'negotiating', 'confirmed', 'on_the_way', 'arrived', 'started'].includes(b.status)
+        ).length;
+        const completedList = allBookings.filter((b) => b.status === 'completed');
+        const gmvPkr = completedList.reduce((acc, b) => acc + Number(b.total_bill_pkr || 0), 0);
+        const commissionPkr = completedList.reduce((acc, b) => acc + Number(b.commission_pkr || 0), 0);
+        setOverview((prev: any) =>
+          prev?.kpis
+            ? prev
+            : {
+                kpis: {
+                  totalPassengers: 1,
+                  totalPartners: 1,
+                  pendingPartners: 0,
+                  activeBookings: activeCount,
+                  completedBookings: completedList.length,
+                  gmvPkr,
+                  commissionPkr,
+                },
+                onlinePartners: [],
+                mapBookings: allBookings.slice(0, 40),
+              }
+        );
         return;
       }
       setRoleToken('admin', null);
@@ -253,7 +300,16 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       window.dispatchEvent(new Event('pr:refresh-config'));
       return;
     }
-    if (['booking:created', 'booking:updated', 'partner:document_uploaded', 'partner:location', 'support:new'].includes(event)) {
+    if (
+      [
+        'booking:created',
+        'booking:updated',
+        'booking:application',
+        'partner:document_uploaded',
+        'partner:location',
+        'support:new',
+      ].includes(event)
+    ) {
       loadAll();
     }
   });
@@ -1008,6 +1064,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     { id: 'schedule', label: tr(lang, 'Schedule & App Settings', 'شیڈول اور ایپ سیٹنگز'), icon: Settings },
     { id: 'packages', label: tr(lang, 'Monthly Packages', 'ماہانہ پیکیجز'), icon: Package },
     { id: 'finance', label: tr(lang, 'Wallet & Settlements', 'والیٹ اور ادائیگیاں'), icon: Wallet },
+    { id: 'sheets', label: tr(lang, 'Google Sheets Sync', 'گوگل شیٹس سنک'), icon: FileSpreadsheet },
     { id: 'tickets', label: tr(lang, 'Support Tickets', 'سپورٹ ٹکٹس'), icon: HelpCircle },
     { id: 'security', label: tr(lang, 'Security & Audit Logs', 'سیکیورٹی اور آڈٹ لاگز'), icon: KeyRound },
   ];
@@ -1102,12 +1159,23 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                     setTab(item.id);
                     setMobileMenuOpen(false);
                   }}
-                  className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-colors ${
+                  className={`w-full flex items-center justify-between gap-2 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-colors ${
                     active ? 'bg-[#D4A017] text-[#0D0D10]' : 'text-zinc-300 hover:bg-zinc-900 hover:text-white'
                   }`}
                 >
-                  <Icon className="w-4 h-4 shrink-0" />
-                  <span className="truncate">{item.label}</span>
+                  <span className="flex items-center gap-3 min-w-0">
+                    <Icon className="w-4 h-4 shrink-0" />
+                    <span className="truncate">{item.label}</span>
+                  </span>
+                  {item.id === 'bookings' && Number(overview?.kpis?.pendingMonthlyAppsCount || 0) > 0 && (
+                    <span
+                      className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold shrink-0 ${
+                        active ? 'bg-[#0D0D10] text-[#F4C430]' : 'bg-[#D4A017] text-[#0D0D10]'
+                      }`}
+                    >
+                      {overview.kpis.pendingMonthlyAppsCount}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -1148,25 +1216,53 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div className="rounded-2xl bg-[#0D0D10] text-white p-5">
                 <span className="text-xs text-zinc-400">{tr(lang, 'Active Bookings', 'فعال بکنگز')}</span>
-                <div className="font-mono text-2xl font-bold text-[#D4A017] mt-1">{overview.kpis.activeBookings}</div>
+                <div className="font-mono text-2xl font-bold text-[#D4A017] mt-1">
+                  {overview?.kpis?.activeBookings ?? 0}
+                </div>
               </div>
               <div className="rounded-2xl border border-zinc-200 bg-white p-5">
                 <span className="text-xs text-zinc-500">{tr(lang, 'Pending Partner Reviews', 'زیرِ غور پارٹنرز')}</span>
-                <div className="font-mono text-2xl font-bold text-amber-700 mt-1">{overview.kpis.pendingPartners}</div>
+                <div className="font-mono text-2xl font-bold text-amber-700 mt-1">
+                  {overview?.kpis?.pendingPartners ?? 0}
+                </div>
               </div>
               <div className="rounded-2xl border border-zinc-200 bg-white p-5">
                 <span className="text-xs text-zinc-500">{tr(lang, 'Passengers / Partners', 'مسافر / پارٹنرز')}</span>
                 <div className="font-mono text-2xl font-bold text-[#0D0D10] mt-1">
-                  {overview.kpis.totalPassengers} / {overview.kpis.totalPartners}
+                  {overview?.kpis?.totalPassengers ?? 0} / {overview?.kpis?.totalPartners ?? 0}
                 </div>
               </div>
               <div className="rounded-2xl border border-zinc-200 bg-white p-5">
                 <span className="text-xs text-zinc-500">{tr(lang, 'Platform Commission', 'پلیٹ فارم کمیشن')}</span>
                 <div className="font-mono text-2xl font-bold text-emerald-700 mt-1">
-                  Rs. {Number(overview.kpis.commissionPkr || 0).toLocaleString()}
+                  Rs. {Number(overview?.kpis?.commissionPkr || 0).toLocaleString()}
                 </div>
               </div>
             </div>
+
+            {Number(overview?.kpis?.pendingMonthlyAppsCount || 0) > 0 && (
+              <div className="rounded-2xl border-2 border-[#D4A017] bg-amber-50/70 p-4 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <span className="text-[10px] uppercase font-bold tracking-wider text-[#8F6400]">
+                    {tr(lang, 'Monthly Booking Partner Approvals Pending', 'ماہانہ بکنگ پر پارٹنر منظوری درکار')}
+                  </span>
+                  <p className="text-sm font-bold text-[#0D0D10] mt-0.5">
+                    {tr(
+                      lang,
+                      `${overview?.kpis?.pendingMonthlyAppsCount ?? 0} Pro Partner application(s) awaiting Super Admin assignment.`,
+                      `${overview?.kpis?.pendingMonthlyAppsCount ?? 0} پرو پارٹنر درخواستیں سپر ایڈمن کی منظوری کی منتظر ہیں۔`
+                    )}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setTab('bookings')}
+                  className="px-4 py-2 rounded-xl bg-[#0D0D10] text-white text-xs font-bold hover:bg-zinc-800"
+                >
+                  {tr(lang, 'Review Driver Applications', 'ڈرائیور درخواستیں دیکھیں')}
+                </button>
+              </div>
+            )}
 
             <div className="space-y-2">
               <h2 className="font-display text-base font-bold">
@@ -1238,9 +1334,14 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                           {p.service_eligibility.join(', ')}
                         </div>
                       </div>
-                      <span className="px-3 py-1 rounded-lg bg-zinc-100 font-mono text-xs font-bold uppercase">
-                        {trVerificationStatus(lang, p.verification_status)}
-                      </span>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="px-3 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 font-mono text-xs font-bold">
+                          {tr(lang, 'Wallet:', 'والیٹ:')} Rs. {Number(p.wallet_balance_pkr || 0).toLocaleString()}
+                        </span>
+                        <span className="px-3 py-1 rounded-lg bg-zinc-100 font-mono text-xs font-bold uppercase">
+                          {trVerificationStatus(lang, p.verification_status)}
+                        </span>
+                      </div>
                     </div>
 
                     {p.documents.length > 0 && (
@@ -1268,6 +1369,31 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                         className="px-4 py-2 rounded-xl bg-emerald-700 text-white text-xs font-bold"
                       >
                         {tr(lang, 'Approve Partner', 'پارٹنر منظور کریں')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await apiRequest(`/api/admin/partners/${p.user_id}/wallet`, {
+                            method: 'POST',
+                            role: 'admin',
+                            body: {
+                              amountPkr: 1000,
+                              type: 'credit',
+                              note: 'Super Admin Partner Wallet Top-Up (+Rs. 1,000)',
+                            },
+                          });
+                          setToast(
+                            tr(
+                              lang,
+                              `Added Rs. 1,000 to ${p.full_name}'s wallet.`,
+                              `${p.full_name} کے والیٹ میں 1,000 روپے شامل کر دیے گئے۔`
+                            )
+                          );
+                          await loadAll();
+                        }}
+                        className="px-3.5 py-2 rounded-xl bg-[#D4A017] text-[#0D0D10] text-xs font-bold hover:bg-[#EAB308]"
+                      >
+                        {tr(lang, '+ Top Up Rs. 1,000', '+ 1,000 روپے والیٹ')}
                       </button>
                       <button
                         type="button"
@@ -1647,6 +1773,15 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               </table>
             </div>
           </div>
+        )}
+
+        {tab === 'sheets' && (
+          <GoogleSheetsSyncPanel
+            lang={lang}
+            bookings={bookings}
+            transactions={transactions}
+            partners={partners}
+          />
         )}
       </main>
     </div>

@@ -53,15 +53,21 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): nu
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+function isRawCoordsLabel(val?: string | null): boolean {
+  return Boolean(val && /^-?\d+(?:\.\d+)?,\s*-?\d+(?:\.\d+)?$/.test(val.trim()));
+}
+
 interface PassengerBookingFlowProps {
   lang: Language;
   config: PublicConfig | null;
   bookings: Booking[];
   demandData?: DemandMapData | null;
+  passengerId?: string;
   passengerName: string;
   livePartnerLocations: Record<string, { lat: number; lng: number }>;
   onRefreshBookings: () => Promise<void>;
-  onGoToBookings: () => void;
+  onBookingCreated?: (booking: Booking) => void;
+  onGoToBookings: (tab?: 'pending' | 'active') => void;
 }
 
 const WEEK_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -91,9 +97,11 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
   lang,
   config,
   bookings,
+  passengerId,
   passengerName,
   livePartnerLocations,
   onRefreshBookings,
+  onBookingCreated,
   onGoToBookings,
 }) => {
   const { firebaseUser, syncBookingSummary } = useFirebase();
@@ -139,22 +147,10 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
   });
 
   // Step 2: Drop-off
-  const [dropoff, setDropoff] = useState<MapPoint | null>({
-    label: 'Ameer-e-Millat Road, E-11, Islamabad',
-    lat: 33.7025,
-    lng: 72.9785,
-  });
+  const [dropoff, setDropoff] = useState<MapPoint | null>(null);
 
-  // Routing State
-  const [route, setRoute] = useState<RouteResult | null>({
-    distanceKm: 18.4,
-    durationMin: 21,
-    coordinates: [
-      [33.664963, 73.087013],
-      [33.682, 73.045],
-      [33.7025, 72.9785],
-    ],
-  });
+  // Routing State (computed dynamically once drop-off pin is placed)
+  const [route, setRoute] = useState<RouteResult | null>(null);
   const [routeLoading, setRouteLoading] = useState(false);
 
   // Step 3: Time Selection
@@ -192,8 +188,11 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
 
   // Real-time drag-to-pin geocode state
   const [resolvingAddress, setResolvingAddress] = useState<'pickup' | 'dropoff' | null>(null);
+  const [isMapPinMoving, setIsMapPinMoving] = useState(false);
   const geocodeTimerRef = useRef<number | null>(null);
+  const geocodeSeqRef = useRef<{ pickup: number; dropoff: number }>({ pickup: 0, dropoff: 0 });
   const userTouchedPickupRef = useRef(false);
+  const userTouchedDropoffRef = useRef(false);
 
   useEffect(() => {
     return () => {
@@ -211,12 +210,19 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
         if (userTouchedPickupRef.current) return;
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
-        setPickup({ label: tr(lang, 'Finding address...', 'پتہ تلاش کیا جا رہا ہے...'), lat, lng });
+        const seq = ++geocodeSeqRef.current.pickup;
+        setPickup({ label: '', lat, lng });
         setResolvingAddress('pickup');
         try {
           const resolved = await reverseGeocodePakistan(lat, lng);
-          if (!userTouchedPickupRef.current) {
-            setPickup({ label: resolved || `${lat.toFixed(5)}, ${lng.toFixed(5)}`, lat, lng });
+          if (!userTouchedPickupRef.current && geocodeSeqRef.current.pickup === seq) {
+            const cleanLabel =
+              resolved && !isRawCoordsLabel(resolved)
+                ? resolved
+                : tr(lang, 'Selected Pickup Pin', 'منتخب شدہ پِک اپ مقام');
+            setPickup((curr) =>
+              curr ? { ...curr, label: cleanLabel } : { label: cleanLabel, lat, lng }
+            );
           }
         } finally {
           setResolvingAddress((curr) => (curr === 'pickup' ? null : curr));
@@ -227,15 +233,16 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
       },
       { enableHighAccuracy: true, timeout: 7000 }
     );
-  }, []);
+  }, [lang]);
 
   const handleLiveMapCenterChange = (target: 'pickup' | 'dropoff', lat: number, lng: number) => {
-    const fallbackCoords = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+    const seq = ++geocodeSeqRef.current[target];
     if (target === 'pickup') {
       userTouchedPickupRef.current = true;
-      setPickup({ label: tr(lang, 'Finding address...', 'پتہ تلاش کیا جا رہا ہے...'), lat, lng });
+      setPickup((curr) => ({ label: curr?.label && !isRawCoordsLabel(curr.label) ? curr.label : '', lat, lng }));
     } else {
-      setDropoff({ label: tr(lang, 'Finding address...', 'پتہ تلاش کیا جا رہا ہے...'), lat, lng });
+      userTouchedDropoffRef.current = true;
+      setDropoff((curr) => ({ label: curr?.label && !isRawCoordsLabel(curr.label) ? curr.label : '', lat, lng }));
     }
     setResolvingAddress(target);
     if (geocodeTimerRef.current) {
@@ -244,15 +251,28 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
     geocodeTimerRef.current = window.setTimeout(async () => {
       try {
         const resolved = await reverseGeocodePakistan(lat, lng);
+        if (geocodeSeqRef.current[target] !== seq) return;
+        const cleanLabel =
+          resolved && !isRawCoordsLabel(resolved)
+            ? resolved
+            : target === 'pickup'
+            ? tr(lang, 'Selected Pickup Pin', 'منتخب شدہ پِک اپ مقام')
+            : tr(lang, 'Selected Drop-off Pin', 'منتخب شدہ ڈراپ آف مقام');
         if (target === 'pickup') {
-          setPickup({ label: resolved || fallbackCoords, lat, lng });
+          setPickup((curr) =>
+            curr ? { ...curr, label: cleanLabel } : { label: cleanLabel, lat, lng }
+          );
         } else {
-          setDropoff({ label: resolved || fallbackCoords, lat, lng });
+          setDropoff((curr) =>
+            curr ? { ...curr, label: cleanLabel } : { label: cleanLabel, lat, lng }
+          );
         }
       } finally {
-        setResolvingAddress((curr) => (curr === target ? null : curr));
+        if (geocodeSeqRef.current[target] === seq) {
+          setResolvingAddress((curr) => (curr === target ? null : curr));
+        }
       }
-    }, 300);
+    }, 220);
   };
 
   // Active ongoing booking if any
@@ -264,9 +284,33 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
     [bookings]
   );
 
+  // Live non-duplicate pending/new request counters per category
+  const categoryPendingCounts = useMemo(() => {
+    const safeList = Array.isArray(bookings) ? bookings : [];
+    const seenIds = new Set<string>();
+    const counts = { instant: 0, pick_and_drop: 0, ride_sharing: 0, fuel_sharing: 0 };
+    for (const b of safeList) {
+      if (!b?.id || seenIds.has(b.id)) continue;
+      seenIds.add(b.id);
+      const st = String(b.status || '').toLowerCase();
+      if (st !== 'searching' && st !== 'negotiating') continue;
+      if (b.booking_mode === 'go_now') {
+        counts.instant += 1;
+      } else if (b.service_type === 'pick_and_drop') {
+        counts.pick_and_drop += 1;
+      } else if (b.service_type === 'ride_sharing') {
+        counts.ride_sharing += 1;
+      } else if (b.service_type === 'fuel_sharing') {
+        counts.fuel_sharing += 1;
+      }
+    }
+    return counts;
+  }, [bookings]);
+
   // Compute road route whenever pickup or dropoff coordinates change
   useEffect(() => {
     if (!pickup || !dropoff) {
+      setRoute(null);
       return;
     }
     let cancelled = false;
@@ -430,7 +474,7 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
   const referenceFare = useMemo(() => {
     if (!selectedVehicle) return 20240;
     return calculateVehiclePrice(selectedVehicle).totalPrice;
-  }, [selectedVehicle, route?.distanceKm, returnJourney, selectedPackageDays, serviceType]);
+  }, [selectedVehicle, route?.distanceKm, returnJourney, selectedPackageDays, serviceType, bookingMode]);
 
   useEffect(() => {
     setOfferedFare(referenceFare);
@@ -447,21 +491,30 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
     setSubmitting(true);
     setSubmitError(null);
     const calc = calculateVehiclePrice(selectedVehicle);
+    const pickupAddrLabel =
+      pickup.label && !isRawCoordsLabel(pickup.label)
+        ? pickup.label
+        : `Pin (${pickup.lat.toFixed(4)}, ${pickup.lng.toFixed(4)})`;
+    const dropoffAddrLabel =
+      dropoff.label && !isRawCoordsLabel(dropoff.label)
+        ? dropoff.label
+        : `Pin (${dropoff.lat.toFixed(4)}, ${dropoff.lng.toFixed(4)})`;
     try {
       const res = await apiRequest<{ booking: Booking }>('/api/passenger/bookings', {
         method: 'POST',
         role: 'passenger',
         body: {
+          passengerName,
           bookingMode,
           serviceType,
-          pickupAddress: pickup.label,
+          pickupAddress: pickupAddrLabel,
           pickupLat: pickup.lat,
           pickupLng: pickup.lng,
-          dropoffAddress: dropoff.label,
+          dropoffAddress: dropoffAddrLabel,
           dropoffLat: dropoff.lat,
           dropoffLng: dropoff.lng,
-          distanceKm: route?.distanceKm || 18.4,
-          durationMin: route?.durationMin || 21,
+          distanceKm: route?.distanceKm || calc.totalKm || 10,
+          durationMin: route?.durationMin || 20,
           vehicleCategoryId: selectedVehicle.id,
           seatsRequested: passengersCount,
           pickupDate: startDate,
@@ -469,6 +522,8 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
           expectedDropoffDate: startDate,
           expectedDropoffTime: dropoffTime,
           returnJourney,
+          packageId: bookingMode === 'schedule' ? (selectedPackageDays === 22 ? 'pkg-22-days' : 'pkg-26-days') : undefined,
+          packageDays: bookingMode === 'schedule' ? selectedPackageDays : undefined,
           scheduleDays: travelDays,
           notes,
           proposedFarePkr: offeredFare,
@@ -476,18 +531,24 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
       });
 
       if (res?.booking) {
-        setConfirmedBooking(res.booking);
+        const createdBooking: Booking = {
+          ...res.booking,
+          vehicle_category_name: res.booking.vehicle_category_name || selectedVehicle.name,
+          schedule_days: Array.isArray(res.booking.schedule_days) ? res.booking.schedule_days : travelDays,
+        };
+        setConfirmedBooking(createdBooking);
         setCurrentStep(7);
+        onBookingCreated?.(createdBooking);
         if (firebaseUser?.emailVerified) {
           void syncBookingSummary({
-            bookingCode: res.booking.id,
+            bookingCode: createdBooking.id,
             bookingMode,
             serviceType,
-            pickupAddress: pickup.label,
-            dropoffAddress: dropoff.label,
-            distanceKm: route?.distanceKm || 18.4,
+            pickupAddress: pickupAddrLabel,
+            dropoffAddress: dropoffAddrLabel,
+            distanceKm: createdBooking.distance_km || route?.distanceKm || 10,
             farePkr: offeredFare,
-            status: res.booking.status || 'searching',
+            status: createdBooking.status || 'searching',
           }).catch(() => {});
         }
         await onRefreshBookings();
@@ -496,22 +557,23 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
       if (isBackendOfflineError(err)) {
         const nowIso = new Date().toISOString();
         const codeSuffix = String(Date.now()).slice(-6);
+        const ownerId = passengerId || firebaseUser?.uid || 'local-passenger';
         const localBooking: Booking = {
           id: `BK-${codeSuffix}`,
           invoice_number: `INV-PR-${codeSuffix}`,
-          passenger_id: firebaseUser?.uid || 'local-passenger',
+          passenger_id: ownerId,
           partner_id: null,
           booking_mode: bookingMode,
           service_type: serviceType,
           status: 'searching',
-          pickup_address: pickup.label,
+          pickup_address: pickupAddrLabel,
           pickup_lat: pickup.lat,
           pickup_lng: pickup.lng,
-          dropoff_address: dropoff.label,
+          dropoff_address: dropoffAddrLabel,
           dropoff_lat: dropoff.lat,
           dropoff_lng: dropoff.lng,
-          distance_km: route?.distanceKm || 18.4,
-          duration_min: route?.durationMin || 21,
+          distance_km: route?.distanceKm || calc.totalKm || 10,
+          duration_min: route?.durationMin || 20,
           vehicle_category_id: selectedVehicle.id,
           vehicle_category_name: selectedVehicle.name,
           seats_requested: passengersCount,
@@ -521,7 +583,7 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
           expected_dropoff_time: dropoffTime,
           actual_dropoff_time: null,
           return_journey: returnJourney ? 1 : 0,
-          package_id: null,
+          package_id: bookingMode === 'schedule' ? (selectedPackageDays === 22 ? 'pkg-22-days' : 'pkg-26-days') : null,
           schedule_days: travelDays,
           notes,
           proposed_fare_pkr: offeredFare,
@@ -537,21 +599,27 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
           created_at: nowIso,
         };
         try {
-          const uKey = getLocalPassengerBookingsKey(firebaseUser?.uid || localBooking.passenger_id);
-          const existingRaw = localStorage.getItem(uKey);
-          const existing = existingRaw ? (JSON.parse(existingRaw) as Booking[]) : [];
-          const next = [localBooking, ...(Array.isArray(existing) ? existing : [])];
-          localStorage.setItem(uKey, JSON.stringify(next));
+          const storageKeys = Array.from(
+            new Set([ownerId, firebaseUser?.uid].filter((v): v is string => Boolean(v)))
+          );
+          for (const id of storageKeys) {
+            const uKey = getLocalPassengerBookingsKey(id);
+            const existingRaw = localStorage.getItem(uKey);
+            const existing = existingRaw ? (JSON.parse(existingRaw) as Booking[]) : [];
+            const next = [localBooking, ...(Array.isArray(existing) ? existing.filter((b) => b.id !== localBooking.id) : [])];
+            localStorage.setItem(uKey, JSON.stringify(next));
+          }
         } catch {
           // ignore storage quota errors
         }
+        onBookingCreated?.(localBooking);
         if (firebaseUser?.emailVerified) {
           void syncBookingSummary({
             bookingCode: localBooking.id,
             bookingMode,
             serviceType,
-            pickupAddress: pickup.label,
-            dropoffAddress: dropoff.label,
+            pickupAddress: pickupAddrLabel,
+            dropoffAddress: dropoffAddrLabel,
             distanceKm: localBooking.distance_km,
             farePkr: offeredFare,
             status: 'searching',
@@ -671,9 +739,15 @@ PRO RIDER AI — Travel with Trust`;
               <button
                 type="button"
                 onClick={() => setViewActiveTripTab(true)}
-                className="ml-1.5 px-2.5 py-1 rounded-full bg-zinc-800 border border-[#D4A017]/50 text-[#F4C430] text-[11px] font-semibold whitespace-nowrap shrink-0 hover:bg-zinc-700"
+                className={`ml-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold whitespace-nowrap shrink-0 border ${
+                  ['searching', 'negotiating'].includes(activeBooking.status)
+                    ? 'bg-amber-950/80 border-amber-400/60 text-amber-300 hover:bg-amber-900'
+                    : 'bg-emerald-950/80 border-emerald-400/60 text-emerald-300 hover:bg-emerald-900'
+                }`}
               >
-                {tr(lang, 'Active Ride', 'جاری رائیڈ')}
+                {['searching', 'negotiating'].includes(activeBooking.status)
+                  ? tr(lang, 'Pending Ride', 'پینڈنگ رائیڈ')
+                  : tr(lang, 'Active Ride', 'ایکٹیو رائیڈ')}
               </button>
             )}
           </div>
@@ -744,73 +818,112 @@ PRO RIDER AI — Travel with Trust`;
 
       {/* STEP 0: SERVICE SELECTOR HOME SCREEN (Instant Booking, Pick & Drop, Ride Sharing, Fuel Sharing) */}
       {!viewActiveTripTab && currentStep === 0 && (
-        <div className="max-w-4xl w-full mx-auto p-4 sm:p-8 space-y-7">
-          <div className="text-center space-y-3">
-            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-[#D4A017]/60 bg-gradient-to-r from-[#D4A017]/15 to-[#B8860B]/15 text-[11px] font-bold uppercase tracking-widest text-[#B8860B] shadow-xs">
-              <span className="w-2 h-2 rounded-full bg-[#D4A017] animate-pulse" />
-              {passengerName} · {tr(lang, 'Pakistan Smart Mobility Network', 'پاکستان اسمارٹ موبلٹی نیٹ ورک')}
-            </div>
-            <h1 className="font-display text-3xl sm:text-5xl font-extrabold tracking-tight text-[#0D0D10] leading-tight">
+        <div className="max-w-4xl w-full mx-auto p-4 sm:p-8 space-y-5">
+          <div className="text-center space-y-2">
+            <p className="text-xs font-bold uppercase tracking-widest text-[#B8860B]">
+              {tr(lang, `Welcome, ${passengerName}`, `خوش آمدید، ${passengerName}`)}
+            </p>
+            <h1 className="font-display text-3xl sm:text-4xl font-extrabold tracking-tight text-[#0D0D10] leading-tight">
               {tr(lang, 'Select Your Service', 'اپنی سفری سروس منتخب کریں')}
             </h1>
-            <p className="text-sm sm:text-base text-zinc-600 max-w-xl mx-auto leading-relaxed">
+            <p className="text-sm text-zinc-600 max-w-xl mx-auto leading-relaxed">
               {tr(
                 lang,
-                'Choose Instant Booking for immediate point-to-point dispatch, or Pick & Drop, Ride Sharing & Fuel Sharing for regular commute.',
+                'Choose Instant Booking for immediate dispatch, or Pick & Drop, Ride Sharing & Fuel Sharing for monthly commute.',
                 'فوری ون ٹائم سفر کے لیے انسٹنٹ بکنگ منتخب کریں، یا روزمرہ سفر کے لیے پک اینڈ ڈراپ، رائیڈ شیئرنگ اور فیول شیئرنگ چنیں۔'
               )}
             </p>
           </div>
 
-          {/* 4 Smart, Modern, Sleek Service Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
+          {/* Live Category Counters Summary Strip */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <button
+              type="button"
+              onClick={() => onGoToBookings('pending')}
+              className="flex items-center justify-between px-3 py-2 rounded-xl bg-[#0D0D10] text-white border border-[#D4A017]/60 text-[11px] font-bold hover:border-[#F4C430] transition-colors"
+            >
+              <span className="truncate">{tr(lang, 'INSTANT BOOKING', 'انسٹنٹ بکنگ')}</span>
+              <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-[#F4C430] text-[#0D0D10] font-mono text-[10px] tabular-nums shrink-0">
+                {categoryPendingCounts.instant}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onGoToBookings('pending')}
+              className="flex items-center justify-between px-3 py-2 rounded-xl bg-white text-[#0D0D10] border border-zinc-200 text-[11px] font-bold hover:border-[#D4A017] transition-colors"
+            >
+              <span className="truncate">{tr(lang, 'PICK & DROP', 'پک اینڈ ڈراپ')}</span>
+              <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-900 font-mono text-[10px] tabular-nums shrink-0">
+                {categoryPendingCounts.pick_and_drop}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onGoToBookings('pending')}
+              className="flex items-center justify-between px-3 py-2 rounded-xl bg-white text-[#0D0D10] border border-zinc-200 text-[11px] font-bold hover:border-[#D4A017] transition-colors"
+            >
+              <span className="truncate">{tr(lang, 'RIDE SHARING', 'رائیڈ شیئرنگ')}</span>
+              <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-900 font-mono text-[10px] tabular-nums shrink-0">
+                {categoryPendingCounts.ride_sharing}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onGoToBookings('pending')}
+              className="flex items-center justify-between px-3 py-2 rounded-xl bg-white text-[#0D0D10] border border-zinc-200 text-[11px] font-bold hover:border-[#D4A017] transition-colors"
+            >
+              <span className="truncate">{tr(lang, 'FUEL SHARING', 'فیول شیئرنگ')}</span>
+              <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-900 font-mono text-[10px] tabular-nums shrink-0">
+                {categoryPendingCounts.fuel_sharing}
+              </span>
+            </button>
+          </div>
+
+          {/* 4 Main Booking Category Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-3.5">
             {/* 1. Instant Booking (Highlighted Sovereign Gold Style) */}
             <button
               type="button"
               onClick={() => {
                 setBookingMode('go_now');
                 setServiceType('pick_and_drop');
+                setDropoff(null);
+                setRoute(null);
+                setSubmitError(null);
                 setCurrentStep(1);
               }}
-              className="group relative rounded-3xl border-2 border-[#D4A017] bg-gradient-to-br from-[#16161B] via-[#0D0D10] to-[#261E0A] text-white p-6 sm:p-7 text-start shadow-xl hover:shadow-2xl hover:border-[#F4C430] active:scale-[0.99] transition-all flex flex-col justify-between gap-5 min-h-[190px]"
+              className="group relative rounded-2xl border-2 border-[#D4A017] bg-gradient-to-br from-[#16161B] via-[#0D0D10] to-[#261E0A] text-white p-3.5 sm:p-4 text-start shadow-md hover:shadow-lg hover:border-[#F4C430] active:scale-[0.99] transition-all flex flex-col justify-between gap-2 min-h-[88px]"
             >
               <div className="flex items-center justify-between">
-                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#F4C430] to-[#B8860B] text-[#0D0D10] flex items-center justify-center font-bold shadow-lg group-hover:scale-105 transition-transform">
-                  <Zap className="w-6 h-6 fill-[#0D0D10]" />
+                <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#F4C430] to-[#B8860B] text-[#0D0D10] flex items-center justify-center font-bold shadow-xs group-hover:scale-105 transition-transform">
+                  <Zap className="w-3.5 h-3.5 fill-[#0D0D10]" />
                 </div>
-                <span className="px-3 py-1 rounded-full bg-[#F4C430] text-[#0D0D10] font-bold text-[10px] uppercase tracking-widest shadow-sm">
-                  {tr(lang, 'Fast Dispatch', 'فوری روانگی · ون ٹائم')}
-                </span>
+                <div className="flex items-center gap-1.5">
+                  {categoryPendingCounts.instant > 0 && (
+                    <span className="px-2 py-0.5 rounded-full bg-red-600 text-white font-mono font-bold text-[10px] tabular-nums">
+                      ({categoryPendingCounts.instant})
+                    </span>
+                  )}
+                  <span className="px-2 py-0.5 rounded-full bg-[#F4C430] text-[#0D0D10] font-bold text-[8px] uppercase tracking-widest shadow-xs">
+                    {tr(lang, 'Fast Dispatch', 'فوری روانگی')}
+                  </span>
+                </div>
               </div>
 
-              <div className="space-y-1.5">
+              <div className="space-y-0.5">
                 <div className="flex items-center justify-between">
-                  <h2 className="font-display text-xl sm:text-2xl font-bold text-[#F4C430]">
-                    {tr(lang, 'Instant Booking', 'انسٹنٹ بکنگ')}
+                  <h2 className="font-display text-sm font-bold text-[#F4C430]">
+                    {tr(lang, 'INSTANT BOOKING', 'انسٹنٹ بکنگ')}
                   </h2>
-                  <ArrowRight className={`w-5 h-5 text-[#F4C430] transition-transform ${lang === 'ur' ? 'rotate-180 group-hover:-translate-x-1' : 'group-hover:translate-x-1'}`} />
+                  <ArrowRight className={`w-3.5 h-3.5 text-[#F4C430] transition-transform ${lang === 'ur' ? 'rotate-180 group-hover:-translate-x-1' : 'group-hover:translate-x-1'}`} />
                 </div>
-                <p className="text-xs sm:text-sm text-zinc-300 leading-snug">
+                <p className="text-[11px] text-zinc-300 leading-tight line-clamp-1">
                   {tr(
                     lang,
-                    'Entire vehicle for you. Automatic distance calculation via live map.',
-                    'پوری گاڑی آپ کے لیے۔ میپ سے خودکار فاصلہ اور فوری قریبی ڈرائیور کی روانگی۔'
+                    'Entire vehicle for you with live nearest-driver dispatch.',
+                    'پوری گاڑی آپ کے لیے، قریبی ڈرائیور کے ساتھ فوری روانگی۔'
                   )}
                 </p>
-                <div className="pt-2 flex flex-wrap gap-1.5 text-[11px] font-mono text-zinc-300">
-                  <span className="px-2 py-0.5 rounded-md bg-white/10 text-[#F4C430] font-bold">
-                    Economy Rs 55/km
-                  </span>
-                  <span className="px-2 py-0.5 rounded-md bg-white/10">
-                    Comfort Rs 65/km
-                  </span>
-                  <span className="px-2 py-0.5 rounded-md bg-white/10">
-                    Sedan Rs 100/km
-                  </span>
-                  <span className="px-2 py-0.5 rounded-md bg-white/10 text-emerald-300">
-                    Bike Rs 25/km · Rickshaw Rs 30/km
-                  </span>
-                </div>
               </div>
             </button>
 
@@ -820,41 +933,46 @@ PRO RIDER AI — Travel with Trust`;
               onClick={() => {
                 setBookingMode('schedule');
                 setServiceType('pick_and_drop');
+                setDropoff(null);
+                setRoute(null);
+                setSelectedPackageDays(22);
+                setTravelDays(['Mon', 'Tue', 'Wed', 'Thu', 'Fri']);
+                setReturnJourney(true);
+                setSubmitError(null);
                 setCurrentStep(1);
               }}
-              className="group relative rounded-3xl border-2 border-zinc-200 bg-white text-[#0D0D10] p-6 sm:p-7 text-start shadow-sm hover:border-[#D4A017] hover:shadow-lg active:scale-[0.99] transition-all flex flex-col justify-between gap-5 min-h-[190px]"
+              className="group relative rounded-2xl border-2 border-zinc-200 bg-white text-[#0D0D10] p-3.5 sm:p-4 text-start shadow-xs hover:border-[#D4A017] hover:shadow-md active:scale-[0.99] transition-all flex flex-col justify-between gap-2 min-h-[88px]"
             >
               <div className="flex items-center justify-between">
-                <div className="w-12 h-12 rounded-2xl bg-zinc-100 border border-zinc-200 text-[#0D0D10] flex items-center justify-center font-bold group-hover:bg-[#D4A017] group-hover:text-[#0D0D10] transition-all shadow-sm">
-                  <MapPin className="w-6 h-6" />
+                <div className="w-7 h-7 rounded-lg bg-zinc-100 border border-zinc-200 text-[#0D0D10] flex items-center justify-center font-bold group-hover:bg-[#D4A017] group-hover:text-[#0D0D10] transition-all shadow-xs">
+                  <MapPin className="w-3.5 h-3.5" />
                 </div>
-                <span className="px-3 py-1 rounded-full bg-zinc-100 text-zinc-800 font-bold text-[10px] uppercase tracking-widest border border-zinc-200">
-                  {tr(lang, 'Scheduled Commute', 'ماہانہ و روزانہ')}
-                </span>
+                <div className="flex items-center gap-1.5">
+                  {categoryPendingCounts.pick_and_drop > 0 && (
+                    <span className="px-2 py-0.5 rounded-full bg-amber-500 text-[#0D0D10] font-mono font-bold text-[10px] tabular-nums">
+                      ({categoryPendingCounts.pick_and_drop})
+                    </span>
+                  )}
+                  <span className="px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-800 font-bold text-[8px] uppercase tracking-widest border border-zinc-200">
+                    {tr(lang, 'Monthly', 'ماہانہ')}
+                  </span>
+                </div>
               </div>
 
-              <div className="space-y-1.5">
+              <div className="space-y-0.5">
                 <div className="flex items-center justify-between">
-                  <h2 className="font-display text-xl sm:text-2xl font-bold text-[#0D0D10]">
-                    {tr(lang, 'Pick & Drop', 'پک اینڈ ڈراپ')}
+                  <h2 className="font-display text-sm font-bold text-[#0D0D10]">
+                    {tr(lang, 'PICK & DROP', 'پک اینڈ ڈراپ')}
                   </h2>
-                  <ArrowRight className={`w-5 h-5 text-[#D4A017] transition-transform ${lang === 'ur' ? 'rotate-180 group-hover:-translate-x-1' : 'group-hover:translate-x-1'}`} />
+                  <ArrowRight className={`w-3.5 h-3.5 text-[#D4A017] transition-transform ${lang === 'ur' ? 'rotate-180 group-hover:-translate-x-1' : 'group-hover:translate-x-1'}`} />
                 </div>
-                <p className="text-xs sm:text-sm text-zinc-600 leading-snug">
+                <p className="text-[11px] text-zinc-600 leading-tight line-clamp-1">
                   {tr(
                     lang,
-                    'Fixed schedule door-to-door office & university commute packages.',
-                    'دفاتر اور کالج/یونیورسٹی کے لیے باقاعدہ صبح اور شام فکس روٹ پیکیج۔'
+                    'Fixed schedule door-to-door office & university commute.',
+                    'دفاتر اور کالج کے لیے باقاعدہ ماہانہ پیکیج۔'
                   )}
                 </p>
-                <div className="pt-2 flex flex-wrap gap-1.5 text-[11px] font-mono text-zinc-600">
-                  <span className="px-2 py-0.5 rounded-md bg-zinc-100 font-semibold">
-                    22 / 30 {tr(lang, 'Days Package', 'دن کا پیکیج')}
-                  </span>
-                  <span className="px-2 py-0.5 rounded-md bg-zinc-100">
-                    {tr(lang, 'Door-to-door', 'گھر سے دفتر')}
-                  </span>
-                </div>
               </div>
             </button>
 
@@ -864,41 +982,46 @@ PRO RIDER AI — Travel with Trust`;
               onClick={() => {
                 setBookingMode('schedule');
                 setServiceType('ride_sharing');
+                setDropoff(null);
+                setRoute(null);
+                setSelectedPackageDays(22);
+                setTravelDays(['Mon', 'Tue', 'Wed', 'Thu', 'Fri']);
+                setReturnJourney(true);
+                setSubmitError(null);
                 setCurrentStep(1);
               }}
-              className="group relative rounded-3xl border-2 border-zinc-200 bg-white text-[#0D0D10] p-6 sm:p-7 text-start shadow-sm hover:border-[#D4A017] hover:shadow-lg active:scale-[0.99] transition-all flex flex-col justify-between gap-5 min-h-[190px]"
+              className="group relative rounded-2xl border-2 border-zinc-200 bg-white text-[#0D0D10] p-3.5 sm:p-4 text-start shadow-xs hover:border-[#D4A017] hover:shadow-md active:scale-[0.99] transition-all flex flex-col justify-between gap-2 min-h-[88px]"
             >
               <div className="flex items-center justify-between">
-                <div className="w-12 h-12 rounded-2xl bg-zinc-100 border border-zinc-200 text-[#0D0D10] flex items-center justify-center font-bold group-hover:bg-[#D4A017] group-hover:text-[#0D0D10] transition-all shadow-sm">
-                  <Users className="w-6 h-6" />
+                <div className="w-7 h-7 rounded-lg bg-zinc-100 border border-zinc-200 text-[#0D0D10] flex items-center justify-center font-bold group-hover:bg-[#D4A017] group-hover:text-[#0D0D10] transition-all shadow-xs">
+                  <Users className="w-3.5 h-3.5" />
                 </div>
-                <span className="px-3 py-1 rounded-full bg-amber-50 text-amber-900 font-bold text-[10px] uppercase tracking-widest border border-amber-200">
-                  {tr(lang, 'Carpool & Split', 'مشترکہ رائیڈ')}
-                </span>
+                <div className="flex items-center gap-1.5">
+                  {categoryPendingCounts.ride_sharing > 0 && (
+                    <span className="px-2 py-0.5 rounded-full bg-amber-500 text-[#0D0D10] font-mono font-bold text-[10px] tabular-nums">
+                      ({categoryPendingCounts.ride_sharing})
+                    </span>
+                  )}
+                  <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-900 font-bold text-[8px] uppercase tracking-widest border border-amber-200">
+                    {tr(lang, 'Monthly Carpool', 'ماہانہ مشترکہ')}
+                  </span>
+                </div>
               </div>
 
-              <div className="space-y-1.5">
+              <div className="space-y-0.5">
                 <div className="flex items-center justify-between">
-                  <h2 className="font-display text-xl sm:text-2xl font-bold text-[#0D0D10]">
-                    {tr(lang, 'Ride Sharing', 'رائیڈ شیئرنگ')}
+                  <h2 className="font-display text-sm font-bold text-[#0D0D10]">
+                    {tr(lang, 'RIDE SHARING', 'رائیڈ شیئرنگ')}
                   </h2>
-                  <ArrowRight className={`w-5 h-5 text-[#D4A017] transition-transform ${lang === 'ur' ? 'rotate-180 group-hover:-translate-x-1' : 'group-hover:translate-x-1'}`} />
+                  <ArrowRight className={`w-3.5 h-3.5 text-[#D4A017] transition-transform ${lang === 'ur' ? 'rotate-180 group-hover:-translate-x-1' : 'group-hover:translate-x-1'}`} />
                 </div>
-                <p className="text-xs sm:text-sm text-zinc-600 leading-snug">
+                <p className="text-[11px] text-zinc-600 leading-tight line-clamp-1">
                   {tr(
                     lang,
-                    'Share the commute with verified co-passengers and split fares.',
-                    'تصدیق شدہ مسافروں کے ساتھ سفر اور کرایہ شیئر کر کے سستی سواری پائیں۔'
+                    'Share commute with verified co-passengers and split fares.',
+                    'مسافروں کے ساتھ سفر اور کرایہ شیئر کریں۔'
                   )}
                 </p>
-                <div className="pt-2 flex flex-wrap gap-1.5 text-[11px] font-mono text-zinc-600">
-                  <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 font-semibold">
-                    {tr(lang, 'Split by Seat', 'فی سیٹ بچت')}
-                  </span>
-                  <span className="px-2 py-0.5 rounded-md bg-zinc-100">
-                    {tr(lang, 'Verified Riders', 'تصدیق شدہ مسافر')}
-                  </span>
-                </div>
               </div>
             </button>
 
@@ -908,41 +1031,46 @@ PRO RIDER AI — Travel with Trust`;
               onClick={() => {
                 setBookingMode('schedule');
                 setServiceType('fuel_sharing');
+                setDropoff(null);
+                setRoute(null);
+                setSelectedPackageDays(22);
+                setTravelDays(['Mon', 'Tue', 'Wed', 'Thu', 'Fri']);
+                setReturnJourney(true);
+                setSubmitError(null);
                 setCurrentStep(1);
               }}
-              className="group relative rounded-3xl border-2 border-zinc-200 bg-white text-[#0D0D10] p-6 sm:p-7 text-start shadow-sm hover:border-[#D4A017] hover:shadow-lg active:scale-[0.99] transition-all flex flex-col justify-between gap-5 min-h-[190px]"
+              className="group relative rounded-2xl border-2 border-zinc-200 bg-white text-[#0D0D10] p-3.5 sm:p-4 text-start shadow-xs hover:border-[#D4A017] hover:shadow-md active:scale-[0.99] transition-all flex flex-col justify-between gap-2 min-h-[88px]"
             >
               <div className="flex items-center justify-between">
-                <div className="w-12 h-12 rounded-2xl bg-zinc-100 border border-zinc-200 text-[#0D0D10] flex items-center justify-center font-bold group-hover:bg-[#D4A017] group-hover:text-[#0D0D10] transition-all shadow-sm">
-                  <Fuel className="w-6 h-6" />
+                <div className="w-7 h-7 rounded-lg bg-zinc-100 border border-zinc-200 text-[#0D0D10] flex items-center justify-center font-bold group-hover:bg-[#D4A017] group-hover:text-[#0D0D10] transition-all shadow-xs">
+                  <Fuel className="w-3.5 h-3.5" />
                 </div>
-                <span className="px-3 py-1 rounded-full bg-emerald-50 text-emerald-900 font-bold text-[10px] uppercase tracking-widest border border-emerald-200">
-                  {tr(lang, 'Fair Fuel Split', 'فی کلومیٹر فیول')}
-                </span>
+                <div className="flex items-center gap-1.5">
+                  {categoryPendingCounts.fuel_sharing > 0 && (
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-600 text-white font-mono font-bold text-[10px] tabular-nums">
+                      ({categoryPendingCounts.fuel_sharing})
+                    </span>
+                  )}
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-900 font-bold text-[8px] uppercase tracking-widest border border-emerald-200">
+                    {tr(lang, 'Monthly Fuel Split', 'ماہانہ فیول شیئر')}
+                  </span>
+                </div>
               </div>
 
-              <div className="space-y-1.5">
+              <div className="space-y-0.5">
                 <div className="flex items-center justify-between">
-                  <h2 className="font-display text-xl sm:text-2xl font-bold text-[#0D0D10]">
-                    {tr(lang, 'Fuel Sharing', 'فیول شیئرنگ')}
+                  <h2 className="font-display text-sm font-bold text-[#0D0D10]">
+                    {tr(lang, 'FUEL SHARING', 'فیول شیئرنگ')}
                   </h2>
-                  <ArrowRight className={`w-5 h-5 text-[#D4A017] transition-transform ${lang === 'ur' ? 'rotate-180 group-hover:-translate-x-1' : 'group-hover:translate-x-1'}`} />
+                  <ArrowRight className={`w-3.5 h-3.5 text-[#D4A017] transition-transform ${lang === 'ur' ? 'rotate-180 group-hover:-translate-x-1' : 'group-hover:translate-x-1'}`} />
                 </div>
-                <p className="text-xs sm:text-sm text-zinc-600 leading-snug">
+                <p className="text-[11px] text-zinc-600 leading-tight line-clamp-1">
                   {tr(
                     lang,
-                    'Transparent per-km fuel cost splitting for intercity and long distance trips.',
-                    'انٹرسٹی اور لمبے فاصلے کے لیے پیٹرول/سی این جی لاگت کی شفاف اور عادلانہ تقسیم۔'
+                    'Transparent per-km fuel cost splitting for monthly commute.',
+                    'روزانہ اور ماہانہ سفر کے لیے پیٹرول لاگت کی تقسیم۔'
                   )}
                 </p>
-                <div className="pt-2 flex flex-wrap gap-1.5 text-[11px] font-mono text-zinc-600">
-                  <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 font-semibold">
-                    {tr(lang, 'Per-KM Split', 'فی کلومیٹر ایندھن لاگت')}
-                  </span>
-                  <span className="px-2 py-0.5 rounded-md bg-zinc-100">
-                    {tr(lang, 'Intercity & Long Trips', 'انٹرسٹی و طویل سفر')}
-                  </span>
-                </div>
               </div>
             </button>
           </div>
@@ -984,9 +1112,15 @@ PRO RIDER AI — Travel with Trust`;
               <button
                 type="button"
                 onClick={() => setViewActiveTripTab(true)}
-                className="px-2.5 py-1.5 rounded-xl bg-[#0D0D10] text-[#F4C430] text-[11px] font-bold whitespace-nowrap shrink-0"
+                className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold whitespace-nowrap shrink-0 ${
+                  ['searching', 'negotiating'].includes(activeBooking.status)
+                    ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                    : 'bg-[#0D0D10] text-[#F4C430]'
+                }`}
               >
-                {tr(lang, 'Active', 'جاری')}
+                {['searching', 'negotiating'].includes(activeBooking.status)
+                  ? tr(lang, 'Pending', 'پینڈنگ')
+                  : tr(lang, 'Active', 'ایکٹیو')}
               </button>
             )}
           </div>
@@ -1007,17 +1141,32 @@ PRO RIDER AI — Travel with Trust`;
                 controlsLayout="compact-picker"
                 heightClass="h-full"
                 onCenterChange={(lat, lng) => handleLiveMapCenterChange('pickup', lat, lng)}
+                onMoveStateChange={(moving) => setIsMapPinMoving(moving)}
                 onLocateUser={(lat, lng) => handleLiveMapCenterChange('pickup', lat, lng)}
               />
             </div>
-            {/* Centered Gold Pin */}
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center z-20 pb-7">
-              <div className="flex flex-col items-center">
-                <div className="w-9 h-9 rounded-full bg-[#F4C430] border-[3px] border-[#0D0D10] flex items-center justify-center shadow-lg">
-                  <div className="w-3 h-3 rounded-full bg-[#0D0D10]" />
+            {/* Centered Gold Pin (Lifts while panning, drops at exact crosshair) */}
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center z-20">
+              <div className="relative flex flex-col items-center -translate-y-4">
+                <div
+                  className={`flex flex-col items-center transition-transform duration-150 ${
+                    isMapPinMoving ? '-translate-y-2.5 scale-110' : 'translate-y-0 scale-100'
+                  }`}
+                >
+                  <div className="w-9 h-9 rounded-full bg-[#F4C430] border-[3px] border-[#0D0D10] flex items-center justify-center shadow-lg">
+                    <div className="w-3 h-3 rounded-full bg-[#0D0D10]" />
+                  </div>
+                  <div className="w-0.5 h-3.5 bg-[#0D0D10] rounded-full -mt-0.5" />
                 </div>
-                <div className="w-0.5 h-3 bg-[#0D0D10] rounded-full -mt-0.5" />
+                <div
+                  className={`rounded-full bg-[#0D0D10]/70 transition-all duration-150 ${
+                    isMapPinMoving ? 'w-2.5 h-1 opacity-50 mt-1' : 'w-2 h-2 opacity-90 -mt-0.5 border border-white'
+                  }`}
+                />
               </div>
+            </div>
+            <div className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 z-20 px-3 py-1 rounded-full bg-[#0D0D10]/85 text-white text-[11px] font-semibold shadow backdrop-blur whitespace-nowrap">
+              {tr(lang, 'Drag map or tap anywhere to move pin', 'پن لگانے کے لیے نقشہ گھمائیں یا مطلوبہ جگہ پر ٹیپ کریں')}
             </div>
           </div>
 
@@ -1049,7 +1198,13 @@ PRO RIDER AI — Travel with Trust`;
                   {resolvingAddress === 'pickup' && (
                     <Loader2 className="w-3.5 h-3.5 text-[#D4A017] animate-spin shrink-0" />
                   )}
-                  <span className="truncate">{pickup?.label || tr(lang, 'Finding address...', 'پتہ تلاش کیا جا رہا ہے...')}</span>
+                  <span className="truncate">
+                    {resolvingAddress === 'pickup' && (!pickup?.label || isRawCoordsLabel(pickup.label))
+                      ? tr(lang, 'Updating address...', 'پتہ تلاش کیا جا رہا ہے...')
+                      : pickup?.label && !isRawCoordsLabel(pickup.label)
+                      ? pickup.label
+                      : tr(lang, 'Selected Pickup Pin', 'منتخب شدہ پِک اپ مقام')}
+                  </span>
                 </p>
                 <p className="text-[11px] text-zinc-400 font-mono tabular-nums mt-0.5">
                   {pickup ? `${pickup.lat.toFixed(6)}, ${pickup.lng.toFixed(6)}` : '33.664963, 73.087013'}
@@ -1080,7 +1235,7 @@ PRO RIDER AI — Travel with Trust`;
               </button>
               <button
                 type="button"
-                disabled={!pickup || resolvingAddress === 'pickup'}
+                disabled={!pickup}
                 onClick={() => setCurrentStep(2)}
                 className="py-3.5 px-4 rounded-2xl bg-[#F4C430] text-[#0D0D10] font-bold text-sm hover:bg-[#E5B520] shadow-sm disabled:opacity-60 transition-colors"
               >
@@ -1115,6 +1270,7 @@ PRO RIDER AI — Travel with Trust`;
                   pinColor="red"
                   onSelect={(pt) => {
                     if (pt) {
+                      userTouchedDropoffRef.current = true;
                       setDropoff(pt);
                       setResolvingAddress(null);
                     }
@@ -1128,12 +1284,19 @@ PRO RIDER AI — Travel with Trust`;
                 onClick={() => setCurrentStep(1)}
                 className="truncate max-w-[65%] text-left hover:text-[#0D0D10] transition-colors"
               >
-                <span className="font-semibold text-[#0D0D10]">A:</span> {pickup?.label}
+                <span className="font-semibold text-[#0D0D10]">A:</span>{' '}
+                {pickup?.label && !isRawCoordsLabel(pickup.label)
+                  ? pickup.label
+                  : tr(lang, 'Pickup Pin Set', 'پِک اپ پن سیٹ ہے')}
               </button>
               <span className="font-mono font-bold text-[#0D0D10] tabular-nums shrink-0">
-                {routeLoading
+                {!dropoff
+                  ? tr(lang, 'Set drop-off pin', 'منزل کی پن لگائیں')
+                  : routeLoading
                   ? tr(lang, 'Calculating...', 'حساب ہو رہا ہے...')
-                  : `${route?.distanceKm || 18.4} km · ~${route?.durationMin || 21} ${tr(lang, 'min', 'منٹ')}`}
+                  : route
+                  ? `${route.distanceKm} km · ~${route.durationMin} ${tr(lang, 'min', 'منٹ')}`
+                  : tr(lang, 'Calculating...', 'حساب ہو رہا ہے...')}
               </span>
             </div>
           </div>
@@ -1141,7 +1304,7 @@ PRO RIDER AI — Travel with Trust`;
           <div className="relative flex-1 min-h-[380px]">
             <div className="absolute inset-0">
               <StreetMap
-                center={dropoff ? [dropoff.lat, dropoff.lng] : [33.7025, 72.9785]}
+                center={dropoff ? [dropoff.lat, dropoff.lng] : pickup ? [pickup.lat, pickup.lng] : [33.7025, 72.9785]}
                 zoom={14}
                 pickup={pickup}
                 dropoff={dropoff}
@@ -1153,18 +1316,35 @@ PRO RIDER AI — Travel with Trust`;
                 controlsLayout="compact-picker"
                 heightClass="h-full"
                 onCenterChange={(lat, lng) => handleLiveMapCenterChange('dropoff', lat, lng)}
+                onMoveStateChange={(moving) => setIsMapPinMoving(moving)}
                 onLocateUser={(lat, lng) => handleLiveMapCenterChange('dropoff', lat, lng)}
               />
             </div>
-            {/* Centered Red Drop-off Pin */}
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center z-20 pb-7">
-              <div className="flex flex-col items-center">
-                <div className="w-9 h-9 rounded-full bg-red-600 border-[3px] border-white flex items-center justify-center shadow-lg text-white">
-                  <MapPin className="w-4 h-4" />
+            {/* Centered Red Drop-off Pin (Lifts while panning, drops at exact crosshair) */}
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center z-20">
+              <div className="relative flex flex-col items-center -translate-y-4">
+                <div
+                  className={`flex flex-col items-center transition-transform duration-150 ${
+                    isMapPinMoving ? '-translate-y-2.5 scale-110' : 'translate-y-0 scale-100'
+                  }`}
+                >
+                  <div className="w-9 h-9 rounded-full bg-red-600 border-[3px] border-white flex items-center justify-center shadow-lg text-white">
+                    <MapPin className="w-4 h-4" />
+                  </div>
+                  <div className="w-0.5 h-3.5 bg-red-700 rounded-full -mt-0.5" />
                 </div>
-                <div className="w-0.5 h-3 bg-red-700 rounded-full -mt-0.5" />
+                <div
+                  className={`rounded-full bg-red-700/75 transition-all duration-150 ${
+                    isMapPinMoving ? 'w-2.5 h-1 opacity-50 mt-1' : 'w-2 h-2 opacity-90 -mt-0.5 border border-white'
+                  }`}
+                />
               </div>
             </div>
+            {!dropoff && (
+              <div className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 z-20 px-3 py-1 rounded-full bg-red-600 text-white text-[11px] font-bold shadow whitespace-nowrap">
+                {tr(lang, 'Drag map or tap destination on map', 'منزل کا پن لگانے کے لیے نقشہ گھمائیں یا جگہ پر ٹیپ کریں')}
+              </div>
+            )}
           </div>
 
           <div className="px-4 py-3.5 sm:px-6 bg-white border-t border-zinc-200 space-y-3 shrink-0">
@@ -1177,17 +1357,31 @@ PRO RIDER AI — Travel with Trust`;
                   {resolvingAddress === 'dropoff' && (
                     <Loader2 className="w-3.5 h-3.5 text-red-600 animate-spin shrink-0" />
                   )}
-                  <span className="truncate">{dropoff?.label || tr(lang, 'Finding address...', 'پتہ تلاش کیا جا رہا ہے...')}</span>
+                  <span className="truncate">
+                    {!dropoff
+                      ? tr(lang, 'Move map or tap to place drop-off pin', 'منزل کے لیے نقشہ گھمائیں یا ٹیپ کریں')
+                      : resolvingAddress === 'dropoff' && (!dropoff.label || isRawCoordsLabel(dropoff.label))
+                      ? tr(lang, 'Updating destination...', 'منزل کا پتہ تلاش کیا جا رہا ہے...')
+                      : dropoff.label && !isRawCoordsLabel(dropoff.label)
+                      ? dropoff.label
+                      : tr(lang, 'Selected Drop-off Pin', 'منتخب شدہ ڈراپ آف مقام')}
+                  </span>
                 </p>
                 <p className="text-[11px] text-zinc-400 font-mono tabular-nums mt-0.5">
-                  {dropoff ? `${dropoff.lat.toFixed(6)}, ${dropoff.lng.toFixed(6)}` : '33.702500, 72.978500'}
+                  {dropoff
+                    ? `${dropoff.lat.toFixed(6)}, ${dropoff.lng.toFixed(6)}`
+                    : tr(lang, 'Pin not set yet', 'ابھی پن سیٹ نہیں ہوئی')}
                 </p>
               </div>
 
               <div className="text-right shrink-0 bg-[#0D0D10] text-white px-3 py-1.5 rounded-xl">
                 <span className="block text-[10px] text-zinc-400">{tr(lang, 'Distance', 'فاصلہ')}</span>
                 <span className="font-mono font-bold text-xs text-[#F4C430] tabular-nums">
-                  {routeLoading ? '...' : `${route?.distanceKm || 18.4} km`}
+                  {!dropoff
+                    ? '-- km'
+                    : routeLoading || !route
+                    ? '...'
+                    : `${route.distanceKm} km`}
                 </span>
               </div>
             </div>
@@ -1202,7 +1396,7 @@ PRO RIDER AI — Travel with Trust`;
               </button>
               <button
                 type="button"
-                disabled={!dropoff || resolvingAddress === 'dropoff' || routeLoading}
+                disabled={!dropoff}
                 onClick={() => {
                   if (bookingMode === 'go_now') {
                     setCurrentStep(5);
@@ -1413,14 +1607,19 @@ PRO RIDER AI — Travel with Trust`;
                             if (active) {
                               if (travelDays.length > 1) setTravelDays(travelDays.filter((d) => d !== day));
                             } else {
-                              setTravelDays([...travelDays, day]);
+                              setTravelDays((prev) =>
+                                WEEK_DAYS.filter((d) => d === day || prev.includes(d))
+                              );
                             }
                           }}
-                          className={`px-3 py-2 rounded-xl text-xs font-bold transition-all ${
-                            active ? 'bg-[#F4C430] text-[#0D0D10]' : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200'
+                          className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all inline-flex items-center gap-1 ${
+                            active
+                              ? 'bg-[#F4C430] border-[#B8860B] text-[#0D0D10] shadow-xs'
+                              : 'bg-zinc-100 border-zinc-200 text-zinc-700 hover:bg-zinc-200'
                           }`}
                         >
-                          {trDay(lang, day)}
+                          {active && <Check className="w-3 h-3" />}
+                          <span>{trDay(lang, day)}</span>
                         </button>
                       );
                     })}
@@ -1780,7 +1979,13 @@ PRO RIDER AI — Travel with Trust`;
                     {tr(lang, 'Payment Method', 'ادائیگی کا طریقہ')}
                   </label>
                   {[
-                    { id: 'cash', label: tr(lang, 'Cash on Pickup / Monthly', 'پِک اپ پر نقد / ماہانہ ادائیگی') },
+                    {
+                      id: 'cash',
+                      label:
+                        bookingMode === 'go_now'
+                          ? tr(lang, 'Cash on Ride Completion', 'سفر مکمل ہونے پر نقد ادائیگی')
+                          : tr(lang, 'Monthly Cash Settlement', 'ماہانہ نقد ادائیگی'),
+                    },
                     { id: 'wallet', label: tr(lang, 'PRO RIDER Digital Wallet', 'پرو رائیڈر ڈیجیٹل والیٹ') },
                     { id: 'jazzcash_easypaisa', label: tr(lang, 'JazzCash / EasyPaisa / Bank', 'جاز کیش / ایزی پیسہ / بینک') },
                   ].map((p) => (
@@ -1850,26 +2055,40 @@ PRO RIDER AI — Travel with Trust`;
         </div>
       )}
 
-      {/* STEP 7: CONFIRMED RECEIPT & WHATSAPP / PDF */}
+      {/* STEP 7: REQUEST SUBMITTED (PENDING) RECEIPT & WHATSAPP / PDF */}
       {!viewActiveTripTab && currentStep === 7 && (
         <div className="max-w-xl w-full mx-auto p-4 sm:p-8">
           <div className="bg-white rounded-3xl border border-zinc-200 p-6 sm:p-8 space-y-5 shadow-sm text-center">
-            <div className="w-20 h-20 rounded-full border-4 border-[#F4C430] flex items-center justify-center mx-auto text-[#F4C430]">
-              <Check className="w-10 h-10 stroke-[3.5]" />
+            <div className="w-20 h-20 rounded-full border-4 border-amber-400 bg-amber-50 flex items-center justify-center mx-auto text-amber-600">
+              <Clock className="w-10 h-10 stroke-[2.5]" />
             </div>
 
-            <div>
+            <div className="space-y-2">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100 text-amber-900 border border-amber-300 text-[11px] font-bold uppercase tracking-wider">
+                {tr(lang, 'Status: Pending Confirmation', 'حالت: پینڈنگ (تصدیق کے انتظار میں)')}
+              </span>
               <h2 className="font-display text-2xl sm:text-3xl font-bold text-[#0D0D10]">
-                {tr(lang, 'Booking confirmed!', 'بُکنگ کنفرم ہو گئی!')}
+                {tr(lang, 'Booking Submitted — Pending', 'بُکنگ جمع ہو گئی — پینڈنگ')}
               </h2>
-              <p className="text-xs text-zinc-600 mt-2 max-w-md mx-auto leading-relaxed">
+              <p className="text-xs text-zinc-600 mt-1 max-w-md mx-auto leading-relaxed">
                 {tr(
                   lang,
-                  'Your ride request is saved as Pending. Verified Pro Partners are notified immediately.',
-                  'آپ کی بُکنگ محفوظ ہو چکی ہے اور تصدیق شدہ پرو پارٹنرز کو فوری اطلاع بھیج دی گئی ہے۔'
+                  'Your ride request is in Pending status while verified Pro Partners review it. As soon as a Pro Partner confirms, your bell will ring and the ride will automatically move to Active.',
+                  'آپ کی بُکنگ اس وقت پینڈنگ میں ہے اور تصدیق شدہ پرو پارٹنرز کو بھیج دی گئی ہے۔ جیسے ہی ڈرائیور اسے کنفرم کرے گا، بیل بجے گی اور یہ خودکار طور پر ایکٹیو ٹیب میں آ جائے گی۔'
                 )}
               </p>
             </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setCurrentStep(1);
+                onGoToBookings('pending');
+              }}
+              className="w-full py-3.5 rounded-2xl bg-[#0D0D10] text-[#F4C430] font-bold text-sm hover:bg-zinc-900 transition-colors shadow-sm"
+            >
+              {tr(lang, 'Track in My Bookings (Pending)', 'میری بکنگز میں پینڈنگ حالت دیکھیں')}
+            </button>
 
             <button
               type="button"
@@ -1894,12 +2113,11 @@ PRO RIDER AI — Travel with Trust`;
             <button
               type="button"
               onClick={() => {
-                setCurrentStep(1);
-                onGoToBookings();
+                setCurrentStep(0);
               }}
-              className="w-full py-3.5 rounded-2xl border border-zinc-300 text-zinc-800 font-bold text-sm hover:bg-zinc-50"
+              className="w-full py-3 rounded-2xl border border-zinc-200 text-zinc-700 font-semibold text-xs hover:bg-zinc-50"
             >
-              {tr(lang, 'Done', 'مکمل')}
+              {tr(lang, 'Book Another Ride', 'ایک اور رائیڈ بُک کریں')}
             </button>
           </div>
         </div>

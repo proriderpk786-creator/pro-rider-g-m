@@ -123,16 +123,11 @@ export const WelcomePage: React.FC<WelcomePageProps> = ({ lang, onChangeLang, on
           <CarFront className="w-16 h-16 text-[#D4A017]/60" />
         </div>
       )}
-      <div className="pr-preserve-light absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent flex flex-col justify-end p-4 sm:p-7 pointer-events-none">
-        <p className="text-[10px] sm:text-xs font-semibold uppercase tracking-widest !text-[#F4C430]">
-          {t(lang, 'welcomeHeading')}
-        </p>
-        <p className="font-display text-base sm:text-2xl font-bold !text-white mt-0.5 sm:mt-1 leading-snug">
-          {t(lang, 'welcomeSub')}
-        </p>
-        <p className="text-[11px] sm:text-sm !text-zinc-200 mt-0.5 sm:mt-1.5">
+      <div className="pr-preserve-light absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent flex items-end justify-between gap-2 p-4 sm:p-6 pointer-events-none">
+        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/65 border border-[#D4A017]/50 text-[11px] sm:text-xs font-semibold !text-[#F4C430] backdrop-blur-xs">
+          <MapPin className="w-3.5 h-3.5 shrink-0" />
           {tr(lang, 'Islamabad · Rawalpindi · Lahore · Karachi', 'اسلام آباد · راولپنڈی · لاہور · کراچی')}
-        </p>
+        </span>
       </div>
     </div>
   );
@@ -340,13 +335,13 @@ export const WelcomePage: React.FC<WelcomePageProps> = ({ lang, onChangeLang, on
 
 
 
-      {/* 3. EDITORIAL SMART MOBILITY SHOWCASE (Inspired by Upload 182539 / 182554) */}
+      {/* 3. EDITORIAL SMART MOBILITY SHOWCASE */}
       {homeLayout === 'editorial' && (
         <main className="flex-1 max-w-6xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 sm:py-10 space-y-8">
           <div className="text-center space-y-3">
             <h1 className="font-display text-3xl sm:text-5xl font-extrabold tracking-tight leading-tight">
-              PRO RIDER AI — {tr(lang, "Pakistan's Smart Ride Is", 'پاکستان کی اسمارٹ سواری')}{' '}
-              <span className="text-[#D4A017]">{tr(lang, 'Here', 'حاضر ہے')}</span>
+              {t(lang, 'welcomeHeading')} —{' '}
+              <span className="text-[#D4A017]">{tr(lang, 'Pakistan Smart Mobility', 'پاکستان اسمارٹ موبلٹی')}</span>
             </h1>
             <div className="flex items-center justify-center gap-3 text-xs sm:text-sm font-semibold text-zinc-600 pt-1">
               <span className="h-px w-8 sm:w-16 bg-[#D4A017]/50" />

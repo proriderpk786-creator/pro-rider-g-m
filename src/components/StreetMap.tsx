@@ -53,6 +53,7 @@ interface StreetMapProps {
   controlsLayout?: 'default' | 'compact-picker';
   onMapPick?: (lat: number, lng: number) => void;
   onCenterChange?: (lat: number, lng: number) => void;
+  onMoveStateChange?: (moving: boolean) => void;
   onLocateUser?: (lat: number, lng: number) => void;
   heightClass?: string;
   fullBleed?: boolean;
@@ -91,6 +92,7 @@ function isQuotaError(err: unknown): boolean {
 }
 
 const MapController: React.FC<{
+  center: [number, number];
   pickup?: MapPoint | null;
   dropoff?: MapPoint | null;
   route?: RouteResult | null;
@@ -100,6 +102,9 @@ const MapController: React.FC<{
   d3Active: boolean;
   focusTarget?: MapFocusTarget | null;
   isFullscreen: boolean;
+  centerPinMode?: boolean;
+  onCenterChange?: (lat: number, lng: number) => void;
+  onMoveStateChange?: (moving: boolean) => void;
   onLocateUser?: (lat: number, lng: number) => void;
   setGpsNotice: (msg: string | null) => void;
   mapActionsRef: React.MutableRefObject<{
@@ -108,6 +113,7 @@ const MapController: React.FC<{
     locateMe: () => void;
   } | null>;
 }> = ({
+  center,
   pickup,
   dropoff,
   route,
@@ -117,6 +123,9 @@ const MapController: React.FC<{
   d3Active,
   focusTarget,
   isFullscreen,
+  centerPinMode,
+  onCenterChange,
+  onMoveStateChange,
   onLocateUser,
   setGpsNotice,
   mapActionsRef,
@@ -129,7 +138,61 @@ const MapController: React.FC<{
   const circlesRef = useRef<google.maps.Circle[]>([]);
   const fallbackPolylineRef = useRef<google.maps.Polyline | null>(null);
   const onRouteComputedRef = useRef(onRouteComputed);
+  const onCenterChangeRef = useRef(onCenterChange);
+  const onMoveStateChangeRef = useRef(onMoveStateChange);
+  const syncedCenterRef = useRef<{ lat: number; lng: number }>({ lat: center[0], lng: center[1] });
+  const userGestureActiveRef = useRef(false);
   onRouteComputedRef.current = onRouteComputed;
+  onCenterChangeRef.current = onCenterChange;
+  onMoveStateChangeRef.current = onMoveStateChange;
+
+  useEffect(() => {
+    if (!map || !centerPinMode) return;
+    const gEvent = (window as any).google?.maps?.event;
+    if (!gEvent) return;
+    const dragStartL = gEvent.addListener(map, 'dragstart', () => {
+      userGestureActiveRef.current = true;
+      onMoveStateChangeRef.current?.(true);
+    });
+    const idleL = gEvent.addListener(map, 'idle', () => {
+      onMoveStateChangeRef.current?.(false);
+      const c = map.getCenter();
+      if (!c) return;
+      const lat = c.lat();
+      const lng = c.lng();
+      const prev = syncedCenterRef.current;
+      const moved = Math.abs(lat - prev.lat) > 0.00005 || Math.abs(lng - prev.lng) > 0.00005;
+      if (userGestureActiveRef.current || moved) {
+        userGestureActiveRef.current = false;
+        syncedCenterRef.current = { lat, lng };
+        onCenterChangeRef.current?.(lat, lng);
+      }
+    });
+    return () => {
+      gEvent.removeListener(dragStartL);
+      gEvent.removeListener(idleL);
+    };
+  }, [map, centerPinMode]);
+
+  useEffect(() => {
+    if (!map || !centerPinMode) return;
+    const targetLat = center[0];
+    const targetLng = center[1];
+    const prev = syncedCenterRef.current;
+    const current = map.getCenter();
+    const matchesSynced =
+      Math.abs(prev.lat - targetLat) < 0.00005 && Math.abs(prev.lng - targetLng) < 0.00005;
+    const matchesMap =
+      current &&
+      Math.abs(current.lat() - targetLat) < 0.00005 &&
+      Math.abs(current.lng() - targetLng) < 0.00005;
+    if (matchesSynced || matchesMap) return;
+    syncedCenterRef.current = { lat: targetLat, lng: targetLng };
+    map.panTo({ lat: targetLat, lng: targetLng });
+    if ((map.getZoom() ?? 12) < 15) {
+      map.setZoom(15);
+    }
+  }, [map, center[0], center[1], centerPinMode]);
 
   useEffect(() => {
     mapActionsRef.current = {
@@ -218,6 +281,10 @@ const MapController: React.FC<{
     if (fallbackPolylineRef.current) {
       fallbackPolylineRef.current.setMap(null);
       fallbackPolylineRef.current = null;
+    }
+
+    if (centerPinMode) {
+      return;
     }
 
     if (!pickup || !dropoff) {
@@ -360,6 +427,7 @@ const LeafletFallbackMap: React.FC<{
   hideMarkers?: boolean;
   onMapPick?: (lat: number, lng: number) => void;
   onCenterChange?: (lat: number, lng: number) => void;
+  onMoveStateChange?: (moving: boolean) => void;
   isFullscreen: boolean;
   focusTarget?: MapFocusTarget | null;
   onLocateUser?: (lat: number, lng: number) => void;
@@ -383,6 +451,7 @@ const LeafletFallbackMap: React.FC<{
   hideMarkers,
   onMapPick,
   onCenterChange,
+  onMoveStateChange,
   isFullscreen,
   focusTarget,
   onLocateUser,
@@ -394,14 +463,16 @@ const LeafletFallbackMap: React.FC<{
   const layerGroupRef = useRef<L.LayerGroup | null>(null);
   const onMapPickRef = useRef(onMapPick);
   const onCenterChangeRef = useRef(onCenterChange);
+  const onMoveStateChangeRef = useRef(onMoveStateChange);
   const onLocateUserRef = useRef(onLocateUser);
   const pickModeRef = useRef(pickMode);
   const centerPinModeRef = useRef(centerPinMode);
-  const lastProgrammaticCenterRef = useRef<{ lat: number; lng: number } | null>(null);
-  const suppressNextMoveEndRef = useRef(false);
+  const syncedCenterRef = useRef<{ lat: number; lng: number }>({ lat: center[0], lng: center[1] });
+  const userGestureActiveRef = useRef(false);
 
   onMapPickRef.current = onMapPick;
   onCenterChangeRef.current = onCenterChange;
+  onMoveStateChangeRef.current = onMoveStateChange;
   onLocateUserRef.current = onLocateUser;
   pickModeRef.current = pickMode;
   centerPinModeRef.current = centerPinMode;
@@ -409,10 +480,12 @@ const LeafletFallbackMap: React.FC<{
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
     const initCenter: [number, number] = centerPinModeRef.current ? center : pickup ? [pickup.lat, pickup.lng] : center;
+    syncedCenterRef.current = { lat: initCenter[0], lng: initCenter[1] };
     const map = L.map(containerRef.current, {
       center: initCenter,
       zoom,
       zoomControl: false,
+      dragging: true,
     });
     // Crisp Google Street Map tiles matching clean Pakistan sector/road view, with Carto Voyager fallback
     const googleTiles = L.tileLayer('https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
@@ -437,8 +510,22 @@ const LeafletFallbackMap: React.FC<{
     mapRef.current = map;
     layerGroupRef.current = group;
 
+    map.on('dragstart', () => {
+      userGestureActiveRef.current = true;
+      onMoveStateChangeRef.current?.(true);
+    });
+
+    map.on('movestart', () => {
+      if (centerPinModeRef.current) {
+        onMoveStateChangeRef.current?.(true);
+      }
+    });
+
     map.on('click', (ev: L.LeafletMouseEvent) => {
       if (centerPinModeRef.current) {
+        userGestureActiveRef.current = false;
+        syncedCenterRef.current = { lat: ev.latlng.lat, lng: ev.latlng.lng };
+        onCenterChangeRef.current?.(ev.latlng.lat, ev.latlng.lng);
         map.panTo([ev.latlng.lat, ev.latlng.lng], { animate: true });
         return;
       }
@@ -448,14 +535,18 @@ const LeafletFallbackMap: React.FC<{
     });
 
     map.on('moveend', () => {
-      if (suppressNextMoveEndRef.current) {
-        suppressNextMoveEndRef.current = false;
-        return;
-      }
+      onMoveStateChangeRef.current?.(false);
       if (centerPinModeRef.current && onCenterChangeRef.current) {
         const c = map.getCenter();
-        lastProgrammaticCenterRef.current = { lat: c.lat, lng: c.lng };
-        onCenterChangeRef.current(c.lat, c.lng);
+        const prev = syncedCenterRef.current;
+        const moved = Math.abs(c.lat - prev.lat) > 0.00004 || Math.abs(c.lng - prev.lng) > 0.00004;
+        if (userGestureActiveRef.current || moved) {
+          userGestureActiveRef.current = false;
+          syncedCenterRef.current = { lat: c.lat, lng: c.lng };
+          onCenterChangeRef.current(c.lat, c.lng);
+        } else {
+          userGestureActiveRef.current = false;
+        }
       }
     });
 
@@ -471,9 +562,9 @@ const LeafletFallbackMap: React.FC<{
         navigator.geolocation.getCurrentPosition(
           (pos) => {
             const { latitude, longitude } = pos.coords;
-            suppressNextMoveEndRef.current = true;
-            lastProgrammaticCenterRef.current = { lat: latitude, lng: longitude };
-            map.flyTo([latitude, longitude], 16, { duration: 0.6 });
+            userGestureActiveRef.current = false;
+            syncedCenterRef.current = { lat: latitude, lng: longitude };
+            map.flyTo([latitude, longitude], 16, { duration: 0.5 });
             onLocateUserRef.current?.(latitude, longitude);
             if (centerPinModeRef.current) {
               onCenterChangeRef.current?.(latitude, longitude);
@@ -517,23 +608,31 @@ const LeafletFallbackMap: React.FC<{
     };
   }, [isFullscreen]);
 
-  // Smoothly pan map when center changes externally (e.g., Search result or GPS)
+  // Smoothly pan/fly map ONLY when center changes externally (e.g., Search result or GPS)
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !centerPinMode) return;
     const targetLat = center[0];
     const targetLng = center[1];
-    const prev = lastProgrammaticCenterRef.current;
-    if (
-      prev &&
-      Math.abs(prev.lat - targetLat) < 0.00015 &&
-      Math.abs(prev.lng - targetLng) < 0.00015
-    ) {
+    const prev = syncedCenterRef.current;
+    const currentCenter = map.getCenter();
+    const matchesSynced =
+      Math.abs(prev.lat - targetLat) < 0.00005 &&
+      Math.abs(prev.lng - targetLng) < 0.00005;
+    const matchesMap =
+      Math.abs(currentCenter.lat - targetLat) < 0.00005 &&
+      Math.abs(currentCenter.lng - targetLng) < 0.00005;
+    if (matchesSynced || matchesMap) {
       return;
     }
-    suppressNextMoveEndRef.current = true;
-    lastProgrammaticCenterRef.current = { lat: targetLat, lng: targetLng };
-    map.flyTo([targetLat, targetLng], Math.max(map.getZoom(), 15), { duration: 0.55 });
+    userGestureActiveRef.current = false;
+    syncedCenterRef.current = { lat: targetLat, lng: targetLng };
+    const dist = Math.hypot(currentCenter.lat - targetLat, currentCenter.lng - targetLng);
+    if (dist > 0.02 || map.getZoom() < 14) {
+      map.flyTo([targetLat, targetLng], Math.max(map.getZoom(), 15), { duration: 0.45 });
+    } else {
+      map.panTo([targetLat, targetLng], { animate: true });
+    }
   }, [center[0], center[1], centerPinMode]);
 
   useEffect(() => {
@@ -701,9 +800,10 @@ export const StreetMap: React.FC<StreetMapProps> = ({
   centerPinMode = false,
   hideMarkers = false,
   controlsLayout = 'default',
-  onMapPick,
-  onCenterChange,
-  onLocateUser,
+  onMapPick = undefined,
+  onCenterChange = undefined,
+  onMoveStateChange = undefined,
+  onLocateUser = undefined,
   heightClass = 'h-[360px] md:h-[420px]',
   fullBleed = false,
   routeError = null,
@@ -747,7 +847,9 @@ export const StreetMap: React.FC<StreetMapProps> = ({
   }, [isFullscreen]);
 
   const resolvedHotspots: DemandHotspot[] = React.useMemo(() => {
-    if (demandData && demandData.hotspots.length > 0) return demandData.hotspots;
+    if (demandData && Array.isArray(demandData.hotspots) && demandData.hotspots.length > 0) {
+      return demandData.hotspots.filter(Boolean);
+    }
     return zones.map((z) => ({
       id: z.id,
       city: z.city,
@@ -766,7 +868,7 @@ export const StreetMap: React.FC<StreetMapProps> = ({
   }, [demandData, zones]);
 
   const resolvedPoints: DemandPoint[] = React.useMemo(() => {
-    if (demandData && demandData.points.length > 0) return demandData.points;
+    if (demandData && Array.isArray(demandData.points) && demandData.points.length > 0) return demandData.points;
     return resolvedHotspots.map((hs) => ({
       lat: hs.lat,
       lng: hs.lng,
@@ -859,6 +961,7 @@ export const StreetMap: React.FC<StreetMapProps> = ({
             hideMarkers={hideMarkers}
             onMapPick={onMapPick}
             onCenterChange={onCenterChange}
+            onMoveStateChange={onMoveStateChange}
             isFullscreen={isFullscreen}
             focusTarget={focusTarget}
             onLocateUser={onLocateUser}
@@ -875,7 +978,9 @@ export const StreetMap: React.FC<StreetMapProps> = ({
               disableDefaultUI
               style={{ width: '100%', height: '100%' }}
               onClick={(ev) => {
-                if (pickMode && onMapPick && ev.detail.latLng) {
+                if (centerPinMode && onCenterChange && ev.detail.latLng) {
+                  onCenterChange(ev.detail.latLng.lat, ev.detail.latLng.lng);
+                } else if (pickMode && onMapPick && ev.detail.latLng) {
                   onMapPick(ev.detail.latLng.lat, ev.detail.latLng.lng);
                 } else {
                   setActiveInfo(null);
@@ -884,6 +989,7 @@ export const StreetMap: React.FC<StreetMapProps> = ({
               }}
             >
               <MapController
+                center={center}
                 pickup={pickup}
                 dropoff={dropoff}
                 route={route}
@@ -893,6 +999,9 @@ export const StreetMap: React.FC<StreetMapProps> = ({
                 d3Active={d3Visible}
                 focusTarget={focusTarget}
                 isFullscreen={isFullscreen}
+                centerPinMode={centerPinMode}
+                onCenterChange={onCenterChange}
+                onMoveStateChange={onMoveStateChange}
                 onLocateUser={onLocateUser}
                 setGpsNotice={setGpsNotice}
                 mapActionsRef={mapActionsRef}
@@ -903,7 +1012,7 @@ export const StreetMap: React.FC<StreetMapProps> = ({
                 points={resolvedPoints}
                 visible={d3Visible}
                 audience={demandAudience}
-                interactive={!pickMode}
+                interactive={!pickMode && !centerPinMode}
                 selectedHotspotId={selectedHotspot?.id || null}
                 onHotspotHover={setHoveredHotspot}
                 onHotspotSelect={(hs) => {
@@ -912,7 +1021,7 @@ export const StreetMap: React.FC<StreetMapProps> = ({
                 }}
               />
 
-              {pickup && (
+              {!hideMarkers && pickup && (
                 <AdvancedMarker
                   position={{ lat: pickup.lat, lng: pickup.lng }}
                   onClick={() =>
@@ -928,7 +1037,7 @@ export const StreetMap: React.FC<StreetMapProps> = ({
                 </AdvancedMarker>
               )}
 
-              {dropoff && (
+              {!hideMarkers && !centerPinMode && dropoff && (
                 <AdvancedMarker
                   position={{ lat: dropoff.lat, lng: dropoff.lng }}
                   onClick={() =>

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Bell,
   CarFront,
@@ -9,7 +9,10 @@ import {
   ShieldCheck,
   Sparkles,
   User as UserIcon,
+  Volume2,
+  VolumeX,
   Wallet as WalletIcon,
+  X,
 } from 'lucide-react';
 import { BrandLogo, LanguageToggle, PWAInstallButton, ThemeModeToggle } from '../../components/BrandMark';
 import { ProRiderAiCopilot } from '../../components/ProRiderAiCopilot';
@@ -36,9 +39,19 @@ import {
   setStoredRoleUser,
   useRoleWebSocket,
 } from '../../utils/api';
+import {
+  getSavedRideBellSound,
+  playRideBell,
+  RIDE_BELL_OPTIONS,
+  saveRideBellSound,
+  sendRideBrowserNotification,
+  type RideBellSoundId,
+} from '../../utils/rideBell';
 import { PassengerAuth } from './PassengerAuth';
 import { PassengerBookingFlow } from './PassengerBookingFlow';
 import {
+  isActiveBookingStatus,
+  isPendingBookingStatus,
   NotificationsView,
   PassengerBookingsView,
   PassengerProfileView,
@@ -50,14 +63,56 @@ type PassengerTab = 'home' | 'bookings' | 'wallet' | 'notifications' | 'support'
 
 const getLocalPassengerBookingsKey = (userId?: string) => `pr_local_bookings_passenger_${userId || 'guest'}`;
 
-function readLocalPassengerBookings(userId?: string): Booking[] {
-  try {
-    const raw = localStorage.getItem(getLocalPassengerBookingsKey(userId));
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter((b: Booking) => !userId || b.passenger_id === userId || b.passenger_id === 'local-passenger') : [];
-  } catch {
-    return [];
+function readLocalPassengerBookings(userId?: string, extraIds: Array<string | undefined | null> = []): Booking[] {
+  const candidateKeys = Array.from(
+    new Set(
+      [userId, ...extraIds, 'local-passenger', 'guest']
+        .filter((v): v is string => Boolean(v))
+        .map((id) => getLocalPassengerBookingsKey(id))
+    )
+  );
+  const allowedOwnerIds = new Set(
+    [userId, ...extraIds, 'local-passenger', 'guest'].filter((v): v is string => Boolean(v))
+  );
+  const merged = new Map<string, Booking>();
+  for (const key of candidateKeys) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) continue;
+      for (const b of parsed as Booking[]) {
+        if (!b || !b.id) continue;
+        if (allowedOwnerIds.size > 0 && b.passenger_id && !allowedOwnerIds.has(b.passenger_id)) {
+          continue;
+        }
+        if (!merged.has(b.id)) {
+          merged.set(b.id, b);
+        }
+      }
+    } catch {
+      // ignore malformed storage entry
+    }
+  }
+  return Array.from(merged.values()).sort((a, b) =>
+    String(b.created_at || '').localeCompare(String(a.created_at || ''))
+  );
+}
+
+function saveLocalPassengerBooking(booking: Booking, userId?: string, extraId?: string | null) {
+  const targetIds = Array.from(
+    new Set([userId, extraId, booking.passenger_id].filter((v): v is string => Boolean(v)))
+  );
+  for (const id of targetIds) {
+    try {
+      const key = getLocalPassengerBookingsKey(id);
+      const raw = localStorage.getItem(key);
+      const existing = raw ? (JSON.parse(raw) as Booking[]) : [];
+      const filtered = (Array.isArray(existing) ? existing : []).filter((item) => item?.id !== booking.id);
+      localStorage.setItem(key, JSON.stringify([booking, ...filtered].slice(0, 50)));
+    } catch {
+      // ignore storage quota errors
+    }
   }
 }
 
@@ -75,10 +130,14 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
   onNavigate,
 }) => {
   const { isDark } = useTheme();
+  const { firebaseUser, signOutFirebase } = useFirebase();
   const [token, setToken] = useState<string | null>(() => getRoleToken('passenger'));
   const [user, setUser] = useState<User | null>(() => getStoredRoleUser<User>('passenger'));
   const [tab, setTab] = useState<PassengerTab>('home');
-  const [bookings, setBookings] = useState<Booking[]>(() => readLocalPassengerBookings(getStoredRoleUser<User>('passenger')?.id));
+  const [bookingsSubTab, setBookingsSubTab] = useState<'pending' | 'active' | undefined>(undefined);
+  const [bookings, setBookings] = useState<Booking[]>(() =>
+    readLocalPassengerBookings(getStoredRoleUser<User>('passenger')?.id)
+  );
   const [wallet, setWallet] = useState<{
     balancePkr: number;
     totalPaymentsPkr: number;
@@ -90,6 +149,19 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
   const [demandData, setDemandData] = useState<DemandMapData | null>(null);
   const [supportBookingId, setSupportBookingId] = useState('');
   const [livePartnerLocations, setLivePartnerLocations] = useState<Record<string, { lat: number; lng: number }>>({});
+  const [bellSound, setBellSound] = useState<RideBellSoundId>(() => getSavedRideBellSound('passenger'));
+  const [bellMenuOpen, setBellMenuOpen] = useState(false);
+  const bellSoundRef = useRef(bellSound);
+  bellSoundRef.current = bellSound;
+  const bellMenuWrapRef = useRef<HTMLDivElement | null>(null);
+
+  const handleChangeBellSound = useCallback((next: RideBellSoundId) => {
+    setBellSound(next);
+    saveRideBellSound(next, 'passenger');
+    if (next !== 'muted') {
+      playRideBell(next);
+    }
+  }, []);
 
   const loadDemand = useCallback(async () => {
     try {
@@ -104,55 +176,104 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
 
   const loadAll = useCallback(async () => {
     if (!token) return;
-    try {
-      const [meRes, bkRes, wlRes, ntRes, tkRes] = await Promise.all([
-        apiRequest<{ user: User }>('/api/auth/me', { role: 'passenger' }),
-        apiRequest<{ bookings: Booking[] }>('/api/passenger/bookings', { role: 'passenger' }),
-        apiRequest<typeof wallet>('/api/passenger/wallet', { role: 'passenger' }),
-        apiRequest<{ notifications: AppNotification[] }>('/api/passenger/notifications', { role: 'passenger' }),
-        apiRequest<{ tickets: SupportTicket[] }>('/api/passenger/support', { role: 'passenger' }),
-      ]);
-      if (meRes?.user) {
-        setUser(meRes.user);
-        setStoredRoleUser('passenger', meRes.user);
-      }
-      if (Array.isArray(bkRes?.bookings)) {
-        setBookings(bkRes.bookings);
-      }
-      if (wlRes && typeof wlRes.balancePkr === 'number') {
-        setWallet({
-          balancePkr: wlRes.balancePkr || 0,
-          totalPaymentsPkr: wlRes.totalPaymentsPkr || 0,
-          outstandingPkr: wlRes.outstandingPkr || 0,
-          transactions: Array.isArray(wlRes.transactions) ? wlRes.transactions : [],
-        });
-      }
-      if (Array.isArray(ntRes?.notifications)) {
-        setNotifications(ntRes.notifications);
-      }
-      if (Array.isArray(tkRes?.tickets)) {
-        setTickets(tkRes.tickets);
-      }
-      void loadDemand();
-    } catch (err) {
-      if (isBackendOfflineError(err) || token.startsWith('pr_fb_')) {
-        // Static hosting (Vercel without Node backend) or transient backend outage:
-        // keep authenticated Firebase/local session intact and hydrate cached bookings.
-        setBookings((prev) => {
-          const localUser = user || getStoredRoleUser<User>('passenger');
-          const local = readLocalPassengerBookings(localUser?.id);
-          return local.length > 0 ? local : Array.isArray(prev) ? prev : [];
-        });
-        setUser((prev) => prev || getStoredRoleUser<User>('passenger'));
-        return;
-      }
-      if (err instanceof ApiRequestError && (err.status === 401 || err.status === 403)) {
-        setRoleToken('passenger', null);
-        setToken(null);
-        setUser(null);
-      }
+    const [meRes, bkRes, wlRes, ntRes, tkRes] = await Promise.allSettled([
+      apiRequest<{ user: User }>('/api/auth/me', { role: 'passenger' }),
+      apiRequest<{ bookings: Booking[] }>('/api/passenger/bookings', { role: 'passenger' }),
+      apiRequest<typeof wallet>('/api/passenger/wallet', { role: 'passenger' }),
+      apiRequest<{ notifications: AppNotification[] }>('/api/passenger/notifications', { role: 'passenger' }),
+      apiRequest<{ tickets: SupportTicket[] }>('/api/passenger/support', { role: 'passenger' }),
+    ]);
+
+    const meErr = meRes.status === 'rejected' ? meRes.reason : null;
+    const bkErr = bkRes.status === 'rejected' ? bkRes.reason : null;
+
+    if (meRes.status === 'fulfilled' && meRes.value?.user) {
+      setUser(meRes.value.user);
+      setStoredRoleUser('passenger', meRes.value.user);
     }
-  }, [token, loadDemand]);
+
+    const activeUserId =
+      (meRes.status === 'fulfilled' ? meRes.value?.user?.id : undefined) ||
+      user?.id ||
+      getStoredRoleUser<User>('passenger')?.id;
+
+    if (bkRes.status === 'fulfilled' && Array.isArray(bkRes.value?.bookings)) {
+      const serverList = bkRes.value.bookings;
+      const localList = readLocalPassengerBookings(activeUserId, [firebaseUser?.uid]);
+      const serverIds = new Set(serverList.map((b) => b.id));
+      const unsyncedLocal = localList.filter((b) => !serverIds.has(b.id) && b.id.startsWith('BK-'));
+      const combined = [...unsyncedLocal, ...serverList].sort((a, b) =>
+        String(b.created_at || '').localeCompare(String(a.created_at || ''))
+      );
+
+      setBookings((prev) => {
+        const prevConfirmedIds = new Set(
+          (Array.isArray(prev) ? prev : [])
+            .filter((b) => isActiveBookingStatus(b.status))
+            .map((b) => b.id)
+        );
+        const newlyConfirmedBooking = combined.find(
+          (b) =>
+            isActiveBookingStatus(b.status) &&
+            prev.length > 0 &&
+            !prevConfirmedIds.has(b.id)
+        );
+        if (newlyConfirmedBooking) {
+          playRideBell(bellSoundRef.current);
+          sendRideBrowserNotification(
+            tr(lang, 'Ride Confirmed & Active!', 'آپ کی رائیڈ کنفرم ہو کر ایکٹیو ہو گئی!'),
+            `${newlyConfirmedBooking.pickup_address} → ${newlyConfirmedBooking.dropoff_address}`
+          );
+        }
+        return combined;
+      });
+    } else if (
+      bkErr &&
+      (isBackendOfflineError(bkErr) || token.startsWith('pr_fb_'))
+    ) {
+      setBookings((prev) => {
+        const local = readLocalPassengerBookings(activeUserId, [firebaseUser?.uid]);
+        if (local.length > 0) return local;
+        return Array.isArray(prev) ? prev : [];
+      });
+      setUser((prev) => prev || getStoredRoleUser<User>('passenger'));
+    } else if (
+      !token.startsWith('pr_fb_') &&
+      bkErr instanceof ApiRequestError &&
+      (bkErr.status === 401 || bkErr.status === 403)
+    ) {
+      setRoleToken('passenger', null);
+      setToken(null);
+      setUser(null);
+      return;
+    } else if (
+      !token.startsWith('pr_fb_') &&
+      meErr instanceof ApiRequestError &&
+      (meErr.status === 401 || meErr.status === 403) &&
+      bkRes.status !== 'fulfilled'
+    ) {
+      setRoleToken('passenger', null);
+      setToken(null);
+      setUser(null);
+      return;
+    }
+
+    if (wlRes.status === 'fulfilled' && wlRes.value && typeof wlRes.value.balancePkr === 'number') {
+      setWallet({
+        balancePkr: wlRes.value.balancePkr || 0,
+        totalPaymentsPkr: wlRes.value.totalPaymentsPkr || 0,
+        outstandingPkr: wlRes.value.outstandingPkr || 0,
+        transactions: Array.isArray(wlRes.value.transactions) ? wlRes.value.transactions : [],
+      });
+    }
+    if (ntRes.status === 'fulfilled' && Array.isArray(ntRes.value?.notifications)) {
+      setNotifications(ntRes.value.notifications);
+    }
+    if (tkRes.status === 'fulfilled' && Array.isArray(tkRes.value?.tickets)) {
+      setTickets(tkRes.value.tickets);
+    }
+    void loadDemand();
+  }, [token, loadDemand, lang, user?.id, firebaseUser?.uid]);
 
   useEffect(() => {
     loadAll();
@@ -161,10 +282,34 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
   useEffect(() => {
     if (!token) return;
     const timer = setInterval(() => {
-      void loadDemand();
-    }, 30000);
-    return () => clearInterval(timer);
-  }, [token, loadDemand]);
+      void loadAll();
+    }, 15000);
+    const onFocus = () => void loadAll();
+    window.addEventListener('focus', onFocus);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [token, loadAll]);
+
+  useEffect(() => {
+    const onBellUpdated = () => {
+      setBellSound(getSavedRideBellSound('passenger'));
+    };
+    window.addEventListener('pr:bell-updated', onBellUpdated);
+    return () => window.removeEventListener('pr:bell-updated', onBellUpdated);
+  }, []);
+
+  useEffect(() => {
+    if (!bellMenuOpen) return;
+    const onDocDown = (e: MouseEvent) => {
+      if (bellMenuWrapRef.current && !bellMenuWrapRef.current.contains(e.target as Node)) {
+        setBellMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocDown);
+    return () => document.removeEventListener('mousedown', onDocDown);
+  }, [bellMenuOpen]);
 
   useRoleWebSocket('passenger', token, (event, data) => {
     if (event === 'config:updated') {
@@ -177,11 +322,29 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
     } else if (
       ['booking:offer', 'booking:updated', 'notification:new'].includes(event)
     ) {
-      loadAll();
+      if (event === 'booking:offer' || event === 'booking:updated') {
+        playRideBell(bellSoundRef.current);
+        if (event === 'booking:updated' && data?.status === 'confirmed') {
+          sendRideBrowserNotification(
+            tr(lang, 'Booking Confirmed!', 'بُکنگ کنفرم ہو گئی!'),
+            tr(lang, 'Your ride is now in Active bookings.', 'آپ کی رائیڈ اب ایکٹیو بکنگز میں شامل ہو گئی ہے۔')
+          );
+        }
+      }
+      void loadAll();
     }
   });
 
-  const { signOutFirebase } = useFirebase();
+  const handleBookingCreated = useCallback(
+    (created: Booking) => {
+      saveLocalPassengerBooking(created, user?.id, firebaseUser?.uid);
+      setBookings((prev) => {
+        const list = Array.isArray(prev) ? prev : [];
+        return [created, ...list.filter((b) => b.id !== created.id)];
+      });
+    },
+    [user?.id, firebaseUser?.uid]
+  );
 
   const handleLogout = () => {
     setRoleToken('passenger', null);
@@ -210,12 +373,15 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
   const safeNotifications = Array.isArray(notifications) ? notifications : [];
   const safeBookings = Array.isArray(bookings) ? bookings : [];
   const unreadCount = safeNotifications.filter((n) => n.is_read === 0).length;
+  const openBookingsCount = safeBookings.filter(
+    (b) => isPendingBookingStatus(b.status) || isActiveBookingStatus(b.status)
+  ).length;
 
   const navItems: Array<{ id: PassengerTab; label: string; icon: any; badge?: number }> = [
     { id: 'home', label: t(lang, 'home'), icon: Home },
-    { id: 'bookings', label: t(lang, 'myBookings'), icon: CarFront },
+    { id: 'bookings', label: t(lang, 'myBookings'), icon: CarFront, badge: openBookingsCount || undefined },
     { id: 'wallet', label: t(lang, 'wallet'), icon: WalletIcon },
-    { id: 'notifications', label: t(lang, 'notifications'), icon: Bell, badge: unreadCount },
+    { id: 'notifications', label: t(lang, 'notifications'), icon: Bell, badge: unreadCount || undefined },
     { id: 'support', label: t(lang, 'support'), icon: HelpCircle },
     { id: 'profile', label: t(lang, 'profile'), icon: UserIcon },
   ];
@@ -318,6 +484,101 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
               </span>
               <span className="tracking-wide">{tr(lang, 'AI', 'اے آئی')}</span>
             </button>
+
+            {/* In-App Notification Bell & Permissions Quick Controller */}
+            <div ref={bellMenuWrapRef} className="relative">
+              <button
+                type="button"
+                onClick={() => setBellMenuOpen((v) => !v)}
+                aria-label={tr(lang, 'Notification Bell & Permissions', 'نوٹیفکیشن بیل اور پرمیشنز')}
+                className="relative p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl border border-zinc-200 bg-white text-[#0D0D10] hover:border-[#D4A017] transition-colors inline-flex items-center gap-1"
+              >
+                {bellSound === 'muted' ? (
+                  <VolumeX className="w-4 h-4 text-zinc-500" />
+                ) : (
+                  <Bell className="w-4 h-4 text-[#B8860B]" />
+                )}
+                {unreadCount > 0 && (
+                  <span className="w-4 h-4 rounded-full bg-red-600 text-white text-[9px] font-bold flex items-center justify-center leading-none">
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                )}
+              </button>
+
+              {bellMenuOpen && (
+                <div className="fixed inset-x-3 top-14 sm:inset-x-auto sm:top-auto sm:mt-2 sm:absolute sm:right-0 sm:w-72 rounded-2xl border-2 border-[#0D0D10] bg-white shadow-2xl p-3.5 space-y-3 z-50 text-left">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-extrabold text-[#0D0D10]">
+                      {tr(lang, 'In-App Bell & Permissions', 'بیل اور ایپ پرمیشنز')}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setBellMenuOpen(false)}
+                      className="text-zinc-500 hover:text-[#0D0D10]"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    {RIDE_BELL_OPTIONS.map((opt) => {
+                      const active = bellSound === opt.id;
+                      return (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => handleChangeBellSound(opt.id)}
+                          className={`w-full px-2.5 py-2 rounded-xl border text-left transition-colors ${
+                            active
+                              ? 'bg-[#0D0D10] border-[#0D0D10] text-[#F4C430]'
+                              : 'bg-zinc-50 border-zinc-200 text-[#0D0D10] hover:bg-zinc-100'
+                          }`}
+                        >
+                          <div className="text-[11px] font-bold">{lang === 'ur' ? opt.labelUr : opt.labelEn}</div>
+                          <div className={`text-[10px] ${active ? 'text-zinc-300' : 'text-zinc-600'}`}>
+                            {opt.descriptionEn}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => playRideBell(bellSound === 'muted' ? 'soft_gold' : bellSound)}
+                      className="py-2 rounded-xl bg-[#D4A017] text-[#0D0D10] text-[11px] font-bold flex items-center justify-center gap-1 hover:bg-[#EAB308]"
+                    >
+                      <Volume2 className="w-3.5 h-3.5" />
+                      {tr(lang, 'Test Bell', 'بیل ٹیسٹ')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBellMenuOpen(false);
+                        window.dispatchEvent(new CustomEvent('open-prorider-permissions'));
+                      }}
+                      className="py-2 rounded-xl border border-zinc-200 bg-zinc-50 text-[#0D0D10] text-[11px] font-bold flex items-center justify-center gap-1 hover:bg-zinc-100"
+                    >
+                      <ShieldCheck className="w-3.5 h-3.5 text-[#D4A017]" />
+                      {tr(lang, 'Permissions', 'پرمیشنز')}
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBellMenuOpen(false);
+                      setTab('notifications');
+                    }}
+                    className="w-full py-2 rounded-xl bg-zinc-900 text-white text-[11px] font-semibold hover:bg-zinc-800"
+                  >
+                    {tr(lang, `Open Notifications (${unreadCount} unread)`, `نوٹیفکیشنز کھولیں (${unreadCount})`)}
+                  </button>
+                </div>
+              )}
+            </div>
+
             <div className="scale-90 sm:scale-100 origin-right shrink-0 flex items-center gap-1.5">
               <ThemeModeToggle lang={lang} dark={isDark} />
               <LanguageToggle lang={lang} onChange={onChangeLang} dark={isDark} />
@@ -342,10 +603,15 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
               config={config}
               bookings={safeBookings}
               demandData={demandData}
+              passengerId={user.id}
               passengerName={user.full_name}
               livePartnerLocations={livePartnerLocations}
               onRefreshBookings={loadAll}
-              onGoToBookings={() => setTab('bookings')}
+              onBookingCreated={handleBookingCreated}
+              onGoToBookings={(targetTab) => {
+                setBookingsSubTab(targetTab);
+                setTab('bookings');
+              }}
             />
           )}
           {tab === 'bookings' && (
@@ -353,6 +619,7 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
               lang={lang}
               bookings={safeBookings}
               passengerName={user.full_name}
+              initialTab={bookingsSubTab}
               onRefresh={loadAll}
               onOpenSupport={(bkId) => {
                 setSupportBookingId(bkId);
@@ -372,6 +639,9 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
           {tab === 'notifications' && (
             <NotificationsView
               lang={lang}
+              role="passenger"
+              bellSound={bellSound}
+              onChangeBellSound={handleChangeBellSound}
               notifications={safeNotifications}
               onMarkAllRead={async () => {
                 try {
@@ -397,6 +667,8 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
               lang={lang}
               user={user}
               unreadNotifications={unreadCount}
+              bellSound={bellSound}
+              onChangeBellSound={handleChangeBellSound}
               onOpenNotifications={() => setTab('notifications')}
               onUpdated={(updated) => {
                 setUser(updated);
@@ -412,7 +684,7 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-30 bg-white/95 backdrop-blur border-t border-zinc-200 grid grid-cols-4 h-14 pb-safe">
         {[
           { id: 'home' as PassengerTab, label: t(lang, 'home'), icon: Home },
-          { id: 'bookings' as PassengerTab, label: t(lang, 'rides'), icon: CarFront },
+          { id: 'bookings' as PassengerTab, label: t(lang, 'rides'), icon: CarFront, badge: openBookingsCount || undefined },
           { id: 'wallet' as PassengerTab, label: t(lang, 'wallet'), icon: WalletIcon },
           { id: 'profile' as PassengerTab, label: t(lang, 'profile'), icon: UserIcon },
         ].map((item) => {
@@ -423,11 +695,18 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
               key={item.id}
               type="button"
               onClick={() => setTab(item.id)}
-              className={`flex flex-col items-center justify-center gap-0.5 text-[10px] font-semibold ${
+              className={`relative flex flex-col items-center justify-center gap-0.5 text-[10px] font-semibold ${
                 active ? 'text-[#B8860B]' : 'text-zinc-500'
               }`}
             >
-              <Icon className="w-5 h-5" />
+              <div className="relative">
+                <Icon className="w-5 h-5" />
+                {item.badge ? (
+                  <span className="absolute -top-1 -right-2 min-w-[14px] h-[14px] px-1 rounded-full bg-red-600 text-white text-[9px] font-bold flex items-center justify-center leading-none">
+                    {item.badge}
+                  </span>
+                ) : null}
+              </div>
               <span>{item.label}</span>
             </button>
           );

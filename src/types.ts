@@ -178,6 +178,11 @@ export interface PublicConfig {
   supportEmail: string;
   goNowMinOfferPct: number;
   goNowMaxOfferPct: number;
+  minPartnerWalletPkr?: number;
+  instantCommissionPct?: number;
+  useGlobalInstantCommission?: boolean;
+  commissionDeductionRule?: string;
+  minMonthlyPartnerWalletPkr?: number;
   scheduleDefaults: {
     pickupTime: string;
     dropTime: string;
@@ -262,6 +267,32 @@ export interface WalletTransaction {
   created_at: string;
 }
 
+export interface BookingApplication {
+  id: string;
+  booking_id: string;
+  partner_id: string;
+  status: 'pending' | 'approved' | 'rejected';
+  note?: string;
+  proposed_fare_pkr?: number | null;
+  distance_to_pickup_km?: number | null;
+  wallet_balance_snapshot_pkr?: number | null;
+  created_at: string;
+  reviewed_at?: string | null;
+  partner_name?: string;
+  partner_phone?: string;
+  partner_whatsapp?: string;
+  partner_email?: string;
+  partner_city?: string;
+  partner_vehicle_name?: string;
+  partner_vehicle_number?: string;
+  partner_seating_capacity?: number;
+  partner_verification_status?: string;
+  partner_operating_city?: string;
+  completed_trips?: number;
+  avg_rating?: number | null;
+  wallet_balance_pkr?: number;
+}
+
 export interface Booking {
   id: string;
   invoice_number: string;
@@ -269,6 +300,9 @@ export interface Booking {
   service_type: ServiceType;
   passenger_id: string;
   partner_id: string | null;
+  priority_partner_id?: string | null;
+  is_priority_for_me?: boolean;
+  driver_distance_km?: number | null;
   vehicle_category_id: string;
   vehicle_category_name?: string;
   vehicle_image_url?: string;
@@ -295,6 +329,7 @@ export interface Booking {
   total_bill_pkr: number;
   amount_paid_pkr: number;
   commission_pkr: number;
+  commission_deducted?: number;
   payment_status: 'UNPAID' | 'PARTIALLY_PAID' | 'PAID';
   status: BookingStatus;
   partner_name?: string;
@@ -315,6 +350,9 @@ export interface Booking {
   commission_pct?: number;
   driver_payout_pkr?: number;
   my_rating?: number | null;
+  my_application?: BookingApplication | null;
+  total_applicants_count?: number;
+  applications?: BookingApplication[];
   offers?: BookingOffer[];
   my_offers?: BookingOffer[];
   transactions?: WalletTransaction[];

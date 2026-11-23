@@ -20,7 +20,7 @@ import { BrandLogo, LanguageToggle, VehicleImage } from '../../components/BrandM
 import { DEFAULT_PUBLIC_CONFIG } from '../../config/defaultConfig';
 import { formatFirebaseAuthError, useFirebase } from '../../contexts/FirebaseContext';
 import { useTheme } from '../../contexts/ThemeContext';
-import { tr, trService, trVerificationStatus } from '../../i18n/translations';
+import { formatVehicleLabel, tr, trService, trVerificationStatus } from '../../i18n/translations';
 import { apiRequest, isBackendOfflineError, setRoleToken, setStoredRoleUser } from '../../utils/api';
 import { compressAndReadUploadFile } from '../../utils/imageUpload';
 import type {
@@ -1066,9 +1066,9 @@ export const PartnerVerificationAndVehicleView: React.FC<{
                       : 'border-zinc-200 bg-white hover:border-zinc-300'
                   }`}
                 >
-                  <VehicleImage src={f.image_url} alt={f.name} className="w-14 h-10 rounded-lg border shrink-0" />
+                  <VehicleImage src={f.image_url} alt={f.name} categorySlug={f.slug} className="w-14 h-10 rounded-lg border shrink-0" />
                   <div className="min-w-0 flex-1">
-                    <div className="text-[11px] font-bold text-[#0D0D10] truncate">{f.name}</div>
+                    <div className="text-[11px] font-bold text-[#0D0D10] truncate">{formatVehicleLabel(f.name, lang)}</div>
                     <div className="text-[10px] text-zinc-500 font-mono">
                       {f.seating_capacity} {tr(lang, 'Seats', 'سیٹیں')}
                     </div>

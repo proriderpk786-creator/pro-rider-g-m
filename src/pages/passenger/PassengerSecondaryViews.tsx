@@ -1,26 +1,38 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Bell,
   CheckCircle2,
+  ChevronRight,
+  Clock,
   CreditCard,
   Download,
   HelpCircle,
   Lock,
   PhoneCall,
   Radio,
+  RefreshCw,
   Share2,
   ShieldAlert,
   ShieldCheck,
   Star,
   UserCheck,
+  Volume2,
+  VolumeX,
   Wallet as WalletIcon,
   X,
 } from 'lucide-react';
 import { ShareTripStatusModal } from '../../components/ShareTripStatusModal';
-import { ThemePreferencesPanel } from '../../components/ThemeSwitcher';
+import { ProfileThemeRowButton } from '../../components/ThemeSwitcher';
 import { tr, trBookingStatus, trPaymentStatus, trService } from '../../i18n/translations';
 import { apiRequest } from '../../utils/api';
 import { downloadBookingPdf, downloadWalletStatementPdf, shareBookingPdf } from '../../utils/pdfGenerator';
+import {
+  getSavedRideBellSound,
+  playRideBell,
+  RIDE_BELL_OPTIONS,
+  saveRideBellSound,
+  type RideBellSoundId,
+} from '../../utils/rideBell';
 import type {
   AppNotification,
   Booking,
@@ -30,15 +42,61 @@ import type {
   WalletTransaction,
 } from '../../types';
 
+function formatVehicleLabel(rawName: string | undefined, lang: Language): string {
+  const clean = String(rawName || 'Economy').trim();
+  if (!clean.includes('·')) return clean;
+  const parts = clean.split('·').map((p) => p.trim()).filter(Boolean);
+  if (parts.length <= 1) return clean;
+  return lang === 'ur' ? parts[1] || parts[0] : parts[0];
+}
+
+export function isPendingBookingStatus(status?: string): boolean {
+  const s = String(status || '').toLowerCase();
+  return s === 'searching' || s === 'negotiating' || s === 'pending';
+}
+
+export function isActiveBookingStatus(status?: string): boolean {
+  const s = String(status || '').toLowerCase();
+  return ['confirmed', 'accepted', 'assigned', 'on_the_way', 'arrived', 'started', 'in_progress'].includes(s);
+}
+
 // Screen 12: My Bookings
 export const PassengerBookingsView: React.FC<{
   bookings: Booking[];
   passengerName: string;
   lang?: Language;
+  initialTab?: 'pending' | 'active' | 'completed' | 'cancelled';
   onRefresh: () => Promise<void>;
   onOpenSupport: (bookingId: string) => void;
-}> = ({ bookings, passengerName, lang = 'en', onRefresh, onOpenSupport }) => {
-  const [tab, setTab] = useState<'upcoming' | 'active' | 'completed' | 'cancelled'>('active');
+}> = ({ bookings, passengerName, lang = 'en', initialTab, onRefresh, onOpenSupport }) => {
+  const pendingList = bookings.filter((b) => isPendingBookingStatus(b.status));
+  const activeList = bookings.filter((b) => isActiveBookingStatus(b.status));
+  const completedList = bookings.filter((b) => String(b.status || '').toLowerCase() === 'completed');
+  const cancelledList = bookings.filter((b) => String(b.status || '').toLowerCase() === 'cancelled');
+
+  const [tab, setTab] = useState<'pending' | 'active' | 'completed' | 'cancelled'>(() => {
+    if (initialTab) return initialTab;
+    if (activeList.length > 0) return 'active';
+    return 'pending';
+  });
+  const manualTabSelectedRef = useRef(Boolean(initialTab));
+  const [refreshing, setRefreshing] = useState(false);
+  const [actionBusyId, setActionBusyId] = useState<string | null>(null);
+  const [actionMsg, setActionMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (initialTab) {
+      setTab(initialTab);
+      manualTabSelectedRef.current = true;
+    }
+  }, [initialTab]);
+
+  useEffect(() => {
+    if (!manualTabSelectedRef.current && activeList.length > 0 && pendingList.length === 0) {
+      setTab('active');
+    }
+  }, [activeList.length, pendingList.length]);
+
   const [ratingTarget, setRatingTarget] = useState<string | null>(null);
   const [stars, setStars] = useState(5);
   const [comment, setComment] = useState('');
@@ -62,12 +120,80 @@ export const PassengerBookingsView: React.FC<{
     }
   };
 
-  const filtered = bookings.filter((b) => {
-    if (tab === 'upcoming') return b.booking_mode === 'schedule' && ['searching', 'negotiating', 'confirmed'].includes(b.status);
-    if (tab === 'active') return ['searching', 'negotiating', 'confirmed', 'on_the_way', 'arrived', 'started'].includes(b.status);
-    if (tab === 'completed') return b.status === 'completed';
-    return b.status === 'cancelled';
-  });
+  const filtered =
+    tab === 'pending'
+      ? pendingList
+      : tab === 'active'
+      ? activeList
+      : tab === 'completed'
+      ? completedList
+      : cancelledList;
+
+  const counts: Record<'pending' | 'active' | 'completed' | 'cancelled', number> = {
+    pending: pendingList.length,
+    active: activeList.length,
+    completed: completedList.length,
+    cancelled: cancelledList.length,
+  };
+
+  const handleManualRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const handleAcceptOffer = async (bookingId: string, offerId: string) => {
+    setActionBusyId(offerId);
+    setActionMsg(null);
+    try {
+      await apiRequest(`/api/passenger/bookings/${bookingId}/accept-offer`, {
+        method: 'POST',
+        role: 'passenger',
+        body: { offerId },
+      });
+      await onRefresh();
+      setTab('active');
+      setActionMsg(tr(lang, 'Offer accepted! Your ride is now Active.', 'آفر قبول کر لی گئی! آپ کی رائیڈ اب ایکٹیو ٹیب میں ہے۔'));
+    } catch (err: any) {
+      setActionMsg(err?.message || 'Unable to accept offer.');
+    } finally {
+      setActionBusyId(null);
+    }
+  };
+
+  const handleRejectOffer = async (bookingId: string, offerId: string) => {
+    setActionBusyId(offerId);
+    try {
+      await apiRequest(`/api/passenger/bookings/${bookingId}/reject-offer`, {
+        method: 'POST',
+        role: 'passenger',
+        body: { offerId },
+      });
+      await onRefresh();
+    } finally {
+      setActionBusyId(null);
+    }
+  };
+
+  const handleCancelBooking = async (bookingId: string) => {
+    setActionBusyId(bookingId);
+    setActionMsg(null);
+    try {
+      await apiRequest(`/api/passenger/bookings/${bookingId}/cancel`, {
+        method: 'POST',
+        role: 'passenger',
+      });
+      await onRefresh();
+      setTab('cancelled');
+    } catch (err: any) {
+      setActionMsg(err?.message || 'Unable to cancel booking.');
+    } finally {
+      setActionBusyId(null);
+    }
+  };
 
   const submitRating = async (bookingId: string) => {
     await apiRequest(`/api/passenger/bookings/${bookingId}/rate`, {
@@ -80,165 +206,354 @@ export const PassengerBookingsView: React.FC<{
     await onRefresh();
   };
 
-  const tabLabels: Record<'active' | 'upcoming' | 'completed' | 'cancelled', string> = {
-    active: tr(lang, 'Active', 'جاری'),
-    upcoming: tr(lang, 'Upcoming', 'آنے والی'),
+  const tabLabels: Record<'pending' | 'active' | 'completed' | 'cancelled', string> = {
+    pending: tr(lang, 'Pending', 'پینڈنگ'),
+    active: tr(lang, 'Active', 'ایکٹیو'),
     completed: tr(lang, 'Completed', 'مکمل'),
     cancelled: tr(lang, 'Cancelled', 'منسوخ'),
   };
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3">
         <h2 className="font-display text-2xl font-bold text-[#0D0D10]">
           {tr(lang, 'My Bookings', 'میری بکنگز')}
         </h2>
-        <div className="inline-flex rounded-xl bg-zinc-100 p-1 gap-1">
-          {(['active', 'upcoming', 'completed', 'cancelled'] as const).map((tb) => (
-            <button
-              key={tb}
-              type="button"
-              onClick={() => setTab(tb)}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                tab === tb ? 'bg-[#0D0D10] text-white' : 'text-zinc-600 hover:text-[#0D0D10]'
-              }`}
-            >
-              {tabLabels[tb]}
-            </button>
-          ))}
+        <button
+          type="button"
+          onClick={handleManualRefresh}
+          disabled={refreshing}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-zinc-200 bg-white text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 shadow-2xs"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-[#D4A017]' : ''}`} />
+          <span>{tr(lang, 'Refresh', 'ریفریش')}</span>
+        </button>
+      </div>
+
+      {/* Single Clean 4-Tab Bar with Continuous Accent Bottom Line (No Duplicate Summary Cards) */}
+      <div className="border-b border-zinc-200">
+        <div className="grid grid-cols-4 gap-1">
+          {(['pending', 'active', 'completed', 'cancelled'] as const).map((tb) => {
+            const count = counts[tb];
+            const isSelected = tab === tb;
+            return (
+              <button
+                key={tb}
+                type="button"
+                onClick={() => {
+                  manualTabSelectedRef.current = true;
+                  setTab(tb);
+                }}
+                className={`relative pb-3 pt-2 px-1 text-[11px] sm:text-xs font-semibold transition-colors inline-flex items-center justify-center gap-1 whitespace-nowrap ${
+                  isSelected
+                    ? 'text-[#0D0D10] font-bold'
+                    : 'text-zinc-500 hover:text-[#0D0D10]'
+                }`}
+              >
+                <span className="truncate">{tabLabels[tb]}</span>
+                <span
+                  className={`font-mono text-[10px] px-1.5 py-0.5 rounded-full leading-none tabular-nums shrink-0 ${
+                    isSelected
+                      ? tb === 'pending'
+                        ? 'bg-amber-400 text-[#0D0D10]'
+                        : tb === 'active'
+                        ? 'bg-emerald-500 text-white'
+                        : 'bg-[#0D0D10] text-[#F4C430]'
+                      : count > 0 && tb === 'pending'
+                      ? 'bg-amber-100 text-amber-900'
+                      : count > 0 && tb === 'active'
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : 'bg-zinc-100 text-zinc-600'
+                  }`}
+                >
+                  {count}
+                </span>
+                {isSelected && (
+                  <span className="absolute left-1 right-1 -bottom-[1px] h-[2.5px] rounded-full bg-[#D4A017]" />
+                )}
+              </button>
+            );
+          })}
         </div>
       </div>
 
+      {actionMsg && (
+        <div className="rounded-xl bg-[#0D0D10] text-[#F4C430] px-4 py-2.5 text-xs font-semibold">
+          {actionMsg}
+        </div>
+      )}
+
       {filtered.length === 0 ? (
-        <div className="rounded-2xl border border-zinc-200 bg-white p-10 text-center text-sm text-zinc-500">
-          {tr(lang, `No ${tab} bookings found.`, `${tabLabels[tab]} بکنگز موجود نہیں ہیں۔`)}
+        <div className="rounded-2xl border border-zinc-200 bg-white p-10 text-center space-y-2.5">
+          <Clock className="w-8 h-8 text-zinc-300 mx-auto" />
+          <p className="text-sm font-semibold text-zinc-600">
+            {tr(lang, `No ${tab} bookings found.`, `${tabLabels[tab]} بکنگز موجود نہیں ہیں۔`)}
+          </p>
+          {tab === 'pending' && activeList.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                manualTabSelectedRef.current = true;
+                setTab('active');
+              }}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold"
+            >
+              {tr(lang, `View ${activeList.length} Active Ride(s)`, `${activeList.length} ایکٹیو رائیڈ دیکھیں`)}
+            </button>
+          )}
+          {tab === 'active' && pendingList.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                manualTabSelectedRef.current = true;
+                setTab('pending');
+              }}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-400 text-[#0D0D10] text-xs font-bold"
+            >
+              {tr(lang, `View ${pendingList.length} Pending Request(s)`, `${pendingList.length} پینڈنگ درخواستیں دیکھیں`)}
+            </button>
+          )}
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-4">
-          {filtered.map((b) => (
-            <div key={b.id} className="rounded-2xl border border-zinc-200 bg-white p-5 space-y-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500 font-mono">
-                    <span className="font-bold text-[#0D0D10]">{b.id}</span>
-                    <span aria-hidden="true">·</span>
-                    <span>{b.pickup_date} {b.pickup_time}</span>
-                    <span aria-hidden="true">·</span>
-                    <span>{trService(lang, b.service_type)}</span>
+        <div className="grid grid-cols-1 gap-3.5">
+          {filtered.map((b) => {
+            const isPending = isPendingBookingStatus(b.status);
+            const isActive = isActiveBookingStatus(b.status);
+            const pendingOffers = (Array.isArray(b.offers) ? b.offers : []).filter(
+              (o) => o.status === 'pending' && o.sender_role === 'partner'
+            );
+            const vehicleLabel = formatVehicleLabel(b.vehicle_category_name, lang);
+
+            return (
+              <div key={b.id} className="rounded-2xl border border-zinc-200 bg-white p-4 sm:p-5 space-y-3.5 shadow-xs">
+                <div className="flex flex-wrap items-start justify-between gap-2.5">
+                  <div className="space-y-1 min-w-0">
+                    <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500">
+                      <span className="font-mono font-bold text-[#0D0D10] bg-zinc-100 px-2 py-0.5 rounded-md">
+                        {b.id}
+                      </span>
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                          isPending
+                            ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                            : isActive
+                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                            : b.status === 'completed'
+                            ? 'bg-zinc-900 text-[#F4C430]'
+                            : 'bg-red-100 text-red-700'
+                        }`}
+                      >
+                        {trBookingStatus(lang, b.status)}
+                      </span>
+                      <span className="px-2 py-0.5 rounded-md bg-zinc-50 border border-zinc-200 text-zinc-700 font-semibold">
+                        {b.booking_mode === 'go_now'
+                          ? tr(lang, 'Instant Ride', 'فوری رائیڈ')
+                          : trService(lang, b.service_type)}
+                      </span>
+                      {b.booking_mode === 'schedule' && (
+                        <span className="px-2 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-900 font-bold text-[10px]">
+                          {tr(lang, 'Monthly Package', 'ماہانہ پیکیج')}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] font-mono text-zinc-500 tabular-nums">
+                      {b.pickup_date} · {b.pickup_time}
+                    </p>
                   </div>
-                  <p className="text-sm font-semibold text-[#0D0D10] mt-1">
-                    {b.pickup_address} → {b.dropoff_address}
-                  </p>
-                  <p className="text-xs text-zinc-500 mt-0.5">
-                    {b.vehicle_category_name} · {b.distance_km} km · {tr(lang, 'Status:', 'حالت:')}{' '}
-                    <strong className="uppercase">{trBookingStatus(lang, b.status)}</strong>
-                  </p>
+
+                  <div className="text-right shrink-0">
+                    <div className="font-mono text-lg sm:text-xl font-extrabold text-[#0D0D10] tabular-nums leading-none">
+                      Rs. {Number(b.total_bill_pkr).toLocaleString()}
+                    </div>
+                    <div className="text-[10px] font-semibold text-zinc-500 mt-1">
+                      {trPaymentStatus(lang, b.payment_status)} · {tr(lang, 'Paid', 'ادا شدہ')} Rs.{' '}
+                      {Number(b.amount_paid_pkr).toLocaleString()}
+                    </div>
+                  </div>
                 </div>
 
-                <div className="text-right">
-                  <div className="font-mono text-lg font-bold text-[#0D0D10]">
-                    Rs. {Number(b.total_bill_pkr).toLocaleString()}
+                {/* Clean Structured Pickup -> Drop-off Route Block */}
+                <div className="rounded-xl bg-zinc-50/90 border border-zinc-200/80 p-3 space-y-2">
+                  <div className="flex items-start gap-2.5 text-xs">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-600 mt-1 shrink-0 ring-2 ring-emerald-200" />
+                    <span className="font-semibold text-[#0D0D10] leading-snug">{b.pickup_address}</span>
                   </div>
-                  <div className="text-[11px] font-semibold text-zinc-500">
-                    {trPaymentStatus(lang, b.payment_status)} · {tr(lang, 'Paid', 'ادا شدہ')} Rs. {Number(b.amount_paid_pkr).toLocaleString()}
+                  <div className="flex items-start gap-2.5 text-xs">
+                    <span className="w-2.5 h-2.5 rounded-full bg-red-600 mt-1 shrink-0 ring-2 ring-red-200" />
+                    <span className="font-semibold text-[#0D0D10] leading-snug">{b.dropoff_address}</span>
                   </div>
                 </div>
-              </div>
 
-              <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-zinc-100">
-                <button
-                  type="button"
-                  onClick={() => setShareBooking(b)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#D4A017] text-[#0D0D10] text-xs font-bold hover:bg-[#EAB308] transition-colors"
-                  title={tr(lang, 'Share live trip route and ETA', 'لائیو روٹ اور آمد کا وقت شیئر کریں')}
-                >
-                  <Radio className="w-3.5 h-3.5 text-[#0D0D10]" />
-                  {tr(lang, 'Share Trip Status', 'سفر کا احوال شیئر کریں')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => downloadBookingPdf(b, 'passenger', passengerName)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0D0D10] text-white text-xs font-semibold hover:bg-zinc-800"
-                >
-                  <Download className="w-3.5 h-3.5 text-[#D4A017]" />
-                  {tr(lang, 'Download PDF', 'پی ڈی ایف ڈاؤن لوڈ')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => shareBookingPdf(b, 'passenger', passengerName)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-200 text-xs font-semibold hover:bg-zinc-50"
-                >
-                  <Share2 className="w-3.5 h-3.5" />
-                  {tr(lang, 'Share Invoice', 'انوائس شیئر')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onOpenSupport(b.id)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-200 text-xs font-semibold hover:bg-zinc-50"
-                >
-                  <HelpCircle className="w-3.5 h-3.5" />
-                  {tr(lang, 'Contact Support', 'سپورٹ سے رابطہ')}
-                </button>
-                {b.partner_id && (
-                  <button
-                    type="button"
-                    onClick={() => void openDriverPublicProfile(b.partner_id!)}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-200 bg-zinc-50 text-xs font-semibold hover:bg-zinc-100"
-                  >
-                    <UserCheck className="w-3.5 h-3.5 text-[#D4A017]" />
-                    {b.partner_name
-                      ? `${b.partner_name} · ${tr(lang, 'Profile', 'پروفائل')}`
-                      : tr(lang, 'Driver Profile', 'ڈرائیور پروفائل')}
-                  </button>
-                )}
-                {b.status === 'completed' && !b.my_rating && (
-                  <button
-                    type="button"
-                    onClick={() => setRatingTarget(b.id)}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#D4A017] text-[#0D0D10] text-xs font-bold"
-                  >
-                    <Star className="w-3.5 h-3.5" />
-                    {tr(lang, 'Rate Trip', 'ریٹنگ دیں')}
-                  </button>
-                )}
-                {b.my_rating && (
-                  <span className="text-xs font-semibold text-emerald-700 inline-flex items-center gap-1">
-                    <Star className="w-3.5 h-3.5 fill-amber-500 text-amber-500" />
-                    {tr(lang, `Rated ${b.my_rating}/5`, `ریٹنگ ${b.my_rating}/5`)}
-                  </span>
-                )}
-              </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-zinc-600">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-semibold text-[#0D0D10]">{vehicleLabel}</span>
+                    <span aria-hidden="true">·</span>
+                    <span dir="ltr" className="font-mono font-semibold tabular-nums">
+                      {b.distance_km} km
+                    </span>
+                  </div>
+                  {b.partner_name ? (
+                    <span>
+                      {tr(lang, 'Driver:', 'ڈرائیور:')}{' '}
+                      <strong className="text-[#0D0D10]">{b.partner_name}</strong>
+                    </span>
+                  ) : isPending ? (
+                    <span className="text-amber-700 font-semibold">
+                      {b.booking_mode === 'schedule' && (b.total_applicants_count || 0) > 0
+                        ? tr(
+                            lang,
+                            `${b.total_applicants_count} Pro Partner(s) Applied · Awaiting Admin Approval`,
+                            `${b.total_applicants_count} ڈرائیورز نے اپلائی کیا · ایڈمن منظوری کا انتظار`
+                          )
+                        : tr(lang, 'Waiting for Pro Partner', 'ڈرائیور کی تصدیق کا انتظار')}
+                    </span>
+                  ) : null}
+                </div>
 
-              {ratingTarget === b.id && (
-                <div className="p-3 rounded-xl bg-zinc-50 border border-zinc-200 flex flex-wrap items-center gap-3">
-                  <select
-                    value={stars}
-                    onChange={(e) => setStars(Number(e.target.value))}
-                    className="px-2.5 py-1.5 rounded-lg border border-zinc-200 bg-white text-xs"
-                  >
-                    {[5, 4, 3, 2, 1].map((n) => (
-                      <option key={n} value={n}>
-                        {n} {tr(lang, 'Stars', 'اسٹارز')}
-                      </option>
+                {/* Incoming Pro Partner Fare Offers on Pending Requests */}
+                {isPending && pendingOffers.length > 0 && (
+                  <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 space-y-2">
+                    <p className="text-xs font-bold text-amber-900">
+                      {tr(lang, 'Driver Fare Offer(s) Received:', 'ڈرائیور کی جانب سے کرایہ آفر موصول ہوئی:')}
+                    </p>
+                    {pendingOffers.map((offer) => (
+                      <div key={offer.id} className="flex flex-wrap items-center justify-between gap-2 bg-white rounded-lg p-2.5 border border-amber-200">
+                        <div className="text-xs">
+                          <span className="font-bold text-[#0D0D10]">
+                            {offer.partner_name || tr(lang, 'Pro Partner', 'پرو پارٹنر')}
+                          </span>
+                          {offer.partner_vehicle_name ? ` (${offer.partner_vehicle_name})` : ''} —{' '}
+                          <strong className="font-mono text-emerald-700">Rs. {Number(offer.amount_pkr).toLocaleString()}</strong>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            disabled={actionBusyId === offer.id}
+                            onClick={() => handleAcceptOffer(b.id, offer.id)}
+                            className="px-3 py-1 rounded-lg bg-emerald-700 text-white text-xs font-bold hover:bg-emerald-800 disabled:opacity-50"
+                          >
+                            {tr(lang, 'Accept Offer', 'قبول کریں')}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={actionBusyId === offer.id}
+                            onClick={() => handleRejectOffer(b.id, offer.id)}
+                            className="px-2.5 py-1 rounded-lg border border-zinc-200 text-xs font-semibold text-zinc-700 hover:bg-zinc-100 disabled:opacity-50"
+                          >
+                            {tr(lang, 'Decline', 'مسترد')}
+                          </button>
+                        </div>
+                      </div>
                     ))}
-                  </select>
-                  <input
-                    value={comment}
-                    onChange={(e) => setComment(e.target.value)}
-                    placeholder={tr(lang, 'Share trip feedback...', 'سفر کے بارے میں اپنی رائے لکھیں...')}
-                    className="flex-1 min-w-[180px] px-3 py-1.5 rounded-lg border border-zinc-200 bg-white text-xs"
-                  />
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-zinc-100">
                   <button
                     type="button"
-                    onClick={() => submitRating(b.id)}
-                    className="px-3.5 py-1.5 rounded-lg bg-[#0D0D10] text-white text-xs font-semibold"
+                    onClick={() => setShareBooking(b)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#D4A017] text-[#0D0D10] text-xs font-bold hover:bg-[#EAB308] transition-colors"
+                    title={tr(lang, 'Share live trip route and ETA', 'لائیو روٹ اور آمد کا وقت شیئر کریں')}
                   >
-                    {tr(lang, 'Submit Rating', 'ریٹنگ جمع کریں')}
+                    <Radio className="w-3.5 h-3.5 text-[#0D0D10]" />
+                    {tr(lang, 'Share Trip Status', 'سفر کا احوال شیئر کریں')}
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => downloadBookingPdf(b, 'passenger', passengerName)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0D0D10] text-white text-xs font-semibold hover:bg-zinc-800"
+                  >
+                    <Download className="w-3.5 h-3.5 text-[#D4A017]" />
+                    {tr(lang, 'Download PDF', 'پی ڈی ایف ڈاؤن لوڈ')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => shareBookingPdf(b, 'passenger', passengerName)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-200 text-xs font-semibold hover:bg-zinc-50"
+                  >
+                    <Share2 className="w-3.5 h-3.5" />
+                    {tr(lang, 'Share Invoice', 'انوائس شیئر')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onOpenSupport(b.id)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-200 text-xs font-semibold hover:bg-zinc-50"
+                  >
+                    <HelpCircle className="w-3.5 h-3.5" />
+                    {tr(lang, 'Contact Support', 'سپورٹ سے رابطہ')}
+                  </button>
+                  {isPending && (
+                    <button
+                      type="button"
+                      disabled={actionBusyId === b.id}
+                      onClick={() => handleCancelBooking(b.id)}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-red-200 bg-red-50 text-red-700 text-xs font-semibold hover:bg-red-100 disabled:opacity-50"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                      {tr(lang, 'Cancel Request', 'منسوخ کریں')}
+                    </button>
+                  )}
+                  {b.partner_id && (
+                    <button
+                      type="button"
+                      onClick={() => void openDriverPublicProfile(b.partner_id!)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-200 bg-zinc-50 text-xs font-semibold hover:bg-zinc-100"
+                    >
+                      <UserCheck className="w-3.5 h-3.5 text-[#D4A017]" />
+                      {b.partner_name
+                        ? `${b.partner_name} · ${tr(lang, 'Profile', 'پروفائل')}`
+                        : tr(lang, 'Driver Profile', 'ڈرائیور پروفائل')}
+                    </button>
+                  )}
+                  {b.status === 'completed' && !b.my_rating && (
+                    <button
+                      type="button"
+                      onClick={() => setRatingTarget(b.id)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#D4A017] text-[#0D0D10] text-xs font-bold"
+                    >
+                      <Star className="w-3.5 h-3.5" />
+                      {tr(lang, 'Rate Trip', 'ریٹنگ دیں')}
+                    </button>
+                  )}
+                  {b.my_rating && (
+                    <span className="text-xs font-semibold text-emerald-700 inline-flex items-center gap-1">
+                      <Star className="w-3.5 h-3.5 fill-amber-500 text-amber-500" />
+                      {tr(lang, `Rated ${b.my_rating}/5`, `ریٹنگ ${b.my_rating}/5`)}
+                    </span>
+                  )}
                 </div>
-              )}
-            </div>
-          ))}
+
+                {ratingTarget === b.id && (
+                  <div className="p-3 rounded-xl bg-zinc-50 border border-zinc-200 flex flex-wrap items-center gap-3">
+                    <select
+                      value={stars}
+                      onChange={(e) => setStars(Number(e.target.value))}
+                      className="px-2.5 py-1.5 rounded-lg border border-zinc-200 bg-white text-xs"
+                    >
+                      {[5, 4, 3, 2, 1].map((n) => (
+                        <option key={n} value={n}>
+                          {n} {tr(lang, 'Stars', 'اسٹارز')}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      value={comment}
+                      onChange={(e) => setComment(e.target.value)}
+                      placeholder={tr(lang, 'Share trip feedback...', 'سفر کے بارے میں اپنی رائے لکھیں...')}
+                      className="flex-1 min-w-[180px] px-3 py-1.5 rounded-lg border border-zinc-200 bg-white text-xs"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => submitRating(b.id)}
+                      className="px-3.5 py-1.5 rounded-lg bg-[#0D0D10] text-white text-xs font-semibold"
+                    >
+                      {tr(lang, 'Submit Rating', 'ریٹنگ جمع کریں')}
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -593,17 +908,38 @@ export const PassengerWalletView: React.FC<{
   );
 };
 
-// Screen 14: Notifications
+// Screen 14: Notifications & Ride Bell Tone Settings
 export const NotificationsView: React.FC<{
   notifications: AppNotification[];
   lang?: Language;
+  role?: 'passenger' | 'partner';
+  bellSound?: RideBellSoundId;
+  onChangeBellSound?: (sound: RideBellSoundId) => void;
   onMarkAllRead: () => Promise<void>;
-}> = ({ notifications, lang = 'en', onMarkAllRead }) => {
+}> = ({ notifications, lang = 'en', role = 'passenger', bellSound, onChangeBellSound, onMarkAllRead }) => {
+  const [localBell, setLocalBell] = useState<RideBellSoundId>(() => bellSound ?? getSavedRideBellSound(role));
+
+  useEffect(() => {
+    if (bellSound) setLocalBell(bellSound);
+  }, [bellSound]);
+
+  const activeBell = bellSound ?? localBell;
+
+  const updateBell = (next: RideBellSoundId) => {
+    setLocalBell(next);
+    saveRideBellSound(next, role);
+    onChangeBellSound?.(next);
+    window.dispatchEvent(new CustomEvent('pr:bell-updated', { detail: { role, sound: next } }));
+    if (next !== 'muted') {
+      playRideBell(next);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="font-display text-2xl font-bold text-[#0D0D10]">
-          {tr(lang, 'Notifications', 'نوٹیفکیشنز')}
+          {tr(lang, 'Notifications & Ride Bell', 'نوٹیفکیشنز اور رائیڈ بیل')}
         </h2>
         <button
           type="button"
@@ -612,6 +948,55 @@ export const NotificationsView: React.FC<{
         >
           {tr(lang, 'Mark All Read', 'سب پڑھے ہوئے نشان زد کریں')}
         </button>
+      </div>
+
+      {/* Dedicated Ride Bell Tone & Mute Controller */}
+      <div className="rounded-2xl border border-zinc-200 bg-white p-4 space-y-3">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-[#0D0D10] text-[#F4C430] flex items-center justify-center shrink-0">
+              {activeBell === 'muted' ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+            </div>
+            <div>
+              <h3 className="font-display text-sm font-bold text-[#0D0D10]">
+                {tr(lang, 'Ride Bell Tone', 'رائیڈ بیل اور گھنٹی کی آواز')}
+              </h3>
+              <p className="text-[11px] text-zinc-500">
+                {tr(lang, 'Choose notification tone for booking updates & confirmations', 'بُکنگ کنفرم ہونے پر بجنے والی ٹون منتخب کریں')}
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => playRideBell(activeBell === 'muted' ? 'soft_gold' : activeBell)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#0D0D10] text-[#F4C430] text-xs font-bold hover:bg-zinc-800"
+          >
+            <Volume2 className="w-3.5 h-3.5" />
+            <span>{tr(lang, 'Test Bell', 'بیل ٹیسٹ')}</span>
+          </button>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {RIDE_BELL_OPTIONS.map((opt) => {
+            const selected = activeBell === opt.id;
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => updateBell(opt.id)}
+                className={`px-3 py-2 rounded-xl border text-start transition-colors ${
+                  selected
+                    ? 'bg-[#F4C430] border-[#B8860B] text-[#0D0D10] font-bold shadow-2xs'
+                    : 'bg-zinc-50 border-zinc-200 text-zinc-700 hover:bg-zinc-100'
+                }`}
+              >
+                <div className="text-xs font-bold">{lang === 'ur' ? opt.labelUr : opt.labelEn}</div>
+                <div className="text-[10px] opacity-75 truncate">{opt.descriptionEn}</div>
+              </button>
+            );
+          })}
+        </div>
       </div>
       {notifications.length === 0 ? (
         <div className="rounded-2xl border border-zinc-200 bg-white p-10 text-center text-sm text-zinc-500">
@@ -801,17 +1186,22 @@ export const SupportView: React.FC<{
   );
 };
 
+const isSyntheticPhone = (val?: string | null) => !val || /^[GER]-/i.test(val.trim());
+
 // Screen 16: Passenger Profile (with integrated Theme Studio, Notifications & App Permissions)
 export const PassengerProfileView: React.FC<{
   user: User;
   lang?: Language;
   unreadNotifications?: number;
+  bellSound?: RideBellSoundId;
+  onChangeBellSound?: (sound: RideBellSoundId) => void;
   onOpenNotifications?: () => void;
   onUpdated: (u: User) => void;
   onLogout: () => void;
-}> = ({ user, lang = 'en', unreadNotifications = 0, onOpenNotifications, onUpdated, onLogout }) => {
+}> = ({ user, lang = 'en', unreadNotifications = 0, bellSound, onChangeBellSound, onOpenNotifications, onUpdated, onLogout }) => {
   const [fullName, setFullName] = useState(user.full_name);
-  const [whatsapp, setWhatsapp] = useState(user.whatsapp || '');
+  const [phoneInput, setPhoneInput] = useState(isSyntheticPhone(user.phone) ? '' : user.phone);
+  const [whatsapp, setWhatsapp] = useState(isSyntheticPhone(user.whatsapp) ? '' : (user.whatsapp || ''));
   const [email, setEmail] = useState(user.email || '');
   const [city, setCity] = useState(user.city || 'Islamabad');
   const [notifyPush, setNotifyPush] = useState(Boolean(user.notify_push));
@@ -821,15 +1211,37 @@ export const PassengerProfileView: React.FC<{
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [otpNotice, setOtpNotice] = useState<string | null>(null);
 
+  useEffect(() => {
+    setFullName(user.full_name);
+    setPhoneInput(isSyntheticPhone(user.phone) ? '' : user.phone);
+    setWhatsapp(isSyntheticPhone(user.whatsapp) ? '' : (user.whatsapp || ''));
+    setEmail(user.email || '');
+    setCity(user.city || 'Islamabad');
+  }, [user.id, user.full_name, user.phone, user.whatsapp, user.email, user.city]);
+
   const saveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = await apiRequest<{ user: User }>('/api/auth/profile', {
-      method: 'PATCH',
-      role: 'passenger',
-      body: { fullName, whatsapp, email, city, notifyPush, notifySms },
-    });
-    onUpdated(res.user);
-    setStatusMsg(tr(lang, 'Profile updated.', 'پروفائل اپڈیٹ ہو گئی۔'));
+    setStatusMsg(null);
+    try {
+      const cleanPhone = phoneInput.trim();
+      const res = await apiRequest<{ user: User }>('/api/auth/profile', {
+        method: 'PATCH',
+        role: 'passenger',
+        body: {
+          fullName,
+          phone: cleanPhone || undefined,
+          whatsapp: whatsapp.trim(),
+          email,
+          city,
+          notifyPush,
+          notifySms,
+        },
+      });
+      onUpdated(res.user);
+      setStatusMsg(tr(lang, 'Profile updated.', 'پروفائل اپڈیٹ ہو گئی۔'));
+    } catch (err: any) {
+      setStatusMsg(err?.message || tr(lang, 'Unable to update profile.', 'پروفائل محفوظ نہیں ہو سکی۔'));
+    }
   };
 
   const changePassword = async (e: React.FormEvent) => {
@@ -862,11 +1274,15 @@ export const PassengerProfileView: React.FC<{
   };
 
   const requestDeletion = async () => {
-    const res = await apiRequest<{ message: string }>('/api/auth/delete-request', {
-      method: 'POST',
-      role: 'passenger',
-    });
-    setStatusMsg(res.message);
+    try {
+      const res = await apiRequest<{ message: string }>('/api/auth/delete-request', {
+        method: 'POST',
+        role: 'passenger',
+      });
+      setStatusMsg(res.message);
+    } catch (err: any) {
+      setStatusMsg(err?.message || tr(lang, 'Could not submit deletion request.', 'درخواست جمع نہیں ہو سکی۔'));
+    }
   };
 
   return (
@@ -888,7 +1304,7 @@ export const PassengerProfileView: React.FC<{
         <div className="rounded-xl bg-zinc-900 text-[#F4C430] px-4 py-2.5 text-xs font-semibold">{statusMsg}</div>
       )}
 
-      {/* Quick Profile Controls: Notifications & App Permissions */}
+      {/* Quick Profile Controls: Notifications + Bell Tone (Next Page) & App Permissions (ON/OFF Modal) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {onOpenNotifications && (
           <button
@@ -902,18 +1318,26 @@ export const PassengerProfileView: React.FC<{
               </div>
               <div className="min-w-0">
                 <div className="font-display font-bold text-sm text-[#0D0D10]">
-                  {tr(lang, 'Notifications', 'نوٹیفکیشنز')}
+                  {tr(lang, 'Notifications & Bell Tone', 'نوٹیفکیشنز اور بیل ٹون')}
                 </div>
-                <p className="text-[11px] text-zinc-500">
-                  {tr(lang, 'View ride & system alerts', 'سفر اور سسٹم کی اطلاعات دیکھیں')}
+                <p className="text-[11px] text-zinc-500 truncate">
+                  {(() => {
+                    const currentToneId = bellSound ?? getSavedRideBellSound('passenger');
+                    const meta = RIDE_BELL_OPTIONS.find((o) => o.id === currentToneId);
+                    const toneLabel = meta ? (lang === 'ur' ? meta.labelUr : meta.labelEn) : 'Soft Chime';
+                    return tr(lang, `Alerts & Tone (${toneLabel})`, `الرٹس اور آواز (${toneLabel})`);
+                  })()}
                 </p>
               </div>
             </div>
-            {unreadNotifications > 0 && (
-              <span className="font-mono text-xs font-bold px-2.5 py-1 rounded-lg bg-red-600 text-white shrink-0">
-                {unreadNotifications}
-              </span>
-            )}
+            <div className="flex items-center gap-1.5 shrink-0">
+              {unreadNotifications > 0 && (
+                <span className="font-mono text-xs font-bold px-2 py-0.5 rounded-lg bg-red-600 text-white">
+                  {unreadNotifications}
+                </span>
+              )}
+              <ChevronRight className={`w-4 h-4 text-zinc-400 ${lang === 'ur' ? 'rotate-180' : ''}`} />
+            </div>
           </button>
         )}
 
@@ -930,16 +1354,17 @@ export const PassengerProfileView: React.FC<{
               <div className="font-display font-bold text-sm text-[#0D0D10]">
                 {tr(lang, 'App Permissions', 'ایپ پرمیشنز')}
               </div>
-              <p className="text-[11px] text-zinc-500">
-                {tr(lang, 'Location, Camera, Mic & Alerts', 'لوکیشن، کیمرہ، مائیک اور الرٹس')}
+              <p className="text-[11px] text-zinc-500 truncate">
+                {tr(lang, 'GPS, Bell Tone, Camera, Mic & Calls (ON/OFF)', 'لوکیشن، بیل ٹون، کیمرہ، مائیک اور کال (آن/آف)')}
               </p>
             </div>
           </div>
+          <ChevronRight className={`w-4 h-4 text-zinc-400 shrink-0 ${lang === 'ur' ? 'rotate-180' : ''}`} />
         </button>
-      </div>
 
-      {/* Embedded Personal Color Theme Selector inside Profile Settings */}
-      <ThemePreferencesPanel lang={lang} />
+        {/* Compact Theme Button Row */}
+        <ProfileThemeRowButton lang={lang} />
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <form onSubmit={saveProfile} className="rounded-2xl border border-zinc-200 bg-white p-5 space-y-4">
@@ -954,15 +1379,31 @@ export const PassengerProfileView: React.FC<{
           </div>
           <div>
             <label className="block text-xs font-semibold text-zinc-600 mb-1">
-              {tr(lang, 'Registered Mobile Number', 'رجسٹرڈ موبائل نمبر')}
+              {tr(lang, 'Mobile Number', 'موبائل نمبر')}
             </label>
-            <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-zinc-50 border border-zinc-200 text-sm font-mono">
-              <span>{user.phone}</span>
-              <span className={`text-[11px] font-sans font-bold ${user.phone_verified ? 'text-emerald-700' : 'text-amber-700'}`}>
-                {user.phone_verified ? tr(lang, 'Verified', 'تصدیق شدہ') : tr(lang, 'Unverified', 'غیر تصدیق شدہ')}
+            <div className="flex items-center gap-2">
+              <input
+                type="tel"
+                value={phoneInput}
+                onChange={(e) => setPhoneInput(e.target.value)}
+                placeholder={tr(lang, '03XX-XXXXXXX (Add mobile number)', '03XX-XXXXXXX (موبائل نمبر درج کریں)')}
+                className="flex-1 px-3 py-2 rounded-xl border border-zinc-200 text-sm font-mono"
+              />
+              <span
+                className={`text-[11px] font-sans font-bold px-2.5 py-2 rounded-xl border shrink-0 ${
+                  user.phone_verified
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                    : 'bg-amber-50 border-amber-200 text-amber-700'
+                }`}
+              >
+                {user.phone_verified
+                  ? tr(lang, 'Verified', 'تصدیق شدہ')
+                  : isSyntheticPhone(user.phone)
+                  ? tr(lang, 'Optional', 'اختیاری')
+                  : tr(lang, 'Unverified', 'غیر تصدیق شدہ')}
               </span>
             </div>
-            {!user.phone_verified && (
+            {!user.phone_verified && !isSyntheticPhone(phoneInput) && (
               <button type="button" onClick={requestPhoneVerify} className="mt-1.5 text-xs font-semibold text-[#B8860B] hover:underline">
                 {tr(lang, 'Verify Mobile via SMS Provider', 'موبائل نمبر تصدیق کروائیں')}
               </button>
@@ -973,7 +1414,13 @@ export const PassengerProfileView: React.FC<{
             <label className="block text-xs font-semibold text-zinc-600 mb-1">
               {tr(lang, 'WhatsApp', 'واٹس ایپ')}
             </label>
-            <input value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)} className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm" />
+            <input
+              type="tel"
+              value={whatsapp}
+              onChange={(e) => setWhatsapp(e.target.value)}
+              placeholder="03XX-XXXXXXX"
+              className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm font-mono"
+            />
           </div>
           <div>
             <label className="block text-xs font-semibold text-zinc-600 mb-1">

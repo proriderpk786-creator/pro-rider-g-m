@@ -252,6 +252,24 @@ export function initDatabase() {
       PRIMARY KEY (booking_id, partner_id)
     );
 
+    CREATE TABLE IF NOT EXISTS booking_applications (
+      id TEXT PRIMARY KEY,
+      booking_id TEXT NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+      partner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      proposed_fare_pkr REAL NOT NULL DEFAULT 0,
+      note TEXT DEFAULT '',
+      distance_to_pickup_km REAL,
+      wallet_balance_snapshot_pkr REAL NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected', 'withdrawn')),
+      reviewed_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(booking_id, partner_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_booking_apps_booking ON booking_applications(booking_id, status);
+    CREATE INDEX IF NOT EXISTS idx_booking_apps_partner ON booking_applications(partner_id, status);
+
     CREATE TABLE IF NOT EXISTS booking_ratings (
       id TEXT PRIMARY KEY,
       booking_id TEXT UNIQUE NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
@@ -311,6 +329,25 @@ export function initDatabase() {
   }
   if (!existingCols.has('admin_setup_completed')) {
     db.exec(`ALTER TABLE users ADD COLUMN admin_setup_completed INTEGER NOT NULL DEFAULT 0`);
+  }
+
+  const bookingCols = new Set(
+    (db.prepare(`PRAGMA table_info(bookings)`).all() as Array<{ name: string }>).map((c) => c.name)
+  );
+  const bookingMigrations: Array<[string, string]> = [
+    ['priority_partner_id', `ALTER TABLE bookings ADD COLUMN priority_partner_id TEXT DEFAULT ''`],
+    ['commission_pct', `ALTER TABLE bookings ADD COLUMN commission_pct REAL NOT NULL DEFAULT 15`],
+    ['commission_deducted', `ALTER TABLE bookings ADD COLUMN commission_deducted INTEGER NOT NULL DEFAULT 0`],
+  ];
+  for (const [col, sql] of bookingMigrations) {
+    if (!bookingCols.has(col)) db.exec(sql);
+  }
+
+  const appCols = new Set(
+    (db.prepare(`PRAGMA table_info(booking_applications)`).all() as Array<{ name: string }>).map((c) => c.name)
+  );
+  if (!appCols.has('reviewed_at')) {
+    db.exec(`ALTER TABLE booking_applications ADD COLUMN reviewed_at TEXT DEFAULT NULL`);
   }
 
   const profileCols = new Set(
@@ -726,6 +763,11 @@ function seedInitialData() {
   insertSetting.run('rate_van_15_max', '25');
   insertSetting.run('rate_coaster_min', '12');
   insertSetting.run('rate_coaster_max', '25');
+  insertSetting.run('min_partner_wallet_pkr', '500');
+  insertSetting.run('instant_commission_pct', '15');
+  insertSetting.run('use_global_instant_commission', '0');
+  insertSetting.run('commission_deduction_mode', 'on_accept');
+  insertSetting.run('min_monthly_partner_wallet_pkr', '0');
 
   // Global Theme & Layout Studio defaults
   const upsertSetting = db.prepare('INSERT OR REPLACE INTO platform_settings (key, value) VALUES (?, ?)');

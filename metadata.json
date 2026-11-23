@@ -1,6 +1,6 @@
 {
   "name": "PRO RIDER AI",
   "description": "PRO RIDER AI — Travel with Trust. Full-stack mobility platform with independent Passenger, Pro Partner, and Admin applications, Google Maps routing, Firebase Auth & Firestore sync, and Gemini AI Voice & Concierge.",
-  "requestFramePermissions": ["geolocation", "microphone"],
+  "requestFramePermissions": ["geolocation", "microphone", "camera"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

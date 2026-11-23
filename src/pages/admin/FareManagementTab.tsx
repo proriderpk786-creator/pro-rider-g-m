@@ -1,8 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  AlertCircle,
   Car,
-  CheckCircle2,
   DollarSign,
   Edit3,
   Percent,
@@ -11,6 +9,7 @@ import {
   Sliders,
   TrendingUp,
   Users,
+  Wallet,
   X,
 } from 'lucide-react';
 import { tr } from '../../i18n/translations';
@@ -67,8 +66,27 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
     rate_van_15_max: settings.rate_van_15_max || '25',
     rate_coaster_min: settings.rate_coaster_min || '12',
     rate_coaster_max: settings.rate_coaster_max || '25',
+    min_partner_wallet_pkr: settings.min_partner_wallet_pkr || '500',
+    min_monthly_partner_wallet_pkr: settings.min_monthly_partner_wallet_pkr || '0',
+    instant_commission_pct: settings.instant_commission_pct || '15',
+    use_global_instant_commission: settings.use_global_instant_commission || '0',
+    commission_deduction_mode: settings.commission_deduction_mode || 'on_accept',
   }));
   const [savingSettings, setSavingSettings] = useState(false);
+
+  useEffect(() => {
+    setLocalSettings((prev) => ({
+      ...prev,
+      ...settings,
+      min_partner_wallet_pkr: settings.min_partner_wallet_pkr || prev.min_partner_wallet_pkr || '500',
+      min_monthly_partner_wallet_pkr:
+        settings.min_monthly_partner_wallet_pkr || prev.min_monthly_partner_wallet_pkr || '0',
+      instant_commission_pct: settings.instant_commission_pct || prev.instant_commission_pct || '15',
+      use_global_instant_commission:
+        settings.use_global_instant_commission || prev.use_global_instant_commission || '0',
+      commission_deduction_mode: settings.commission_deduction_mode || prev.commission_deduction_mode || 'on_accept',
+    }));
+  }, [settings]);
 
   const openEditTariff = (f: FleetCategory) => {
     setEditingFleet(f);
@@ -281,6 +299,120 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 text-xs">
+          {/* Partner Wallet & Instant Commission Control */}
+          <div className="p-4 rounded-2xl bg-[#0D0D10] text-white border border-zinc-800 space-y-3 md:col-span-2 lg:col-span-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#F4C430]">
+                <Wallet className="w-4 h-4" />
+                {tr(lang, 'Partner Wallet & Instant Commission Control', 'پارٹنر والیٹ اور فوری کمیشن کنٹرول')}
+              </div>
+              <span className="text-[11px] text-zinc-400">
+                {tr(
+                  lang,
+                  'Mandatory balance gate + automatic commission deduction on Instant Bookings.',
+                  'فوری رائیڈ قبول کرنے کے لیے لازمی والیٹ حد اور خودکار کمیشن کٹوتی۔'
+                )}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+              <div>
+                <label className="block text-zinc-300 font-semibold mb-1">
+                  {tr(lang, 'Min Partner Wallet (PKR)', 'کم از کم والیٹ حد (روپے)')}
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  max={100000}
+                  value={localSettings.min_partner_wallet_pkr}
+                  onChange={(e) =>
+                    setLocalSettings((s) => ({ ...s, min_partner_wallet_pkr: e.target.value }))
+                  }
+                  className="w-full px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 text-white font-mono font-bold text-xs"
+                />
+                <span className="text-[10px] text-zinc-400 mt-1 block">
+                  {tr(lang, 'Required to accept Instant Rides', 'فوری بکنگ کے لیے لازمی بیلنس')}
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-zinc-300 font-semibold mb-1">
+                  {tr(lang, 'Global Instant Commission (%)', 'گلوبل فوری کمیشن (%)')}
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  max={50}
+                  value={localSettings.instant_commission_pct}
+                  onChange={(e) =>
+                    setLocalSettings((s) => ({ ...s, instant_commission_pct: e.target.value }))
+                  }
+                  className="w-full px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 text-[#F4C430] font-mono font-bold text-xs"
+                />
+                <span className="text-[10px] text-zinc-400 mt-1 block">
+                  {tr(lang, 'Applied when Global Override is enabled', 'گلوبل اوور رائیڈ آن ہونے پر لاگو')}
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-zinc-300 font-semibold mb-1">
+                  {tr(lang, 'Commission Rate Mode', 'کمیشن ریٹ موڈ')}
+                </label>
+                <select
+                  value={localSettings.use_global_instant_commission}
+                  onChange={(e) =>
+                    setLocalSettings((s) => ({ ...s, use_global_instant_commission: e.target.value }))
+                  }
+                  className="w-full px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 text-white font-semibold text-xs"
+                >
+                  <option value="0">{tr(lang, 'Use Vehicle Category %', 'گاڑی کیٹیگری ٪ استعمال کریں')}</option>
+                  <option value="1">{tr(lang, 'Force Global Commission %', 'گلوبل کمیشن ٪ لاگو کریں')}</option>
+                </select>
+                <span className="text-[10px] text-zinc-400 mt-1 block">
+                  {tr(lang, 'Per-vehicle vs uniform rate', 'گاڑی کے لحاظ سے یا یکساں ریٹ')}
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-zinc-300 font-semibold mb-1">
+                  {tr(lang, 'Commission Deduction Timing', 'کمیشن کٹوتی کا وقت')}
+                </label>
+                <select
+                  value={localSettings.commission_deduction_mode}
+                  onChange={(e) =>
+                    setLocalSettings((s) => ({ ...s, commission_deduction_mode: e.target.value }))
+                  }
+                  className="w-full px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 text-white font-semibold text-xs"
+                >
+                  <option value="on_accept">{tr(lang, 'Auto-Deduct on Accept', 'قبول کرتے ہی کٹوتی')}</option>
+                  <option value="on_complete">{tr(lang, 'Deduct on Trip Completion', 'سفر مکمل ہونے پر کٹوتی')}</option>
+                </select>
+                <span className="text-[10px] text-zinc-400 mt-1 block">
+                  {tr(lang, 'Deducted once per Instant booking', 'فی فوری بکنگ صرف ایک بار کٹوتی')}
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-zinc-300 font-semibold mb-1">
+                  {tr(lang, 'Monthly Min Wallet (PKR)', 'ماہانہ کم از کم والیٹ (روپے)')}
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  max={100000}
+                  value={localSettings.min_monthly_partner_wallet_pkr}
+                  onChange={(e) =>
+                    setLocalSettings((s) => ({ ...s, min_monthly_partner_wallet_pkr: e.target.value }))
+                  }
+                  className="w-full px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900 text-white font-mono font-bold text-xs"
+                />
+                <span className="text-[10px] text-zinc-400 mt-1 block">
+                  {tr(lang, '0 = no balance gate on Monthly apply', '0 = ماہانہ درخواست پر کوئی حد نہیں')}
+                </span>
+              </div>
+            </div>
+          </div>
+
           {/* Passenger Offer Negotiation Bounds */}
           <div className="p-4 rounded-2xl bg-zinc-50 border border-zinc-200 space-y-3">
             <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#8F6400]">

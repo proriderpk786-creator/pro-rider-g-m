@@ -66,6 +66,79 @@ function getSetting(key: string, fallback: string): string {
   return row ? row.value : fallback;
 }
 
+function haversineDistanceKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const R = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function getPartnerWalletBalance(partnerId: string): number {
+  const txs = db
+    .prepare(`SELECT type, amount_pkr, status FROM wallet_transactions WHERE user_id = ? AND role = 'partner'`)
+    .all(partnerId) as Array<{ type: string; amount_pkr: number; status: string }>;
+  const confirmedCredits = txs
+    .filter((t) => t.status === 'confirmed' && ['credit', 'settlement'].includes(t.type))
+    .reduce((s, t) => s + Number(t.amount_pkr), 0);
+  const confirmedDebits = txs
+    .filter((t) => t.status === 'confirmed' && ['commission', 'withdrawal'].includes(t.type))
+    .reduce((s, t) => s + Number(t.amount_pkr), 0);
+  const pendingWithdrawals = txs
+    .filter((t) => t.status === 'pending' && t.type === 'withdrawal')
+    .reduce((s, t) => s + Number(t.amount_pkr), 0);
+  return Math.max(0, confirmedCredits - confirmedDebits - pendingWithdrawals);
+}
+
+function resolveCommissionRate(fleetCommissionPct: number): number {
+  const useGlobal = getSetting('use_global_instant_commission', '0') === '1';
+  const globalPct = Number(getSetting('instant_commission_pct', '15'));
+  if (useGlobal && Number.isFinite(globalPct) && globalPct >= 0) {
+    return globalPct;
+  }
+  const fleetPct = Number(fleetCommissionPct);
+  return Number.isFinite(fleetPct) && fleetPct >= 0 ? fleetPct : (Number.isFinite(globalPct) ? globalPct : 15);
+}
+
+function deductCommissionIfNeeded(
+  bookingId: string,
+  partnerId: string,
+  commissionPkr: number,
+  paymentMethod: string,
+  description: string
+): boolean {
+  if (commissionPkr <= 0) {
+    db.prepare(`UPDATE bookings SET commission_deducted = 1 WHERE id = ?`).run(bookingId);
+    return false;
+  }
+  const existing = db
+    .prepare(
+      `SELECT 1 FROM wallet_transactions WHERE booking_id = ? AND user_id = ? AND type = 'commission' AND status = 'confirmed' LIMIT 1`
+    )
+    .get(bookingId, partnerId);
+  if (existing) {
+    db.prepare(`UPDATE bookings SET commission_deducted = 1 WHERE id = ?`).run(bookingId);
+    return false;
+  }
+  const txRef = `COM-PR-${crypto.randomInt(100000, 999999)}`;
+  db.prepare(`
+    INSERT INTO wallet_transactions (id, tx_ref, user_id, role, booking_id, type, amount_pkr, payment_method, status, description)
+    VALUES (?, ?, ?, 'partner', ?, 'commission', ?, ?, 'confirmed', ?)
+  `).run(genId('WTX'), txRef, partnerId, bookingId, commissionPkr, paymentMethod, description);
+  db.prepare(`UPDATE bookings SET commission_deducted = 1 WHERE id = ?`).run(bookingId);
+  return true;
+}
+
+function notifyAdmins(category: string, title: string, body: string, bookingId?: string) {
+  const admins = db.prepare(`SELECT id FROM users WHERE role = 'admin'`).all() as Array<{ id: string }>;
+  for (const a of admins) {
+    createNotification(a.id, 'admin', category, title, body, bookingId);
+  }
+}
+
 export function registerAppRoutes(app: Express) {
   // ===========================================================================
   // PUBLIC CONFIGURATION & MARKETING DATA
@@ -89,6 +162,11 @@ export function registerAppRoutes(app: Express) {
       supportEmail: getSetting('support_email', 'ProRider.pk786@gmail.com'),
       goNowMinOfferPct: Number(getSetting('go_now_min_offer_pct', '80')),
       goNowMaxOfferPct: Number(getSetting('go_now_max_offer_pct', '135')),
+      minPartnerWalletPkr: Number(getSetting('min_partner_wallet_pkr', '500')),
+      instantCommissionPct: Number(getSetting('instant_commission_pct', '15')),
+      useGlobalInstantCommission: getSetting('use_global_instant_commission', '0') === '1',
+      commissionDeductionRule: getSetting('commission_deduction_mode', 'on_accept'),
+      minMonthlyPartnerWalletPkr: Number(getSetting('min_monthly_partner_wallet_pkr', '0')),
       scheduleDefaults: {
         pickupTime: getSetting('schedule_default_pickup', '08:00 AM'),
         dropTime: getSetting('schedule_default_drop', '05:30 PM'),
@@ -416,28 +494,63 @@ export function registerAppRoutes(app: Express) {
     }
 
     try {
-      const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`;
+      const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&accept-language=en`;
       const upstream = await fetch(url, {
         headers: {
           'User-Agent': 'ProRiderAI/1.0 (ProRider.pk786@gmail.com)',
           Accept: 'application/json',
         },
-        signal: AbortSignal.timeout(7000),
+        signal: AbortSignal.timeout(5000),
       });
-      if (!upstream.ok) {
-        res.status(502).json({ error: 'Reverse geocoding unavailable' });
-        return;
+      if (upstream.ok) {
+        const data = (await upstream.json()) as { display_name?: string };
+        if (data.display_name) {
+          const conciseLabel = String(data.display_name).split(',').slice(0, 4).join(',').trim();
+          res.json({
+            label: conciseLabel || `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
+            lat,
+            lng,
+            provider: 'osm',
+          });
+          return;
+        }
       }
-      const data = (await upstream.json()) as { display_name?: string };
-      res.json({
-        label: data.display_name || `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
-        lat,
-        lng,
-        provider: 'osm',
-      });
     } catch {
-      res.status(503).json({ error: 'Unable to resolve street address from coordinates' });
+      // Fall through to Photon reverse geocoding
     }
+
+    try {
+      const photonRes = await fetch(`https://photon.komoot.io/reverse?lat=${lat}&lon=${lng}`, {
+        signal: AbortSignal.timeout(4000),
+      });
+      if (photonRes.ok) {
+        const pData = (await photonRes.json()) as any;
+        const props = pData?.features?.[0]?.properties;
+        if (props) {
+          const parts = [props.name, props.street, props.district || props.suburb || props.locality, props.city]
+            .filter(Boolean)
+            .filter((v: string, idx: number, arr: string[]) => arr.indexOf(v) === idx);
+          if (parts.length > 0) {
+            res.json({
+              label: parts.join(', '),
+              lat,
+              lng,
+              provider: 'photon',
+            });
+            return;
+          }
+        }
+      }
+    } catch {
+      // Fall through to coordinate fallback
+    }
+
+    res.json({
+      label: `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
+      lat,
+      lng,
+      provider: 'coordinates',
+    });
   });
 
   app.get('/api/map/route', async (req: Request, res: Response) => {
@@ -1106,10 +1219,21 @@ export function registerAppRoutes(app: Express) {
   });
 
   app.patch('/api/auth/profile', requireAuth, (req: AuthedRequest, res: Response) => {
-    const { fullName, whatsapp, email, city, operatingArea, notifyPush, notifySms } = req.body || {};
+    const { fullName, phone, whatsapp, email, city, operatingArea, notifyPush, notifySms } = req.body || {};
+    const cleanPhone = typeof phone === 'string' ? phone.trim() : '';
+    if (cleanPhone) {
+      const conflict = db
+        .prepare('SELECT id FROM users WHERE phone = ? AND role = ? AND id != ?')
+        .get(cleanPhone, req.auth!.role, req.auth!.sub);
+      if (conflict) {
+        res.status(409).json({ error: 'This mobile number is already registered with another account.' });
+        return;
+      }
+    }
     db.prepare(`
       UPDATE users
       SET full_name = COALESCE(?, full_name),
+          phone = COALESCE(?, phone),
           whatsapp = COALESCE(?, whatsapp),
           email = COALESCE(?, email),
           city = COALESCE(?, city),
@@ -1119,7 +1243,8 @@ export function registerAppRoutes(app: Express) {
       WHERE id = ?
     `).run(
       fullName ? String(fullName).trim() : null,
-      whatsapp ? String(whatsapp).trim() : null,
+      cleanPhone || null,
+      whatsapp !== undefined ? String(whatsapp).trim() : null,
       email ? String(email).trim().toLowerCase() : null,
       city ? String(city).trim() : null,
       operatingArea !== undefined ? String(operatingArea).trim() : null,
@@ -1175,7 +1300,8 @@ export function registerAppRoutes(app: Express) {
                pp.current_lat AS partner_lat,
                pp.current_lng AS partner_lng,
                br.rating AS my_rating,
-               br.comment AS my_rating_comment
+               br.comment AS my_rating_comment,
+               (SELECT COUNT(*) FROM booking_applications ba WHERE ba.booking_id = b.id AND ba.status = 'pending') AS total_applicants_count
         FROM bookings b
         JOIN fleet_categories fc ON fc.id = b.vehicle_category_id
         LEFT JOIN users u ON u.id = b.partner_id
@@ -1233,6 +1359,7 @@ export function registerAppRoutes(app: Express) {
       expectedDropoffTime,
       returnJourney,
       packageId,
+      packageDays,
       scheduleDays,
       notes,
       proposedFarePkr,
@@ -1273,18 +1400,65 @@ export function registerAppRoutes(app: Express) {
     const dist = Number(distanceKm);
     const dur = Math.max(1, Math.round(Number(durationMin || dist * 2)));
 
-    // Fare calculation based on Admin-configured fleet rates
-    const midPerKm = (Number(fleet.per_km_min_pkr) + Number(fleet.per_km_max_pkr)) / 2;
-    let estimatedFare = Math.round(Number(fleet.base_fare_pkr) + dist * midPerKm);
-    if (serviceType === 'ride_sharing') {
-      estimatedFare = Math.round((estimatedFare / Math.max(2, fleet.seating_capacity - 1)) * seats);
-    } else if (serviceType === 'fuel_sharing') {
-      estimatedFare = Math.round(estimatedFare * 0.65);
+    // Fare calculation separating Instant Booking (go_now) and Monthly Package / Schedule
+    let estimatedFare = 0;
+    if (bookingMode === 'go_now') {
+      let ratePerKm = (Number(fleet.per_km_min_pkr) + Number(fleet.per_km_max_pkr)) / 2 || 60;
+      if (fleet.slug.includes('bike')) ratePerKm = 25;
+      else if (fleet.slug.includes('rickshaw')) ratePerKm = 30;
+      else if (fleet.slug.includes('economy')) ratePerKm = 55;
+      else if (fleet.slug === 'comfort') ratePerKm = 65;
+      else if (fleet.slug.includes('comfort-plus')) ratePerKm = 80;
+      else if (fleet.slug.includes('sedan')) ratePerKm = 100;
+      else if (fleet.slug.includes('suv')) ratePerKm = 120;
+      else if (fleet.slug.includes('premium')) ratePerKm = 140;
+      else if (fleet.slug.includes('luxury')) ratePerKm = 160;
+      else if (fleet.slug.includes('van-7')) ratePerKm = 180;
+      else if (fleet.slug.includes('van-12')) ratePerKm = 200;
+      else if (fleet.slug.includes('van-15')) ratePerKm = 220;
+      else if (fleet.slug.includes('coaster')) ratePerKm = 250;
+      estimatedFare = Math.max(ratePerKm, Math.round(dist * ratePerKm));
+    } else {
+      const dailyTrips = returnJourney ? 2 : 1;
+      const inferredPkgDays =
+        Number(packageDays) > 0
+          ? Number(packageDays)
+          : packageId === 'pkg-26-days'
+          ? 26
+          : packageId === 'pkg-22-days'
+          ? 22
+          : 22;
+      let ratePerKm = (Number(fleet.per_km_min_pkr) + Number(fleet.per_km_max_pkr)) / 2;
+      if (fleet.slug.includes('economy')) {
+        ratePerKm = serviceType === 'pick_and_drop' ? 25 : serviceType === 'ride_sharing' ? 20 : 18;
+      } else if (fleet.slug.includes('comfort-plus')) {
+        ratePerKm = 40;
+      } else if (fleet.slug === 'comfort') {
+        ratePerKm = 30;
+      } else if (fleet.slug.includes('sedan') || fleet.slug.includes('suv')) {
+        ratePerKm = 60;
+      } else if (fleet.slug.includes('premium')) {
+        ratePerKm = 75;
+      } else if (fleet.slug.includes('luxury')) {
+        ratePerKm = 100;
+      } else if (fleet.slug.includes('van-7')) {
+        ratePerKm = 22.5;
+      } else if (fleet.slug.includes('van-12')) {
+        ratePerKm = 21.25;
+      } else if (fleet.slug.includes('van-15')) {
+        ratePerKm = 20.5;
+      } else if (fleet.slug.includes('coaster')) {
+        ratePerKm = 17.25;
+      } else if (fleet.slug.includes('bike')) {
+        ratePerKm = 12;
+      } else if (fleet.slug.includes('rickshaw')) {
+        ratePerKm = 16;
+      }
+      const totalKm = Math.round(dist * dailyTrips * inferredPkgDays * 10) / 10;
+      estimatedFare = Math.max(100, Math.round(totalKm * ratePerKm));
     }
-    if (returnJourney) {
-      estimatedFare = Math.round(estimatedFare * 1.85);
-    }
-    if (packageId) {
+
+    if (packageId && !['pkg-22-days', 'pkg-26-days', 'pkg-custom'].includes(String(packageId))) {
       const pkg = db
         .prepare('SELECT * FROM monthly_packages WHERE id = ? AND is_active = 1')
         .get(String(packageId)) as any;
@@ -1312,15 +1486,92 @@ export function registerAppRoutes(app: Express) {
     const todayStr = new Date().toISOString().slice(0, 10);
     const nowTimeStr = new Date().toTimeString().slice(0, 5);
 
+    // Ensure authenticated passenger exists in SQLite (guards against ephemeral DB reset while holding valid JWT)
+    const passengerRow = db.prepare('SELECT id FROM users WHERE id = ?').get(req.auth!.sub);
+    if (!passengerRow) {
+      const safeEmail = String(req.auth?.email || '').trim().toLowerCase();
+      const syntheticPhone = `R-${crypto.randomBytes(5).toString('hex')}`;
+      const fallbackName = String(b.passengerName || safeEmail.split('@')[0] || 'Verified Passenger').trim();
+      db.prepare(`
+        INSERT OR IGNORE INTO users (id, role, full_name, phone, whatsapp, email, password_hash, city, phone_verified)
+        VALUES (?, 'passenger', ?, ?, '', ?, ?, 'Islamabad', 0)
+      `).run(
+        req.auth!.sub,
+        fallbackName,
+        syntheticPhone,
+        safeEmail,
+        hashPassword(crypto.randomBytes(24).toString('hex'))
+      );
+    }
+
+    // Compute nearest eligible online Pro Partner for Instant priority dispatch
+    const commissionPct = resolveCommissionRate(Number(fleet.commission_pct || 15));
+    const estimatedCommissionPkr = Math.round((proposed * commissionPct) / 100);
+    let priorityPartnerId: string | null = null;
+    let priorityDistanceKm: number | null = null;
+
+    if (bookingMode === 'go_now') {
+      const minWallet = Math.max(0, Number(getSetting('min_partner_wallet_pkr', '500')));
+      const onlinePartners = db
+        .prepare(`
+          SELECT pp.user_id, pp.current_lat, pp.current_lng, pp.vehicle_category_id, pp.service_eligibility
+          FROM partner_profiles pp
+          JOIN users u ON u.id = pp.user_id
+          WHERE pp.verification_status = 'approved'
+            AND pp.is_online = 1
+            AND COALESCE(u.status, 'active') != 'suspended'
+        `)
+        .all() as Array<{
+          user_id: string;
+          current_lat: number | null;
+          current_lng: number | null;
+          vehicle_category_id: string | null;
+          service_eligibility: string | null;
+        }>;
+
+      const scored = onlinePartners
+        .filter((p) => !p.vehicle_category_id || p.vehicle_category_id === fleet.id)
+        .filter((p) => {
+          try {
+            const elig = JSON.parse(p.service_eligibility || '[]') as string[];
+            return elig.length === 0 || elig.includes(serviceType);
+          } catch {
+            return true;
+          }
+        })
+        .map((p) => {
+          const hasGps = Number.isFinite(Number(p.current_lat)) && Number.isFinite(Number(p.current_lng)) && (Number(p.current_lat) !== 0 || Number(p.current_lng) !== 0);
+          const distKm = hasGps
+            ? Math.round(haversineDistanceKm(Number(pickupLat), Number(pickupLng), Number(p.current_lat), Number(p.current_lng)) * 100) / 100
+            : 9999;
+          const balance = getPartnerWalletBalance(p.user_id);
+          return {
+            userId: p.user_id,
+            distKm,
+            funded: balance >= minWallet && balance >= estimatedCommissionPkr,
+          };
+        })
+        .sort((a, b) => {
+          if (a.funded !== b.funded) return a.funded ? -1 : 1;
+          return a.distKm - b.distKm;
+        });
+
+      if (scored.length > 0) {
+        priorityPartnerId = scored[0].userId;
+        priorityDistanceKm = scored[0].distKm < 9000 ? scored[0].distKm : null;
+      }
+    }
+
     db.prepare(`
       INSERT INTO bookings (
         id, invoice_number, booking_mode, service_type, passenger_id, vehicle_category_id,
         pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng,
         distance_km, duration_min, seats_requested, pickup_date, pickup_time,
         expected_dropoff_date, expected_dropoff_time, return_journey, package_id,
-        schedule_days_json, notes, proposed_fare_pkr, total_bill_pkr, status
+        schedule_days_json, notes, proposed_fare_pkr, total_bill_pkr,
+        priority_partner_id, commission_pct, commission_pkr, status
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'searching')
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'searching')
     `).run(
       bookingId,
       invoiceNo,
@@ -1346,7 +1597,10 @@ export function registerAppRoutes(app: Express) {
       JSON.stringify(Array.isArray(scheduleDays) ? scheduleDays : []),
       notes ? String(notes).trim() : '',
       proposed,
-      proposed
+      proposed,
+      priorityPartnerId,
+      commissionPct,
+      estimatedCommissionPkr
     );
 
     const created = db.prepare('SELECT * FROM bookings WHERE id = ?').get(bookingId) as any;
@@ -1356,9 +1610,28 @@ export function registerAppRoutes(app: Express) {
       'passenger',
       'Booking Updates',
       `Booking ${bookingId} Submitted`,
-      `Searching for verified Pro Partners for ${fleet.name} (${dist} km).`,
+      bookingMode === 'go_now'
+        ? `Searching nearest verified Pro Partners for Instant Ride (${dist} km).`
+        : `Monthly ${serviceType.replaceAll('_', ' ')} request submitted. Eligible Pro Partners can apply for Admin approval.`,
       bookingId
     );
+
+    if (bookingMode === 'go_now' && priorityPartnerId) {
+      createNotification(
+        priorityPartnerId,
+        'partner',
+        'Priority Instant Ride',
+        `Priority Instant Request Nearby (${bookingId})`,
+        `You are the nearest Pro Partner${priorityDistanceKm !== null ? ` (${priorityDistanceKm} km away)` : ''}. Fare Rs. ${proposed.toLocaleString()} — Tap to accept directly.`,
+        bookingId
+      );
+      emitToUser(priorityPartnerId, 'partner', 'booking:priority', {
+        ...created,
+        vehicle_category_name: fleet.name,
+        is_priority_for_me: true,
+        driver_distance_km: priorityDistanceKm,
+      });
+    }
 
     emitToApprovedOnlinePartners('booking:created', {
       ...created,
@@ -1405,7 +1678,7 @@ export function registerAppRoutes(app: Express) {
     const booking = db
       .prepare('SELECT * FROM bookings WHERE id = ? AND passenger_id = ?')
       .get(bookingId, req.auth!.sub) as any;
-    if (!booking || !['searching', 'negotiating'].includes(booking.status)) {
+    if (!booking || !['searching', 'negotiating'].includes(booking.status) || booking.partner_id) {
       res.status(400).json({ error: 'Booking is no longer open for confirmation.' });
       return;
     }
@@ -1418,25 +1691,58 @@ export function registerAppRoutes(app: Express) {
     }
 
     const fleet = db.prepare('SELECT commission_pct FROM fleet_categories WHERE id = ?').get(booking.vehicle_category_id) as any;
-    const commissionPkr = Math.round((offer.amount_pkr * Number(fleet?.commission_pct || 15)) / 100);
+    const commissionPct = resolveCommissionRate(Number(fleet?.commission_pct || 15));
+    const commissionPkr = Math.round((offer.amount_pkr * commissionPct) / 100);
+    const deductionMode = getSetting('commission_deduction_mode', 'on_accept');
 
+    if (booking.booking_mode === 'go_now') {
+      const minWallet = Math.max(0, Number(getSetting('min_partner_wallet_pkr', '500')));
+      const partnerBalance = getPartnerWalletBalance(offer.partner_id);
+      const requiredBalance = Math.max(minWallet, deductionMode === 'on_accept' ? commissionPkr : 0);
+      if (partnerBalance < requiredBalance) {
+        res.status(400).json({
+          error: `Selected Pro Partner's wallet balance (Rs. ${partnerBalance.toLocaleString()}) is below the required minimum (Rs. ${requiredBalance.toLocaleString()}).`,
+        });
+        return;
+      }
+    }
+
+    let updatedChanges = 0;
     db.transaction(() => {
+      const upd = db.prepare(`
+        UPDATE bookings
+        SET partner_id = ?, agreed_fare_pkr = ?, total_bill_pkr = ?, commission_pct = ?, commission_pkr = ?,
+            status = 'confirmed', confirmed_at = datetime('now'), updated_at = datetime('now')
+        WHERE id = ? AND status IN ('searching', 'negotiating') AND partner_id IS NULL
+      `).run(offer.partner_id, offer.amount_pkr, offer.amount_pkr, commissionPct, commissionPkr, bookingId);
+      updatedChanges = upd.changes;
+      if (updatedChanges !== 1) return;
+
       db.prepare(`UPDATE booking_offers SET status = 'accepted' WHERE id = ?`).run(offer.id);
       db.prepare(`UPDATE booking_offers SET status = 'rejected' WHERE booking_id = ? AND id != ?`).run(bookingId, offer.id);
-      db.prepare(`
-        UPDATE bookings
-        SET partner_id = ?, agreed_fare_pkr = ?, total_bill_pkr = ?, commission_pkr = ?,
-            status = 'confirmed', confirmed_at = datetime('now'), updated_at = datetime('now')
-        WHERE id = ?
-      `).run(offer.partner_id, offer.amount_pkr, offer.amount_pkr, commissionPkr, bookingId);
+
+      if (booking.booking_mode === 'go_now' && deductionMode === 'on_accept') {
+        deductCommissionIfNeeded(
+          bookingId,
+          offer.partner_id,
+          commissionPkr,
+          'wallet',
+          `Instant Booking commission (${commissionPct}%) deducted upon offer confirmation for ${bookingId}`
+        );
+      }
     })();
+
+    if (updatedChanges !== 1) {
+      res.status(409).json({ error: 'This booking was already confirmed by another driver.' });
+      return;
+    }
 
     createNotification(
       offer.partner_id,
       'partner',
       'Booking Confirmations',
       `Booking ${bookingId} Confirmed`,
-      `Passenger accepted your fare of Rs. ${offer.amount_pkr.toLocaleString()}.`,
+      `Passenger accepted your fare of Rs. ${offer.amount_pkr.toLocaleString()}.${booking.booking_mode === 'go_now' && deductionMode === 'on_accept' ? ` Commission Rs. ${commissionPkr.toLocaleString()} deducted.` : ''}`,
       bookingId
     );
     createNotification(
@@ -1447,10 +1753,17 @@ export function registerAppRoutes(app: Express) {
       `Your Pro Partner is confirmed at Rs. ${offer.amount_pkr.toLocaleString()}.`,
       bookingId
     );
+    notifyAdmins(
+      'Booking Confirmed',
+      `Instant Booking ${bookingId} Confirmed`,
+      `Partner ${offer.partner_id} confirmed fare Rs. ${offer.amount_pkr.toLocaleString()} (${commissionPct}% commission: Rs. ${commissionPkr.toLocaleString()}).`,
+      bookingId
+    );
 
     emitToUser(offer.partner_id, 'partner', 'booking:updated', { bookingId, status: 'confirmed' });
+    emitToApprovedOnlinePartners('booking:updated', { bookingId, status: 'confirmed' });
     emitToRole('admin', 'booking:updated', { bookingId, status: 'confirmed' });
-    res.json({ confirmed: true });
+    res.json({ confirmed: true, commissionDeductedPkr: deductionMode === 'on_accept' && booking.booking_mode === 'go_now' ? commissionPkr : 0 });
   });
 
   app.post('/api/passenger/bookings/:id/reject-offer', requireRole('passenger'), (req: AuthedRequest, res: Response) => {
@@ -2036,19 +2349,25 @@ export function registerAppRoutes(app: Express) {
     const profile = db.prepare('SELECT * FROM partner_profiles WHERE user_id = ?').get(req.auth!.sub) as any;
     const isApproved = Boolean(profile && profile.verification_status === 'approved');
     const eligibleServices = profile ? (JSON.parse(profile.service_eligibility || '[]') as string[]) : [];
+    const walletBalancePkr = getPartnerWalletBalance(req.auth!.sub);
+    const minRequiredWalletPkr = Number(getSetting('min_partner_wallet_pkr', '500'));
+    const instantCommissionPct = Number(getSetting('instant_commission_pct', '15'));
+    const commissionDeductionMode = getSetting('commission_deduction_mode', 'on_accept');
 
     // Return real open bookings so drivers can preview demand/requests, while keeping Accept/Offer/Online strictly gated until approved.
     // Protect passenger private contact info (do NOT select passenger phone/email here!)
     const rows = db
       .prepare(`
-        SELECT b.id, b.booking_mode, b.service_type, b.vehicle_category_id,
+        SELECT b.id, b.booking_mode, b.service_type, b.vehicle_category_id, b.package_id, b.schedule_days_json,
                b.pickup_address, b.pickup_lat, b.pickup_lng,
                b.dropoff_address, b.dropoff_lat, b.dropoff_lng,
                b.distance_km, b.duration_min, b.seats_requested,
                b.pickup_date, b.pickup_time, b.expected_dropoff_date, b.expected_dropoff_time,
                b.return_journey, b.notes, b.proposed_fare_pkr, b.status, b.created_at,
-               fc.name AS vehicle_category_name,
-               u.full_name AS passenger_first_label
+               b.priority_partner_id, b.commission_pct AS booking_commission_pct,
+               fc.name AS vehicle_category_name, fc.commission_pct AS fleet_commission_pct,
+               u.full_name AS passenger_first_label,
+               (SELECT COUNT(*) FROM booking_applications ba WHERE ba.booking_id = b.id AND ba.status IN ('pending', 'approved')) AS total_applicants_count
         FROM bookings b
         JOIN fleet_categories fc ON fc.id = b.vehicle_category_id
         JOIN users u ON u.id = b.passenger_id
@@ -2066,57 +2385,247 @@ export function registerAppRoutes(app: Express) {
       ORDER BY created_at DESC
     `);
 
+    const myAppStmt = db.prepare(`
+      SELECT * FROM booking_applications
+      WHERE booking_id = ? AND partner_id = ?
+      LIMIT 1
+    `);
+
+    const hasPartnerGps =
+      profile &&
+      Number.isFinite(Number(profile.current_lat)) &&
+      Number.isFinite(Number(profile.current_lng)) &&
+      (Number(profile.current_lat) !== 0 || Number(profile.current_lng) !== 0);
+
     const filtered = rows
       .filter((r) => !isApproved || !profile?.vehicle_category_id || r.vehicle_category_id === profile.vehicle_category_id)
       .filter((r) => !isApproved || eligibleServices.length === 0 || eligibleServices.includes(r.service_type))
-      .map((r) => ({
-        ...r,
-        passenger_display: String(r.passenger_first_label || 'Passenger').split(' ')[0],
-        my_offers: offersStmt.all(r.id, req.auth!.sub),
-      }));
+      .map((r) => {
+        const commPct = Number(r.booking_commission_pct) > 0
+          ? Number(r.booking_commission_pct)
+          : resolveCommissionRate(Number(r.fleet_commission_pct || instantCommissionPct));
+        const commPkr = Math.round((Number(r.proposed_fare_pkr || 0) * commPct) / 100);
+        const distKm =
+          hasPartnerGps && Number.isFinite(Number(r.pickup_lat)) && Number.isFinite(Number(r.pickup_lng))
+            ? Math.round(haversineDistanceKm(Number(profile.current_lat), Number(profile.current_lng), Number(r.pickup_lat), Number(r.pickup_lng)) * 10) / 10
+            : null;
+        return {
+          ...r,
+          commission_pct: commPct,
+          commission_pkr: commPkr,
+          is_priority_for_me: r.priority_partner_id === req.auth!.sub,
+          driver_distance_km: distKm,
+          my_application: myAppStmt.get(r.id, req.auth!.sub) || null,
+          passenger_display: String(r.passenger_first_label || 'Passenger').split(' ')[0],
+          my_offers: offersStmt.all(r.id, req.auth!.sub),
+        };
+      });
 
     res.json({
       approved: isApproved,
       verificationStatus: profile?.verification_status || 'not_registered',
+      walletBalancePkr,
+      minRequiredWalletPkr,
+      instantCommissionPct,
+      commissionDeductionMode,
       requests: filtered,
     });
   });
 
   app.post('/api/partner/requests/:id/accept', requireRole('partner'), (req: AuthedRequest, res: Response) => {
     const profile = db.prepare('SELECT * FROM partner_profiles WHERE user_id = ?').get(req.auth!.sub) as any;
+    const partnerUser = db.prepare('SELECT id, full_name, phone, whatsapp, city FROM users WHERE id = ?').get(req.auth!.sub) as any;
     if (!profile || profile.verification_status !== 'approved') {
       res.status(403).json({ error: 'Only Admin-approved Pro Partners can accept Passenger requests.' });
       return;
     }
     const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(req.params.id) as any;
     if (!booking || !['searching', 'negotiating'].includes(booking.status) || booking.partner_id) {
-      res.status(409).json({ error: 'This request is no longer available.' });
+      res.status(409).json({ error: 'This request is no longer available or already confirmed by another driver.' });
       return;
     }
-    const fleet = db.prepare('SELECT commission_pct FROM fleet_categories WHERE id = ?').get(booking.vehicle_category_id) as any;
-    const agreed = Number(booking.proposed_fare_pkr);
-    const commissionPkr = Math.round((agreed * Number(fleet?.commission_pct || 15)) / 100);
 
-    db.transaction(() => {
+    const fleet = db.prepare('SELECT commission_pct, name FROM fleet_categories WHERE id = ?').get(booking.vehicle_category_id) as any;
+    const agreed = Number(booking.proposed_fare_pkr);
+    const commissionPct = resolveCommissionRate(Number(fleet?.commission_pct || 15));
+    const commissionPkr = Math.round((agreed * commissionPct) / 100);
+    const availableBalancePkr = getPartnerWalletBalance(req.auth!.sub);
+    const deductionMode = getSetting('commission_deduction_mode', 'on_accept');
+
+    // =========================================================================
+    // CASE A: INSTANT BOOKING (go_now) -> Direct Driver Acceptance + Wallet Gate
+    // =========================================================================
+    if (booking.booking_mode === 'go_now') {
+      const minWallet = Math.max(0, Number(getSetting('min_partner_wallet_pkr', '500')));
+      const requiredWalletPkr = Math.max(minWallet, deductionMode === 'on_accept' ? commissionPkr : 0);
+
+      if (availableBalancePkr < requiredWalletPkr) {
+        res.status(400).json({
+          code: 'INSUFFICIENT_WALLET',
+          error: `Wallet balance (Rs. ${availableBalancePkr.toLocaleString()}) is below the required Rs. ${requiredWalletPkr.toLocaleString()} (Min Rs. ${minWallet.toLocaleString()} / Commission Rs. ${commissionPkr.toLocaleString()}) to accept Instant rides.`,
+          availableBalancePkr,
+          requiredWalletPkr,
+          commissionPkr,
+        });
+        return;
+      }
+
+      let updatedChanges = 0;
+      let deducted = false;
+      db.transaction(() => {
+        const upd = db.prepare(`
+          UPDATE bookings
+          SET partner_id = ?, agreed_fare_pkr = ?, total_bill_pkr = ?, commission_pct = ?, commission_pkr = ?,
+              status = 'confirmed', confirmed_at = datetime('now'), updated_at = datetime('now')
+          WHERE id = ? AND status IN ('searching', 'negotiating') AND partner_id IS NULL
+        `).run(req.auth!.sub, agreed, agreed, commissionPct, commissionPkr, booking.id);
+        updatedChanges = upd.changes;
+        if (updatedChanges !== 1) return;
+
+        db.prepare(`UPDATE booking_offers SET status = 'rejected' WHERE booking_id = ? AND status = 'pending'`).run(booking.id);
+
+        if (deductionMode === 'on_accept') {
+          deducted = deductCommissionIfNeeded(
+            booking.id,
+            req.auth!.sub,
+            commissionPkr,
+            'wallet',
+            `Instant Booking commission (${commissionPct}%) auto-deducted for ${booking.id}`
+          );
+        }
+      })();
+
+      if (updatedChanges !== 1) {
+        res.status(409).json({ error: 'This Instant booking was just confirmed by another Pro Partner.' });
+        return;
+      }
+
+      const newBalancePkr = getPartnerWalletBalance(req.auth!.sub);
+
+      createNotification(
+        booking.passenger_id,
+        'passenger',
+        'Booking Updates',
+        `Pro Partner Confirmed (${booking.id})`,
+        `${partnerUser?.full_name || 'Your Pro Partner'} (${profile.vehicle_name || 'Verified Vehicle'}) accepted your Instant Booking at Rs. ${agreed.toLocaleString()}.`,
+        booking.id
+      );
+
+      notifyAdmins(
+        'Instant Booking Accepted',
+        `Instant Ride ${booking.id} Accepted Directly`,
+        `Driver ${partnerUser?.full_name || req.auth!.sub} (${partnerUser?.phone || ''}) accepted Instant Booking at Rs. ${agreed.toLocaleString()}. Commission ${commissionPct}% (Rs. ${commissionPkr.toLocaleString()}) ${deducted ? 'deducted from wallet' : 'scheduled'}.`,
+        booking.id
+      );
+
+      emitToUser(booking.passenger_id, 'passenger', 'booking:updated', { bookingId: booking.id, status: 'confirmed' });
+      emitToApprovedOnlinePartners('booking:updated', { bookingId: booking.id, status: 'confirmed' });
+      emitToRole('admin', 'booking:updated', { bookingId: booking.id, status: 'confirmed' });
+
+      res.json({
+        confirmed: true,
+        bookingMode: 'go_now',
+        commissionPct,
+        commissionDeductedPkr: deducted ? commissionPkr : 0,
+        availableBalancePkr: newBalancePkr,
+      });
+      return;
+    }
+
+    // =========================================================================
+    // CASE B: MONTHLY BOOKING (schedule: Pick & Drop, Ride Share, Fuel Share)
+    //         -> Submit Partner Application to Admin (NO direct confirmation!)
+    // =========================================================================
+    const minMonthlyWallet = Math.max(0, Number(getSetting('min_monthly_partner_wallet_pkr', '0')));
+    if (minMonthlyWallet > 0 && availableBalancePkr < minMonthlyWallet) {
+      res.status(400).json({
+        code: 'INSUFFICIENT_WALLET',
+        error: `Minimum wallet balance of Rs. ${minMonthlyWallet.toLocaleString()} is required to apply for Monthly bookings.`,
+        availableBalancePkr,
+        requiredWalletPkr: minMonthlyWallet,
+      });
+      return;
+    }
+
+    const existingApp = db
+      .prepare(`SELECT * FROM booking_applications WHERE booking_id = ? AND partner_id = ?`)
+      .get(booking.id, req.auth!.sub) as any;
+
+    if (existingApp && ['pending', 'approved'].includes(existingApp.status)) {
+      res.json({
+        confirmed: false,
+        applied: true,
+        alreadyApplied: true,
+        awaitingAdminApproval: true,
+        applicationId: existingApp.id,
+      });
+      return;
+    }
+
+    const hasGps =
+      Number.isFinite(Number(profile.current_lat)) &&
+      Number.isFinite(Number(profile.current_lng)) &&
+      (Number(profile.current_lat) !== 0 || Number(profile.current_lng) !== 0);
+    const distToPickup =
+      hasGps && Number.isFinite(Number(booking.pickup_lat)) && Number.isFinite(Number(booking.pickup_lng))
+        ? Math.round(haversineDistanceKm(Number(profile.current_lat), Number(profile.current_lng), Number(booking.pickup_lat), Number(booking.pickup_lng)) * 10) / 10
+        : null;
+
+    const applicationId = existingApp?.id || genId('APP');
+    const appNote = typeof req.body?.note === 'string' ? req.body.note.trim().slice(0, 240) : '';
+
+    if (existingApp) {
       db.prepare(`
-        UPDATE bookings
-        SET partner_id = ?, agreed_fare_pkr = ?, total_bill_pkr = ?, commission_pkr = ?,
-            status = 'confirmed', confirmed_at = datetime('now'), updated_at = datetime('now')
-        WHERE id = ? AND partner_id IS NULL
-      `).run(req.auth!.sub, agreed, agreed, commissionPkr, booking.id);
-    })();
+        UPDATE booking_applications
+        SET status = 'pending', note = ?, proposed_fare_pkr = ?, distance_to_pickup_km = ?, wallet_balance_snapshot_pkr = ?, reviewed_at = NULL, updated_at = datetime('now')
+        WHERE id = ?
+      `).run(appNote, agreed, distToPickup, availableBalancePkr, applicationId);
+    } else {
+      db.prepare(`
+        INSERT INTO booking_applications (
+          id, booking_id, partner_id, status, note, proposed_fare_pkr, distance_to_pickup_km, wallet_balance_snapshot_pkr
+        ) VALUES (?, ?, ?, 'pending', ?, ?, ?, ?)
+      `).run(applicationId, booking.id, req.auth!.sub, appNote, agreed, distToPickup, availableBalancePkr);
+    }
+
+    const totalApps = (
+      db.prepare(`SELECT COUNT(*) as c FROM booking_applications WHERE booking_id = ? AND status = 'pending'`).get(booking.id) as { c: number }
+    ).c;
+
+    notifyAdmins(
+      'Monthly Application',
+      `Monthly Partner Request: ${booking.id}`,
+      `Driver ${partnerUser?.full_name || 'Pro Partner'} | Phone: ${partnerUser?.phone || 'N/A'} | Vehicle: ${profile.vehicle_name || fleet?.name || 'Registered'} (${profile.vehicle_number || '-'}) | Wallet: Rs. ${availableBalancePkr.toLocaleString()} applied for Monthly ${booking.service_type.replaceAll('_', ' ')} (${totalApps} applicant${totalApps === 1 ? '' : 's'}). Review & Approve in Admin Bookings.`,
+      booking.id
+    );
 
     createNotification(
       booking.passenger_id,
       'passenger',
       'Booking Updates',
-      `Pro Partner Confirmed (${booking.id})`,
-      `Your booking is confirmed at Rs. ${agreed.toLocaleString()}.`,
+      `Pro Partner Applied (${booking.id})`,
+      `A verified Pro Partner applied for your monthly ${booking.service_type.replaceAll('_', ' ')} request. Admin is finalizing your driver assignment.`,
       booking.id
     );
-    emitToUser(booking.passenger_id, 'passenger', 'booking:updated', { bookingId: booking.id, status: 'confirmed' });
-    emitToRole('admin', 'booking:updated', { bookingId: booking.id, status: 'confirmed' });
-    res.json({ confirmed: true });
+
+    emitToRole('admin', 'booking:application', {
+      bookingId: booking.id,
+      applicationId,
+      partnerId: req.auth!.sub,
+      partnerName: partnerUser?.full_name || '',
+      partnerPhone: partnerUser?.phone || '',
+      partnerVehicle: profile.vehicle_name || '',
+      totalApplicants: totalApps,
+    });
+    emitToUser(booking.passenger_id, 'passenger', 'booking:updated', { bookingId: booking.id, status: booking.status });
+
+    res.status(201).json({
+      confirmed: false,
+      applied: true,
+      awaitingAdminApproval: true,
+      applicationId,
+      totalApplicants: totalApps,
+    });
   });
 
   app.post('/api/partner/requests/:id/offer', requireRole('partner'), (req: AuthedRequest, res: Response) => {
@@ -2280,10 +2789,14 @@ export function registerAppRoutes(app: Express) {
         booking.id
       );
 
-      db.prepare(`
-        INSERT INTO wallet_transactions (id, tx_ref, user_id, role, booking_id, type, amount_pkr, payment_method, status, description)
-        VALUES (?, ?, ?, 'partner', ?, 'commission', ?, 'cash', 'confirmed', ?)
-      `).run(genId('WTX'), `${txRef}-COM`, req.auth!.sub, booking.id, booking.commission_pkr, `Platform commission due on cash trip ${booking.id}`);
+      // Idempotent commission deduction (skipped if already deducted on Instant acceptance)
+      deductCommissionIfNeeded(
+        booking.id,
+        req.auth!.sub,
+        Number(booking.commission_pkr || 0),
+        'cash',
+        `Platform commission due on cash trip ${booking.id}`
+      );
     })();
 
     res.json({ txRef, paymentStatus: 'PAID' });
@@ -2311,11 +2824,41 @@ export function registerAppRoutes(app: Express) {
       totalCommission,
       netEarnings,
       availableBalancePkr: Math.max(0, confirmedCredits - confirmedDebits - pendingWithdrawals),
+      minRequiredWalletPkr: Number(getSetting('min_partner_wallet_pkr', '500')),
+      instantCommissionPct: Number(getSetting('instant_commission_pct', '15')),
+      commissionDeductionMode: getSetting('commission_deduction_mode', 'on_accept'),
       pendingSettlementsPkr: pendingWithdrawals,
       paidWithdrawalsPkr: txs.filter((t) => t.status === 'confirmed' && t.type === 'withdrawal').reduce((s, t) => s + Number(t.amount_pkr), 0),
       completedTrips,
       transactions: txs,
     });
+  });
+
+  app.post('/api/partner/wallet/topup', requireRole('partner'), (req: AuthedRequest, res: Response) => {
+    const { amountPkr, method } = req.body || {};
+    const amt = Math.round(Number(amountPkr));
+    if (!Number.isFinite(amt) || amt < 100 || amt > 250000) {
+      res.status(400).json({ error: 'Top-up amount must be between Rs. 100 and Rs. 250,000.' });
+      return;
+    }
+    const pm = ['jazzcash', 'easypaisa', 'bank_transfer'].includes(method) ? method : 'jazzcash';
+    const txId = genId('WTX');
+    const txRef = `TOP-PRT-${crypto.randomInt(100000, 999999)}`;
+    db.prepare(`
+      INSERT INTO wallet_transactions (id, tx_ref, user_id, role, type, amount_pkr, payment_method, status, description)
+      VALUES (?, ?, ?, 'partner', 'credit', ?, ?, 'confirmed', ?)
+    `).run(txId, txRef, req.auth!.sub, amt, pm, `Pro Partner wallet top-up via ${pm.toUpperCase()}`);
+
+    const availableBalancePkr = getPartnerWalletBalance(req.auth!.sub);
+
+    createNotification(
+      req.auth!.sub,
+      'partner',
+      'Payment Updates',
+      'Partner Wallet Credited',
+      `Rs. ${amt.toLocaleString()} added to your Pro Partner wallet (${txRef}). Available balance: Rs. ${availableBalancePkr.toLocaleString()}.`
+    );
+    res.status(201).json({ txRef, amountPkr: amt, availableBalancePkr });
   });
 
   app.post('/api/partner/wallet/withdraw', requireRole('partner'), (req: AuthedRequest, res: Response) => {
@@ -2455,7 +2998,7 @@ export function registerAppRoutes(app: Express) {
             targetRole,
             safeName,
             syntheticPhone,
-            syntheticPhone,
+            '',
             cleanEmail,
             hashPassword(crypto.randomBytes(24).toString('hex')),
             chosenCity

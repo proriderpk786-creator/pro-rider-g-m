@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Check, LayoutTemplate, Palette, RefreshCw, ShieldCheck, Smartphone, Sparkles } from 'lucide-react';
+import { Check, ChevronRight, LayoutTemplate, Palette, RefreshCw, ShieldCheck, Smartphone, Sparkles, X } from 'lucide-react';
 import {
   APP_THEMES,
   AUTH_LAYOUTS,
@@ -140,6 +140,147 @@ export const ThemeQuickToggle: React.FC<{
   );
 };
 
+export const ProfileThemeRowButton: React.FC<{
+  lang: Language;
+  className?: string;
+}> = ({ lang, className = '' }) => {
+  const { themeId, themeMeta, setThemeId, resetToAdminDefault, hasLocalOverride } = useTheme();
+  const [modalOpen, setModalOpen] = useState(false);
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setModalOpen(true)}
+        className={`rounded-2xl border border-zinc-200 bg-white hover:border-[#D4A017] p-4 flex items-center justify-between gap-3 text-start transition-colors min-h-[64px] shadow-xs ${className}`}
+      >
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-10 h-10 rounded-xl bg-amber-50 border border-amber-200 text-[#B8860B] flex items-center justify-center shrink-0">
+            <Palette className="w-5 h-5" />
+          </div>
+          <div className="min-w-0">
+            <div className="font-display font-bold text-sm text-[#0D0D10]">
+              {tr(lang, 'App Theme & Appearance', 'ایپ تھیم اور رنگ')}
+            </div>
+            <p className="text-[11px] text-zinc-500 truncate flex items-center gap-1.5 mt-0.5">
+              <span
+                className="w-2.5 h-2.5 rounded-full border border-zinc-300 shrink-0"
+                style={{ backgroundColor: themeMeta.accentHex }}
+              />
+              <span className="font-semibold text-zinc-700">
+                {lang === 'ur' ? themeMeta.nameUr : themeMeta.nameEn}
+              </span>
+              <span className="text-zinc-400">· {tr(lang, 'Tap to change', 'تبدیل کریں')}</span>
+            </p>
+          </div>
+        </div>
+        <ChevronRight className={`w-4 h-4 text-zinc-400 shrink-0 ${lang === 'ur' ? 'rotate-180' : ''}`} />
+      </button>
+
+      {modalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-sm rounded-3xl bg-white shadow-2xl border border-zinc-200 overflow-hidden animate-in fade-in zoom-in-95">
+            <div className="px-5 py-4 bg-[#0D0D10] text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Palette className="w-4 h-4 text-[#D4A017]" />
+                <h3 className="font-display font-bold text-sm">
+                  {tr(lang, 'Select App Theme', 'ایپ تھیم منتخب کریں')}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModalOpen(false)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-2">
+              <p className="text-[11px] text-zinc-500 pb-1">
+                {tr(
+                  lang,
+                  'Choose your personal color theme. Compact 50% design:',
+                  'ذاتی کلر تھیم منتخب کریں۔ کمپیکٹ بٹن ڈیزائن:'
+                )}
+              </p>
+
+              <div className="space-y-1.5">
+                {APP_THEMES.map((item) => {
+                  const selected = themeId === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setThemeId(item.id)}
+                      className={`w-full p-2.5 rounded-xl border text-left transition-all flex items-center justify-between gap-3 min-h-[46px] ${
+                        selected
+                          ? 'border-[#D4A017] bg-[#D4A017]/10 ring-1 ring-[#D4A017]'
+                          : 'border-zinc-200 hover:border-zinc-400 bg-white'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="flex -space-x-1.5 shrink-0">
+                          <span
+                            className="w-5 h-5 rounded-full border border-zinc-400/50"
+                            style={{ backgroundColor: item.bgHex }}
+                          />
+                          <span
+                            className="w-5 h-5 rounded-full border border-white/60 shadow-xs"
+                            style={{ backgroundColor: item.accentHex }}
+                          />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-xs font-bold text-[#0D0D10] truncate">
+                            {lang === 'ur' ? item.nameUr : item.nameEn}
+                          </div>
+                        </div>
+                      </div>
+                      {selected ? (
+                        <span className="w-4 h-4 rounded-full bg-[#D4A017] text-[#0D0D10] flex items-center justify-center shrink-0">
+                          <Check className="w-3 h-3 stroke-[3]" />
+                        </span>
+                      ) : (
+                        <span className="w-4 h-4 rounded-full border border-zinc-300 shrink-0" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {hasLocalOverride && (
+                <div className="pt-2 border-t border-zinc-100 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      resetToAdminDefault();
+                      setModalOpen(false);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-200 text-xs font-semibold text-zinc-600 hover:border-[#D4A017]"
+                  >
+                    <RefreshCw className="w-3 h-3 text-[#D4A017]" />
+                    {tr(lang, 'Reset to Admin Default', 'ایڈمن کی طے شدہ تھیم')}
+                  </button>
+                </div>
+              )}
+
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => setModalOpen(false)}
+                  className="w-full py-2 rounded-xl bg-[#0D0D10] text-[#F4C430] text-xs font-bold hover:bg-zinc-800"
+                >
+                  {tr(lang, 'Done', 'مکمل')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
+
 interface ThemePreferencesPanelProps {
   lang: Language;
   isAdminStudio?: boolean;
@@ -250,7 +391,7 @@ export const ThemePreferencesPanel: React.FC<ThemePreferencesPanelProps> = ({
           <Sparkles className="w-3.5 h-3.5 text-[#D4A017]" />
           {tr(lang, '1. Select Theme Palette (5 Luxury Models)', '1. تھیم کلر ماڈل منتخب کریں (5 شاہانہ ماڈلز)')}
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
           {APP_THEMES.map((item) => {
             const selected = activeTheme === item.id;
             return (
@@ -258,46 +399,39 @@ export const ThemePreferencesPanel: React.FC<ThemePreferencesPanelProps> = ({
                 key={item.id}
                 type="button"
                 onClick={() => pickTheme(item.id)}
-                className={`p-3.5 rounded-2xl border-2 text-left transition-all flex flex-col justify-between gap-3 ${
-                  selected ? 'border-[#D4A017] ring-2 ring-[#D4A017]/25' : 'border-zinc-200 hover:border-[#D4A017]/60'
+                className={`p-2.5 rounded-xl border text-left transition-all flex items-center justify-between gap-2.5 min-h-[50px] ${
+                  selected
+                    ? 'border-[#D4A017] bg-[#D4A017]/10 ring-1 ring-[#D4A017]'
+                    : 'border-zinc-200 hover:border-zinc-400 bg-white'
                 }`}
               >
-                <div className="flex items-center justify-between gap-2 w-full">
-                  <div
-                    className="w-full h-14 rounded-xl border border-white/20 p-2 flex items-center justify-between"
-                    style={{ backgroundColor: item.bgHex, color: item.textHex }}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span
-                        className="w-6 h-6 rounded-lg border border-white/20"
-                        style={{ backgroundColor: item.surfaceHex }}
-                      />
-                      <div className="space-y-1">
-                        <div className="w-14 h-2 rounded-full" style={{ backgroundColor: item.textHex, opacity: 0.85 }} />
-                        <div className="w-9 h-1.5 rounded-full" style={{ backgroundColor: item.textHex, opacity: 0.45 }} />
-                      </div>
-                    </div>
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="flex -space-x-1.5 shrink-0">
                     <span
-                      className="px-2 py-1 rounded-md text-[9px] font-bold"
-                      style={{ backgroundColor: item.accentHex, color: '#0D0D10' }}
-                    >
-                      PRO
-                    </span>
+                      className="w-5 h-5 rounded-full border border-zinc-400/50"
+                      style={{ backgroundColor: item.bgHex }}
+                    />
+                    <span
+                      className="w-5 h-5 rounded-full border border-white/60 shadow-xs"
+                      style={{ backgroundColor: item.accentHex }}
+                    />
                   </div>
-                </div>
-                <div className="flex items-start justify-between gap-2 w-full">
-                  <div>
-                    <div className="text-xs font-bold">{lang === 'ur' ? item.nameUr : item.nameEn}</div>
-                    <div className="text-[11px] text-zinc-500 mt-0.5 leading-snug">
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold text-[#0D0D10] truncate">
+                      {lang === 'ur' ? item.nameUr : item.nameEn}
+                    </div>
+                    <div className="text-[10px] text-zinc-500 truncate">
                       {lang === 'ur' ? item.descUr : item.descEn}
                     </div>
                   </div>
-                  {selected && (
-                    <span className="w-5 h-5 rounded-full bg-[#D4A017] text-[#0D0D10] flex items-center justify-center shrink-0">
-                      <Check className="w-3.5 h-3.5" />
-                    </span>
-                  )}
                 </div>
+                {selected ? (
+                  <span className="w-4 h-4 rounded-full bg-[#D4A017] text-[#0D0D10] flex items-center justify-center shrink-0">
+                    <Check className="w-3 h-3 stroke-[3]" />
+                  </span>
+                ) : (
+                  <span className="w-4 h-4 rounded-full border border-zinc-300 shrink-0" />
+                )}
               </button>
             );
           })}

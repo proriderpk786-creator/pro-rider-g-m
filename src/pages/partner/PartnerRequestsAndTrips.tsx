@@ -1,25 +1,36 @@
 import React, { useEffect, useState } from 'react';
 import {
   Bell,
+  Calendar,
   Car,
   Check,
   ChevronLeft,
   ChevronRight,
   Download,
   Eye,
+  FileText,
   Flame,
+  Globe,
   Lock,
+  LogOut,
   MapPin,
+  Moon,
   Navigation,
   Radio,
   ShieldCheck,
+  Sparkles,
+  Star,
+  Sun,
+  Users,
   Volume2,
   VolumeX,
+  Wallet as WalletIcon,
   X,
 } from 'lucide-react';
 import { StreetMap, type MapFocusTarget } from '../../components/StreetMap';
-import { tr, trBookingStatus, trPaymentStatus, trService } from '../../i18n/translations';
-import { apiRequest } from '../../utils/api';
+import { useTheme } from '../../contexts/ThemeContext';
+import { formatVehicleLabel, tr, trBookingStatus, trPaymentStatus, trService } from '../../i18n/translations';
+import { apiRequest, isBackendOfflineError } from '../../utils/api';
 import { downloadBookingPdf } from '../../utils/pdfGenerator';
 import { RIDE_BELL_OPTIONS, type RideBellSoundId } from '../../utils/rideBell';
 import type { Booking, DemandMapData, Language, PartnerProfile, RouteResult, ServiceZone } from '../../types';
@@ -35,12 +46,62 @@ function haversineDistanceKm(lat1: number, lng1: number, lat2: number, lng2: num
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// Screens 20 & 21: Clean Pro Partner Home Radar Screen
+const PASSENGER_AVATARS = [
+  '/assets/aistudio/1_85f0b054.jpeg',
+  '/assets/aistudio/2_3bc3de51.jpeg',
+  '/assets/aistudio/3_c134116d.jpeg',
+  '/assets/aistudio/4_fddc1c76.jpeg',
+  '/assets/aistudio/5_e28e3d3d.jpeg',
+  '/assets/aistudio/6_cf0b27ac.jpeg',
+  '/assets/aistudio/7_9ac1545a.jpeg',
+  '/assets/aistudio/8_0bc58554.jpeg',
+  '/assets/aistudio/9_8238dc78.jpeg',
+  '/assets/aistudio/10_ae7e31c4.jpeg',
+  '/assets/aistudio/11_d4d9cd9e.jpeg',
+  '/assets/aistudio/12_d9881a32.jpeg',
+];
+
+function getPassengerAvatar(seed?: string): string {
+  if (!seed) return PASSENGER_AVATARS[0];
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) {
+    h = (h << 5) - h + seed.charCodeAt(i);
+    h |= 0;
+  }
+  const idx = Math.abs(h) % PASSENGER_AVATARS.length;
+  return PASSENGER_AVATARS[idx];
+}
+
+const CarOutlineGraphic: React.FC<{ className?: string }> = ({ className = 'w-24 h-11' }) => (
+  <div className="flex items-center justify-center px-3 py-1.5 rounded-2xl border border-amber-300/60 bg-[#FAF7EE] shadow-2xs">
+    <svg
+      viewBox="0 0 160 70"
+      className={`${className} stroke-[#9E730B] fill-none`}
+      strokeWidth="2.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M 12 45 C 18 45, 24 45, 30 45 C 32 37, 40 31, 49 31 C 58 31, 66 37, 68 45 L 98 45 C 100 37, 108 31, 117 31 C 126 31, 134 37, 136 45 L 148 45 C 153 45, 156 42, 154 37 C 150 29, 140 26, 126 25 C 114 24, 100 13, 84 11 C 66 9, 44 11, 34 22 L 20 28 C 14 30, 10 35, 10 40 Z" />
+      <circle cx="49" cy="45" r="9.5" className="stroke-[#9E730B]" strokeWidth="2.2" />
+      <circle cx="49" cy="45" r="3.5" className="fill-[#9E730B]" />
+      <circle cx="117" cy="45" r="9.5" className="stroke-[#9E730B]" strokeWidth="2.2" />
+      <circle cx="117" cy="45" r="3.5" className="fill-[#9E730B]" />
+      <path d="M 52 23 L 80 23 C 83 23, 86 24, 87 27 L 89 31 L 43 31 C 45 27, 48 24, 52 23 Z" />
+      <path d="M 93 23 L 112 24 C 117 25, 122 28, 124 31 L 93 31 Z" />
+    </svg>
+  </div>
+);
+
+type CategoryFilterKey = 'all' | 'instant' | 'pick_and_drop' | 'ride_sharing' | 'fuel_sharing';
+
 export const PartnerRequestsView: React.FC<{
   lang?: Language;
   approved: boolean;
   profile: PartnerProfile;
   requests: Booking[];
+  walletBalancePkr?: number;
+  minRequiredWalletPkr?: number;
+  instantCommissionPct?: number;
   demandData?: DemandMapData | null;
   zones?: ServiceZone[];
   bellSound: RideBellSoundId;
@@ -50,11 +111,18 @@ export const PartnerRequestsView: React.FC<{
   onDismissIncomingNotice?: () => void;
   onRefresh: () => Promise<void>;
   onGoToDocs: () => void;
+  onGoToWallet?: () => void;
+  onToggleOnline?: () => Promise<void> | void;
+  onChangeLang?: (l: Language) => void;
+  onLogout?: () => void;
 }> = ({
   lang = 'en',
   approved,
   profile,
   requests,
+  walletBalancePkr = 0,
+  minRequiredWalletPkr = 500,
+  instantCommissionPct = 15,
   demandData = null,
   zones = [],
   bellSound,
@@ -64,7 +132,12 @@ export const PartnerRequestsView: React.FC<{
   onDismissIncomingNotice,
   onRefresh,
   onGoToDocs,
+  onGoToWallet,
+  onToggleOnline,
+  onChangeLang,
+  onLogout,
 }) => {
+  const { isDark, setThemeId } = useTheme();
   const [detailsRequest, setDetailsRequest] = useState<Booking | null>(null);
   const [heatmapModalOpen, setHeatmapModalOpen] = useState(false);
   const [bellMenuOpen, setBellMenuOpen] = useState(false);
@@ -73,15 +146,16 @@ export const PartnerRequestsView: React.FC<{
   const [offerDrafts, setOfferDrafts] = useState<Record<string, string>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [statusNotice, setStatusNotice] = useState<string | null>(null);
   const [locallySkippedIds, setLocallySkippedIds] = useState<string[]>([]);
-  const [activeIndex, setActiveIndex] = useState(0);
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilterKey>('all');
+  const categoryScrollRef = React.useRef<HTMLDivElement | null>(null);
   const [driverGps, setDriverGps] = useState<{ lat: number; lng: number } | null>(() =>
     profile.current_lat && profile.current_lng
       ? { lat: profile.current_lat, lng: profile.current_lng }
       : null
   );
 
-  // Capture driver GPS once cleanly so Details shows how far pickup is from driver
   useEffect(() => {
     if (driverGps || typeof navigator === 'undefined' || !navigator.geolocation) return;
     navigator.geolocation.getCurrentPosition(
@@ -111,16 +185,39 @@ export const PartnerRequestsView: React.FC<{
     };
   }, [detailsRequest?.id]);
 
-  const visibleRequests = requests.filter((r) => !locallySkippedIds.includes(r.id));
-  const safeIndex = visibleRequests.length > 0 ? Math.min(activeIndex, visibleRequests.length - 1) : 0;
-  const currentRide = visibleRequests[safeIndex] || null;
-
-  useEffect(() => {
-    if (incomingRideNotice) {
-      const idx = visibleRequests.findIndex((r) => r.id === incomingRideNotice.id);
-      if (idx >= 0) setActiveIndex(idx);
+  const visibleRequests = React.useMemo(() => {
+    const seen = new Set<string>();
+    const list: Booking[] = [];
+    for (const r of requests) {
+      if (!r?.id || seen.has(r.id) || locallySkippedIds.includes(r.id)) continue;
+      seen.add(r.id);
+      list.push(r);
     }
-  }, [incomingRideNotice?.id]);
+    return list.sort((a, b) => {
+      if (Boolean(a.is_priority_for_me) !== Boolean(b.is_priority_for_me)) {
+        return a.is_priority_for_me ? -1 : 1;
+      }
+      return String(b.created_at || '').localeCompare(String(a.created_at || ''));
+    });
+  }, [requests, locallySkippedIds]);
+
+  const categoryCounts = React.useMemo(() => {
+    const counts = { all: 0, instant: 0, pick_and_drop: 0, ride_sharing: 0, fuel_sharing: 0 };
+    for (const r of visibleRequests) {
+      counts.all += 1;
+      if (r.booking_mode === 'go_now') counts.instant += 1;
+      else if (r.service_type === 'pick_and_drop') counts.pick_and_drop += 1;
+      else if (r.service_type === 'ride_sharing') counts.ride_sharing += 1;
+      else if (r.service_type === 'fuel_sharing') counts.fuel_sharing += 1;
+    }
+    return counts;
+  }, [visibleRequests]);
+
+  const filteredRequests = React.useMemo(() => {
+    if (categoryFilter === 'all') return visibleRequests;
+    if (categoryFilter === 'instant') return visibleRequests.filter((r) => r.booking_mode === 'go_now');
+    return visibleRequests.filter((r) => r.booking_mode === 'schedule' && r.service_type === categoryFilter);
+  }, [visibleRequests, categoryFilter]);
 
   const handleAccept = async (bookingId: string) => {
     if (!approved) {
@@ -134,15 +231,65 @@ export const PartnerRequestsView: React.FC<{
     }
     setBusyId(bookingId);
     setError(null);
+    setStatusNotice(null);
     try {
-      await apiRequest(`/api/partner/requests/${bookingId}/accept`, {
+      const res = await apiRequest<{
+        confirmed?: boolean;
+        applied?: boolean;
+        alreadyApplied?: boolean;
+        awaitingAdminApproval?: boolean;
+        commissionDeductedPkr?: number;
+        availableBalancePkr?: number;
+      }>(`/api/partner/requests/${bookingId}/accept`, {
         method: 'POST',
         role: 'partner',
       });
       setDetailsRequest(null);
       onDismissIncomingNotice?.();
+      if (res.confirmed) {
+        setStatusNotice(
+          tr(
+            lang,
+            `Instant Booking ${bookingId} confirmed!${res.commissionDeductedPkr ? ` Commission Rs. ${res.commissionDeductedPkr.toLocaleString()} deducted.` : ''} Open My Trips to head to pickup.`,
+            `فوری رائیڈ ${bookingId} کنفرم ہو گئی!${res.commissionDeductedPkr ? ` کمیشن ${res.commissionDeductedPkr.toLocaleString()} روپے کٹ گئے۔` : ''} ٹرپ شروع کرنے کے لیے مائی ٹرپس کھولیں۔`
+          )
+        );
+      } else if (res.applied || res.awaitingAdminApproval) {
+        setStatusNotice(
+          tr(
+            lang,
+            `Application sent to Admin for ${bookingId}. Your phone & vehicle details are queued for Admin approval.`,
+            `ماہانہ بُکنگ ${bookingId} کے لیے آپ کی درخواست اور نمبر ایڈمن کو بھیج دیا گیا ہے۔ ایڈمن کی منظوری کا انتظار کریں۔`
+          )
+        );
+      }
       await onRefresh();
     } catch (err: any) {
+      if (isBackendOfflineError(err)) {
+        try {
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (!k || !k.startsWith('pr_local_bookings_passenger')) continue;
+            const raw = localStorage.getItem(k);
+            if (!raw) continue;
+            const parsed = JSON.parse(raw) as Booking[];
+            if (Array.isArray(parsed)) {
+              const updated = parsed.map((b) =>
+                b.id === bookingId
+                  ? { ...b, status: 'confirmed' as const, partner_id: profile.user_id }
+                  : b
+              );
+              localStorage.setItem(k, JSON.stringify(updated));
+            }
+          }
+          setDetailsRequest(null);
+          onDismissIncomingNotice?.();
+          await onRefresh();
+          return;
+        } catch {
+          // ignore localStorage errors
+        }
+      }
       setError(err.message);
       if (err?.status === 403) onGoToDocs();
     } finally {
@@ -197,428 +344,503 @@ export const PartnerRequestsView: React.FC<{
     }
   };
 
-  const topHotspots = demandData?.hotspots || [];
+  const topHotspots = Array.isArray(demandData?.hotspots)
+    ? demandData.hotspots.filter((h): h is NonNullable<typeof h> => Boolean(h))
+    : [];
   const sortedHotspots = [...topHotspots].sort(
-    (a, b) => b.demandScore + b.openRequests * 12 - (a.demandScore + a.openRequests * 12)
+    (a, b) => (b.demandScore || 0) + (b.openRequests || 0) * 12 - ((a.demandScore || 0) + (a.openRequests || 0) * 12)
   );
   const hottestZone = sortedHotspots[0] || null;
-  const peakHeatScore = hottestZone ? hottestZone.demandScore + hottestZone.openRequests * 10 : 0;
-
-  const topHeatButtonClass =
-    peakHeatScore >= 82
-      ? 'bg-[#B91C1C] border-red-400 text-white shadow-md shadow-red-600/35 animate-pulse'
-      : peakHeatScore >= 65
-      ? 'bg-red-600 border-red-400 text-white shadow-sm'
-      : peakHeatScore >= 45
-      ? 'bg-orange-600 border-orange-400 text-white shadow-sm'
-      : 'bg-emerald-700 border-emerald-500 text-white shadow-sm';
-
-  const pickupDistanceFromDriver =
-    currentRide && driverGps
-      ? haversineDistanceKm(driverGps.lat, driverGps.lng, currentRide.pickup_lat, currentRide.pickup_lng).toFixed(1)
-      : null;
+  const peakHeatScore = hottestZone ? (hottestZone.demandScore || 0) + (hottestZone.openRequests || 0) * 10 : 0;
 
   const detailsPickupDistance =
     detailsRequest && driverGps
       ? haversineDistanceKm(driverGps.lat, driverGps.lng, detailsRequest.pickup_lat, detailsRequest.pickup_lng).toFixed(1)
       : null;
 
+  const walletEligibleForInstant = walletBalancePkr >= minRequiredWalletPkr;
+
   return (
-    <div className="relative flex flex-col w-full min-w-0 overflow-x-clip space-y-3.5 pt-1 pb-4">
-      {/* Top Command Row: Status/Verification + Bell Tone + Live Demand Heatmap */}
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <div className="flex items-center gap-2 min-w-0">
-          {!approved ? (
+    <div className="relative flex flex-col w-full min-w-0 overflow-x-clip space-y-2 pt-0.5 pb-6 max-w-xl mx-auto">
+      {/* 1. Compact Header (~35-40% smaller): Circular PR Logo + Slim Single-Line Auto Online Bar */}
+      <div className="flex items-center gap-2 w-full">
+        <div className="w-8 h-8 rounded-full bg-[#0D0D10] border border-[#D4A017] p-0.5 flex items-center justify-center shrink-0 shadow-xs">
+          <img
+            src="/assets/aistudio/pmg_3_88102afb.png"
+            alt="PRO RIDER"
+            className="w-full h-full object-contain"
+          />
+        </div>
+
+        <div className="flex-1 rounded-full bg-[#FAF6EC] border border-[#D4A017]/80 px-2.5 py-1 flex items-center justify-between gap-1.5 shadow-2xs min-w-0">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <div className="w-5 h-5 rounded-full bg-white border border-[#D4A017]/60 flex items-center justify-center text-[#9E730B] shrink-0">
+              <Calendar className="w-3 h-3" />
+            </div>
+            <span className="text-[11px] font-black text-[#0D0D10] tracking-tight truncate">
+              {lang === 'ur' ? 'آن لائن' : 'Auto Online'}
+            </span>
+            <span
+              className={`px-1.5 py-0.5 rounded-full text-[8.5px] font-black uppercase leading-none shrink-0 ${
+                profile.is_online
+                  ? 'bg-emerald-500/20 text-emerald-800 border border-emerald-400'
+                  : 'bg-zinc-200 text-zinc-600'
+              }`}
+            >
+              {profile.is_online ? (lang === 'ur' ? 'ON •' : 'ON •') : 'OFF'}
+            </span>
+          </div>
+
+          <span className="text-[9px] font-bold text-zinc-600 hidden xs:inline truncate px-1">
+            8am–10pm
+          </span>
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="text-[9.5px] font-extrabold text-[#0D0D10]">
+              {lang === 'ur' ? 'مینول' : 'Manual'}
+            </span>
             <button
               type="button"
-              onClick={onGoToDocs}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#FEF3C7] border-2 border-[#D4A017] text-[#0D0D10] text-xs font-extrabold shadow-xs hover:bg-[#FDE68A] whitespace-nowrap"
+              onClick={onToggleOnline}
+              className={`relative inline-flex h-4.5 w-8 shrink-0 cursor-pointer rounded-full border border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden ${
+                profile.is_online ? 'bg-[#D4A017]' : 'bg-zinc-300'
+              }`}
+              role="switch"
+              aria-checked={Boolean(profile.is_online)}
             >
-              <Lock className="w-3.5 h-3.5 text-[#9E730B] shrink-0" />
-              <span className="truncate">
-                {lang === 'ur' ? 'تصدیق باقی · دستاویزات مکمل کریں' : 'Docs Pending · Tap to Verify'}
-              </span>
-            </button>
-          ) : (
-            <div className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-[#0D0D10] border border-[#D4A017]/50 text-xs font-extrabold text-white shadow-xs whitespace-nowrap">
               <span
-                className={`w-2.5 h-2.5 rounded-full ${
-                  profile.is_online ? 'bg-emerald-400' : 'bg-zinc-400'
+                className={`pointer-events-none inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
+                  profile.is_online ? 'translate-x-3.5' : 'translate-x-0'
                 }`}
               />
-              <span>
-                {profile.is_online
-                  ? lang === 'ur'
-                    ? 'ڈرائیور آن لائن · ریڈار فعال'
-                    : 'Online · Radar Active'
-                  : lang === 'ur'
-                  ? 'آف لائن پریویو'
-                  : 'Offline Preview'}
-              </span>
-            </div>
-          )}
-        </div>
-
-        {/* Right Top Controls: Bell Tone + Heatmap */}
-        <div className="relative flex items-center gap-2 shrink-0">
-          <button
-            type="button"
-            onClick={() => setBellMenuOpen((v) => !v)}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white border-2 border-zinc-300 text-[#0D0D10] text-xs font-extrabold shadow-2xs hover:border-[#0D0D10] whitespace-nowrap"
-          >
-            {bellSound === 'muted' ? (
-              <VolumeX className="w-3.5 h-3.5 text-zinc-600" />
-            ) : (
-              <Bell className="w-3.5 h-3.5 text-[#B8860B]" />
-            )}
-            <span>{lang === 'ur' ? 'بیل' : 'Bell'}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setHeatmapModalOpen(true);
-              if (hottestZone) {
-                setFocusTarget({ lat: hottestZone.lat, lng: hottestZone.lng, zoom: 13, ts: Date.now() });
-              }
-            }}
-            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-extrabold transition-all whitespace-nowrap ${topHeatButtonClass}`}
-          >
-            <Flame className="w-3.5 h-3.5 shrink-0" />
-            <span>{lang === 'ur' ? 'ہیٹ میپ' : 'Heatmap'}</span>
-            {hottestZone && (
-              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-black/30 leading-none tabular-nums">
-                {hottestZone.surgeMultiplier.toFixed(1)}x
-              </span>
-            )}
-          </button>
-
-          {/* Bell Ringtone Selector Popover */}
-          {bellMenuOpen && (
-            <div className="absolute right-0 top-12 z-40 w-64 rounded-2xl border-2 border-[#0D0D10] bg-white shadow-2xl p-3 space-y-2.5">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-extrabold text-[#0D0D10]">
-                  {lang === 'ur' ? 'رائیڈ بیل ٹون منتخب کریں' : 'Select Ride Bell Tone'}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setBellMenuOpen(false)}
-                  className="text-zinc-500 hover:text-[#0D0D10]"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-              <div className="space-y-1.5">
-                {RIDE_BELL_OPTIONS.map((opt) => {
-                  const active = bellSound === opt.id;
-                  return (
-                    <button
-                      key={opt.id}
-                      type="button"
-                      onClick={() => onChangeBellSound(opt.id)}
-                      className={`w-full px-2.5 py-2 rounded-xl border text-left transition-colors ${
-                        active
-                          ? 'bg-[#0D0D10] border-[#0D0D10] text-[#F4C430]'
-                          : 'bg-zinc-50 border-zinc-200 text-[#0D0D10] hover:bg-zinc-100'
-                      }`}
-                    >
-                      <div className="text-[11px] font-bold">{lang === 'ur' ? opt.labelUr : opt.labelEn}</div>
-                      <div className={`text-[10px] ${active ? 'text-zinc-300' : 'text-zinc-600'}`}>
-                        {opt.descriptionEn}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-              <button
-                type="button"
-                onClick={onTestBell}
-                className="w-full py-2 rounded-xl bg-[#D4A017] text-[#0D0D10] text-xs font-extrabold flex items-center justify-center gap-1.5 hover:bg-[#EAB308]"
-              >
-                <Volume2 className="w-3.5 h-3.5" />
-                <span>{lang === 'ur' ? 'بیل ٹیسٹ کریں' : 'Test Sound'}</span>
-              </button>
-            </div>
-          )}
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Authoritative Dispatch Strip — Eliminates pale void & anchors driver workspace */}
-      <div className="w-full max-w-lg mx-auto rounded-2xl bg-[#FAF6EC] border-2 border-[#0D0D10] px-4 py-2.5 flex items-center justify-between gap-3 shadow-xs">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="relative w-10 h-10 rounded-xl bg-[#0D0D10] border border-[#D4A017] flex items-center justify-center shrink-0 overflow-hidden">
-            <div
-              className="absolute inset-0.5 rounded-full animate-spin"
-              style={{
-                animationDuration: '3s',
-                background:
-                  'conic-gradient(from 0deg, rgba(244,196,48,0.5) 0deg, transparent 90deg, transparent 360deg)',
-              }}
-            />
-            <Car className="w-4 h-4 text-[#F4C430] relative z-10" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-[#9E730B]">
-              {lang === 'ur' ? 'پرو پارٹنر ڈسپیچ سسٹم' : 'PRO PARTNER DISPATCH'}
-            </p>
-            <p className="text-xs sm:text-sm font-extrabold text-[#0D0D10] truncate">
-              {profile.vehicle_name || tr(lang, 'Verified Fleet Unit', 'فلیٹ گاڑی')} ·{' '}
-              {profile.operating_city || 'Islamabad'}
-            </p>
-          </div>
-        </div>
-        <div className="text-right shrink-0">
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#0D0D10] text-[#F4C430] font-mono text-[11px] font-bold tabular-nums">
-            {visibleRequests.length}{' '}
-            {visibleRequests.length === 1
-              ? tr(lang, 'Ride', 'رائیڈ')
-              : tr(lang, 'Rides', 'رائیڈز')}
+      {/* 2. Compact Action Pills Row (~35% shorter): Docs Pending | Dark/Light | EN اردو | Logout */}
+      <div className="grid grid-cols-4 gap-1.5 w-full">
+        <button
+          type="button"
+          onClick={onGoToDocs}
+          className="h-7 px-1.5 rounded-full border border-[#D4A017]/80 bg-white hover:bg-amber-50/50 flex items-center justify-center gap-1 shadow-2xs transition-all min-w-0"
+        >
+          {approved ? (
+            <>
+              <ShieldCheck className="w-3 h-3 text-emerald-600 shrink-0" />
+              <span className="text-[10px] font-extrabold text-[#0D0D10] truncate">
+                {lang === 'ur' ? 'تصدیق' : 'Verified'}
+              </span>
+            </>
+          ) : (
+            <>
+              <Lock className="w-3 h-3 text-amber-700 shrink-0" />
+              <span className="text-[10px] font-extrabold text-[#0D0D10] truncate">
+                {lang === 'ur' ? 'دستاویز' : 'Docs'}
+              </span>
+            </>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            if (isDark) {
+              setThemeId('classic-ivory');
+            } else {
+              setThemeId('obsidian-gold');
+            }
+          }}
+          className="h-7 px-1.5 rounded-full border border-[#D4A017]/80 bg-white hover:bg-amber-50/50 flex items-center justify-center gap-1 shadow-2xs transition-all min-w-0"
+        >
+          {isDark ? (
+            <>
+              <Sun className="w-3 h-3 text-amber-600 shrink-0" />
+              <span className="text-[10px] font-extrabold text-[#0D0D10] truncate">
+                {lang === 'ur' ? 'لائٹ' : 'Light'}
+              </span>
+            </>
+          ) : (
+            <>
+              <Moon className="w-3 h-3 text-zinc-700 shrink-0" />
+              <span className="text-[10px] font-extrabold text-[#0D0D10] truncate">
+                {lang === 'ur' ? 'ڈارک' : 'Dark'}
+              </span>
+            </>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onChangeLang?.(lang === 'ur' ? 'en' : 'ur')}
+          className="h-7 px-1.5 rounded-full border border-[#D4A017]/80 bg-white hover:bg-amber-50/50 flex items-center justify-center gap-1 shadow-2xs transition-all min-w-0"
+        >
+          <Globe className="w-3 h-3 text-zinc-700 shrink-0" />
+          <span className="text-[10px] font-extrabold text-[#0D0D10] truncate">
+            EN <span className="font-normal font-sans">اردو</span>
           </span>
-        </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={onLogout}
+          className="h-7 px-1.5 rounded-full border border-[#D4A017]/80 bg-white hover:bg-red-50 flex items-center justify-center gap-1 shadow-2xs transition-all min-w-0"
+        >
+          <LogOut className="w-3 h-3 text-red-600 shrink-0" />
+          <span className="text-[10px] font-extrabold text-[#0D0D10] truncate">
+            {lang === 'ur' ? 'لاگ آؤٹ' : 'Logout'}
+          </span>
+        </button>
       </div>
+
+      {/* 3. Compact Dispatch Ribbon Ticker */}
+      <div className="w-full rounded-xl bg-[#FAF6EC] border border-[#D4A017]/70 px-2.5 py-1.5 flex items-center justify-between gap-2 shadow-2xs">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <Car className="w-3.5 h-3.5 text-[#9E730B] shrink-0" />
+          <p className="text-[9.5px] sm:text-[10.5px] font-bold text-[#0D0D10] truncate">
+            <span className="font-extrabold uppercase tracking-wider text-[#9E730B]">DISPATCH</span>
+            {' • '}
+            <span>{profile.vehicle_name || tr(lang, 'Verified Fleet', 'فلیٹ گاڑی')}</span>
+            {' • '}
+            <span>{profile.operating_city || 'Islamabad'}</span>
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={onGoToWallet}
+          className="inline-flex items-center gap-1 text-[10px] font-mono font-bold text-[#0D0D10] hover:text-[#9E730B] shrink-0 whitespace-nowrap pl-2 border-l border-[#D4A017]/40"
+        >
+          <span>Rs. {Number(walletBalancePkr).toLocaleString()}</span>
+          <span className="text-[#9E730B] font-extrabold text-[9.5px] uppercase">
+            {tr(lang, 'Top Up', 'ریچارج')}
+          </span>
+        </button>
+      </div>
+
+      {/* 4. Compact Single-Line Horizontal Category Pills (~35-40% smaller) with Visible Scrollbar & Arrow Indicators */}
+      <div className="relative flex items-center gap-1 w-full">
+        <button
+          type="button"
+          onClick={() => categoryScrollRef.current?.scrollBy({ left: -120, behavior: 'smooth' })}
+          aria-label="Scroll categories left"
+          className="h-6 w-5 rounded-full border border-[#D4A017]/60 bg-white/90 text-[#9E730B] flex items-center justify-center shrink-0 hover:bg-amber-50 shadow-2xs"
+        >
+          <ChevronLeft className="w-3 h-3" />
+        </button>
+
+        <div
+          ref={categoryScrollRef}
+          className="flex-1 min-w-0 overflow-x-auto pr-category-scroll pb-1.5 pt-0.5"
+        >
+          <div className="flex flex-nowrap items-center gap-1.5 min-w-max">
+            {[
+              { key: 'all' as CategoryFilterKey, en: 'All', ur: 'تمام', count: categoryCounts.all },
+              { key: 'instant' as CategoryFilterKey, en: 'Instant', ur: 'انسٹنٹ', count: categoryCounts.instant },
+              { key: 'pick_and_drop' as CategoryFilterKey, en: 'Pick & Drop', ur: 'پک اینڈ ڈراپ', count: categoryCounts.pick_and_drop },
+              { key: 'ride_sharing' as CategoryFilterKey, en: 'Ride Share', ur: 'رائیڈ شیئر', count: categoryCounts.ride_sharing },
+              { key: 'fuel_sharing' as CategoryFilterKey, en: 'Fuel Share', ur: 'فیول شیئر', count: categoryCounts.fuel_sharing },
+            ].map((cat) => {
+              const active = categoryFilter === cat.key;
+              return (
+                <button
+                  key={cat.key}
+                  type="button"
+                  onClick={() => setCategoryFilter(cat.key)}
+                  className={`h-6.5 px-2.5 py-0.5 rounded-full border text-[10px] font-bold inline-flex items-center gap-1 transition-all shrink-0 whitespace-nowrap ${
+                    active
+                      ? 'bg-[#0D0D10] border-[#D4A017] text-[#F4C430] shadow-2xs'
+                      : 'bg-white border-[#D4A017]/70 text-[#0D0D10] hover:bg-amber-50/40'
+                  }`}
+                >
+                  <span>{tr(lang, cat.en, cat.ur)}</span>
+                  <span
+                    className={`font-mono text-[9.5px] font-extrabold leading-none ${
+                      active ? 'text-[#F4C430]' : 'text-[#9E730B]'
+                    }`}
+                  >
+                    {cat.count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => categoryScrollRef.current?.scrollBy({ left: 120, behavior: 'smooth' })}
+          aria-label="Scroll categories right"
+          className="h-6 w-5 rounded-full border border-[#D4A017]/60 bg-white/90 text-[#9E730B] flex items-center justify-center shrink-0 hover:bg-amber-50 shadow-2xs"
+        >
+          <ChevronRight className="w-3 h-3" />
+        </button>
+      </div>
+
+      {/* 5. Section Title: ✨ NEW RIDE REQUESTS (Left) + View All > (Right) */}
+      <div className="flex items-center justify-between pt-1 px-1">
+        <div className="flex items-center gap-2">
+          <Sparkles className="w-4 h-4 text-[#D4A017]" />
+          <h2 className="font-display text-sm sm:text-base font-black tracking-tight text-[#0D0D10] uppercase">
+            {lang === 'ur' ? 'نئی رائیڈ درخواستیں' : 'NEW RIDE REQUESTS'}
+          </h2>
+        </div>
+        <button
+          type="button"
+          onClick={() => setCategoryFilter('all')}
+          className="text-xs font-bold text-zinc-600 hover:text-[#0D0D10] flex items-center gap-0.5"
+        >
+          <span>{lang === 'ur' ? 'تمام دیکھیں' : 'View All'}</span>
+          <ChevronRight className="w-3.5 h-3.5" />
+        </button>
+      </div>
+
+      {statusNotice && (
+        <div className="w-full rounded-2xl bg-emerald-900 text-[#F4C430] border border-emerald-700 px-4 py-3 text-xs font-bold shadow-xs">
+          {statusNotice}
+        </div>
+      )}
 
       {error && (
-        <div className="w-full max-w-lg mx-auto rounded-xl bg-red-50 border-2 border-red-300 px-3.5 py-2.5 text-xs text-red-800 font-bold text-center">
+        <div className="w-full rounded-2xl bg-red-50 border-2 border-red-300 px-3.5 py-2.5 text-xs text-red-800 font-bold text-center">
           {error}
         </div>
       )}
 
-      {/* Main Content Stage: Top-Anchored, High-Contrast Broadsheet Dispatch Card or Radar */}
-      <div className="w-full max-w-lg mx-auto">
-        {!currentRide ? (
-          /* Clean Executive Scanning Radar Panel */
-          <div className="rounded-3xl border-2 border-[#0D0D10] bg-white overflow-hidden shadow-[0_14px_34px_-12px_rgba(13,13,16,0.2)]">
-            <div className="bg-[#0D0D10] px-5 py-3 flex items-center justify-between border-b border-[#D4A017]/40">
-              <span className="text-[11px] font-extrabold uppercase tracking-[0.16em] text-[#F4C430]">
-                {lang === 'ur' ? 'لائیو ریڈار اسکیننگ' : 'LIVE ZONE RADAR'}
-              </span>
-              <span className="text-[11px] font-mono font-bold text-zinc-300">
-                {profile.operating_city || 'Islamabad'}
-              </span>
+      {/* 6. Feed of Ride Request Cards */}
+      <div className="space-y-4 w-full">
+        {filteredRequests.length === 0 ? (
+          <div className="rounded-3xl border-2 border-[#D4A017]/70 bg-white overflow-hidden shadow-sm p-6 text-center space-y-4">
+            <div className="relative w-36 h-36 mx-auto flex items-center justify-center">
+              <div className="absolute inset-0 rounded-full border-2 border-[#D4A017]/25" />
+              <div className="absolute inset-4 rounded-full border border-[#D4A017]/45" />
+              <div className="absolute inset-8 rounded-full border border-dashed border-[#D4A017]/60" />
+              <div
+                className="absolute inset-1 rounded-full animate-spin"
+                style={{
+                  animationDuration: '3.2s',
+                  background:
+                    'conic-gradient(from 0deg, rgba(212,160,23,0.45) 0deg, rgba(212,160,23,0.08) 58deg, transparent 90deg, transparent 360deg)',
+                }}
+              />
+              <div className="relative z-10 w-14 h-14 rounded-full bg-[#0D0D10] border-2 border-[#F4C430] flex items-center justify-center text-[#F4C430] shadow-md">
+                <Car className="w-6 h-6" />
+              </div>
             </div>
 
-            <div className="px-5 py-8 flex flex-col items-center text-center space-y-5 bg-gradient-to-b from-[#FAF7EE] to-white">
-              <div className="relative w-48 h-48 sm:w-56 sm:h-56 flex items-center justify-center">
-                <div className="absolute inset-0 rounded-full border-2 border-[#0D0D10]/15 bg-[#0D0D10]/[0.03]" />
-                <div className="absolute inset-5 rounded-full border border-[#D4A017]/45" />
-                <div className="absolute inset-11 rounded-full border border-dashed border-[#0D0D10]/25" />
-                <div className="absolute inset-16 rounded-full border border-[#D4A017]/60" />
-
-                <div className="absolute inset-x-0 top-1/2 h-px bg-[#0D0D10]/15" />
-                <div className="absolute inset-y-0 left-1/2 w-px bg-[#0D0D10]/15" />
-
-                <div
-                  className="absolute inset-1 rounded-full animate-spin"
-                  style={{
-                    animationDuration: '3.2s',
-                    background:
-                      'conic-gradient(from 0deg, rgba(212,160,23,0.45) 0deg, rgba(212,160,23,0.08) 58deg, transparent 90deg, transparent 360deg)',
-                  }}
-                />
-
-                <div className="relative z-10 w-16 h-16 rounded-full bg-[#0D0D10] border-2 border-[#F4C430] shadow-xl flex items-center justify-center text-[#F4C430]">
-                  <Car className="w-7 h-7" />
-                </div>
-              </div>
-
-              <div className="space-y-1.5 max-w-xs">
-                <h2 className="font-display text-xl font-black text-[#0D0D10] tracking-tight">
-                  {lang === 'ur' ? 'نئی مسافر رائیڈز تلاش کی جا رہی ہیں' : 'Scanning for Passenger Rides'}
-                </h2>
-                <p className="text-xs font-semibold text-zinc-700 leading-relaxed">
-                  {lang === 'ur'
-                    ? 'مسافر کی درخواست آتے ہی بیل بجے گی اور مکمل تفصیل یہاں نمودار ہوگی۔'
-                    : 'Incoming passenger requests will ring your bell and lock straight onto this dispatch console.'}
-                </p>
-              </div>
+            <div className="space-y-1">
+              <h3 className="font-display text-base font-black text-[#0D0D10]">
+                {categoryFilter === 'all'
+                  ? tr(lang, 'Scanning for New Passenger Rides', 'نئی مسافر رائیڈز تلاش کی جا رہی ہیں')
+                  : tr(lang, 'No Requests in This Category', 'اس کیٹگری میں فی الحال کوئی رائیڈ نہیں')}
+              </h3>
+              <p className="text-xs text-zinc-600">
+                {lang === 'ur'
+                  ? 'جیسے ہی کوئی مسافر بکنگ کرے گا، رائیڈ سب سے اوپر ظاہر ہوگی۔'
+                  : 'New incoming passenger requests will arrive at the top automatically.'}
+              </p>
             </div>
           </div>
         ) : (
-          /* High-Contrast Solid "Pukka" Incoming Ride Console (Bold Ink + Obsidian Header + 3 Tactile Buttons) */
-          <div className="space-y-3">
-            <div className="rounded-3xl border-2 border-[#0D0D10] bg-white overflow-hidden shadow-[0_16px_38px_-12px_rgba(13,13,16,0.28)]">
-              {/* Solid Obsidian Masthead Band */}
-              <div className="bg-[#0D0D10] text-white px-4 sm:px-5 py-3 flex items-center justify-between gap-2 border-b-2 border-[#D4A017]">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="w-8 h-8 rounded-lg bg-[#D4A017] text-[#0D0D10] flex items-center justify-center shrink-0">
-                    <Bell className="w-4 h-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-[10px] font-black uppercase tracking-[0.16em] text-[#F4C430] leading-none">
-                      {lang === 'ur' ? 'نئی مسافر رائیڈ دستیاب' : 'INCOMING PASSENGER RIDE'}
-                    </p>
-                    <p className="font-mono text-xs font-extrabold text-white mt-1 truncate">
-                      {currentRide.id} <span className="text-[#D4A017]">·</span> {trService(lang, currentRide.service_type)}
-                    </p>
-                  </div>
-                </div>
-                <span className="px-2.5 py-1 rounded-lg bg-[#1C1D24] border border-[#D4A017]/50 text-[#F4C430] text-[11px] font-extrabold font-mono uppercase whitespace-nowrap shrink-0 tabular-nums">
-                  {currentRide.seats_requested} {tr(lang, currentRide.seats_requested > 1 ? 'Seats' : 'Seat', 'سیٹ')}
-                </span>
-              </div>
+          filteredRequests.map((ride) => {
+            const isInstant = ride.booking_mode === 'go_now';
+            const isMonthly = !isInstant;
+            const alreadyApplied = isMonthly && ride.my_application?.status === 'pending';
+            const commPct = ride.commission_pct ?? instantCommissionPct;
+            const commPkr = ride.commission_pkr ?? Math.round((Number(ride.proposed_fare_pkr || 0) * commPct) / 100);
+            const avatarUrl = getPassengerAvatar(ride.passenger_id || ride.passenger_name || ride.id);
+            const ratingDisplay = (ride as any).passenger_rating ? String((ride as any).passenger_rating) : '4.80';
+            const etaMinutes = ride.duration_min || 6;
 
-              {/* Bold Fare & Passenger Meta Summary Band */}
-              <div className="bg-[#FAF6EC] px-4 sm:px-5 py-3.5 border-b-2 border-[#0D0D10]/10 flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-[10px] font-extrabold uppercase tracking-wider text-zinc-600">
-                    {tr(lang, 'Passenger Request', 'مسافر کی تفصیل')}
-                  </p>
-                  <p className="text-sm font-black text-[#0D0D10] mt-0.5 truncate">
-                    {currentRide.passenger_display || tr(lang, 'Passenger', 'مسافر')}
-                  </p>
-                  <p className="text-[11px] font-bold text-zinc-700 mt-0.5 font-mono">
-                    {currentRide.pickup_date} · {currentRide.pickup_time}
-                  </p>
-                </div>
+            const categoryTagLabel = isInstant
+              ? '✦ INSTANT'
+              : ride.service_type === 'pick_and_drop'
+              ? '✦ PICK & DROP'
+              : ride.service_type === 'ride_sharing'
+              ? '✦ RIDE SHARING'
+              : '✦ FUEL SHARING';
 
-                <div className="text-right shrink-0">
-                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#9E730B] block">
-                    {tr(lang, 'Offered Fare', 'مقررہ کرایہ')}
+            return (
+              <div
+                key={ride.id}
+                className="rounded-3xl border-2 border-amber-300/80 bg-white p-4 sm:p-5 shadow-[0_8px_24px_rgba(212,160,23,0.12)] space-y-3.5 transition-all"
+              >
+                {/* Top Row: Category Amber-Brown Pill + Bold Price & Distance */}
+                <div className="flex items-center justify-between gap-2">
+                  <span className="px-3 py-1 rounded-full bg-[#E9C378]/30 border border-[#D4A017] text-[#7A5306] text-xs font-black tracking-wide uppercase">
+                    {categoryTagLabel}
                   </span>
-                  <div className="font-display text-2xl sm:text-[28px] font-black text-[#0D0D10] leading-none tracking-tight tabular-nums mt-0.5">
-                    Rs. {Number(currentRide.proposed_fare_pkr).toLocaleString()}
-                  </div>
-                  <div className="text-xs font-extrabold text-[#0D0D10] font-mono mt-1 tabular-nums">
-                    {currentRide.distance_km} km · ~{currentRide.duration_min} {tr(lang, 'min', 'منٹ')}
+
+                  <div className="font-display text-lg sm:text-xl font-black text-[#0D0D10] tracking-tight tabular-nums">
+                    Rs. {Number(ride.proposed_fare_pkr).toLocaleString()} • {ride.distance_km || '4.2'} km
                   </div>
                 </div>
-              </div>
 
-              {/* Crisp Structured Route Ledger */}
-              <div className="p-4 sm:p-5 space-y-4">
-                <div className="rounded-2xl border-2 border-zinc-200 bg-[#F9F9FB] p-3.5 space-y-3">
-                  {/* Pickup */}
-                  <div className="flex items-start gap-2.5">
-                    <div className="mt-0.5 w-6 h-6 rounded-lg bg-emerald-700 text-white flex items-center justify-center shrink-0">
-                      <MapPin className="w-3.5 h-3.5" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-[10px] font-black uppercase tracking-wider text-emerald-800">
-                          {tr(lang, 'Pickup Location', 'پِک اپ مقام')}
-                        </span>
-                        {pickupDistanceFromDriver && (
-                          <span className="font-mono text-[11px] font-extrabold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-md tabular-nums whitespace-nowrap">
-                            {pickupDistanceFromDriver} {tr(lang, 'km away', 'کلومیٹر دور')}
-                          </span>
-                        )}
+                {/* Middle Row: Passenger Avatar with Double Gold Ring + Route Details + Car Outline Silhouette */}
+                <div className="flex items-start justify-between gap-3 pt-1">
+                  {/* Left: Avatar + Details */}
+                  <div className="flex items-start gap-3 min-w-0 flex-1">
+                    <div className="relative shrink-0">
+                      <div className="w-13 h-13 sm:w-14 sm:h-14 rounded-full ring-2 ring-[#D4A017] ring-offset-2 ring-offset-white overflow-hidden bg-zinc-100 shadow-sm">
+                        <img
+                          src={avatarUrl}
+                          alt={ride.passenger_display || 'Passenger'}
+                          className="w-full h-full object-cover"
+                        />
                       </div>
-                      <p dir="auto" className="text-[13px] font-extrabold text-[#0D0D10] leading-snug mt-0.5">
-                        {currentRide.pickup_address}
-                      </p>
+                    </div>
+
+                    <div className="min-w-0 flex-1 space-y-1.5">
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-bold text-sm sm:text-base text-[#0D0D10] truncate">
+                          {ride.passenger_display || ride.passenger_name || 'Ahmed Khan'}
+                        </h4>
+                        <div className="flex items-center gap-0.5 text-xs font-extrabold text-[#0D0D10] shrink-0">
+                          <Star className="w-3.5 h-3.5 fill-[#D4A017] text-[#D4A017]" />
+                          <span>{ratingDisplay}</span>
+                        </div>
+                      </div>
+
+                      {/* Pickup */}
+                      <div className="flex items-start gap-2 text-xs">
+                        <div className="w-2.5 h-2.5 rounded-full bg-emerald-600 mt-1 shrink-0" />
+                        <div className="min-w-0">
+                          <span className="font-bold text-emerald-800 text-[11px] block leading-none">
+                            {tr(lang, 'Pickup', 'پِک اپ')}
+                          </span>
+                          <p dir="auto" className="text-xs font-bold text-[#0D0D10] leading-tight truncate">
+                            {ride.pickup_address}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Drop-off */}
+                      <div className="flex items-start gap-2 text-xs">
+                        <div className="w-2.5 h-2.5 rounded-full bg-red-600 mt-1 shrink-0" />
+                        <div className="min-w-0">
+                          <span className="font-bold text-red-700 text-[11px] block leading-none">
+                            {tr(lang, 'Drop-off', 'منزل')}
+                          </span>
+                          <p dir="auto" className="text-xs font-bold text-[#0D0D10] leading-tight truncate">
+                            {ride.dropoff_address}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* ETA Badge */}
+                      <div className="inline-flex items-center gap-1 text-[11px] font-bold text-zinc-700 pt-0.5">
+                        <span>⏱</span>
+                        <span>{etaMinutes} min</span>
+                      </div>
                     </div>
                   </div>
 
-                  <div className="border-t border-dashed border-zinc-300" />
-
-                  {/* Dropoff */}
-                  <div className="flex items-start gap-2.5">
-                    <div className="mt-0.5 w-6 h-6 rounded-lg bg-red-600 text-white flex items-center justify-center shrink-0">
-                      <Navigation className="w-3.5 h-3.5" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <span className="text-[10px] font-black uppercase tracking-wider text-red-700 block">
-                        {tr(lang, 'Dropoff Destination', 'منزلِ مقصود')}
-                      </span>
-                      <p dir="auto" className="text-[13px] font-extrabold text-[#0D0D10] leading-snug mt-0.5">
-                        {currentRide.dropoff_address}
-                      </p>
-                    </div>
+                  {/* Right: Vehicle Line Art Graphic in Pill */}
+                  <div className="hidden xs:flex flex-col items-end shrink-0 pt-2">
+                    <CarOutlineGraphic className="w-22 h-10" />
                   </div>
                 </div>
 
-                {/* Exact 3 High-Contrast Action Buttons: Accept (Left) · Details (Middle) · Cancel (Right) */}
-                <div className="grid grid-cols-3 gap-2">
+                {/* Bottom Row: 3 Pill Buttons (Decline | Details | Accept) */}
+                <div className="grid grid-cols-3 gap-2.5 pt-1">
+                  {/* 1. Decline Button */}
                   <button
                     type="button"
-                    disabled={busyId === currentRide.id}
-                    onClick={() => handleAccept(currentRide.id)}
-                    className="min-h-[48px] py-2.5 px-2 rounded-xl bg-emerald-700 text-white text-xs sm:text-[13px] font-extrabold hover:bg-emerald-800 border border-emerald-900/30 inline-flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-60 whitespace-nowrap"
+                    disabled={busyId === ride.id}
+                    onClick={() => handleCancelDecline(ride.id)}
+                    className="min-h-[44px] py-2 px-3 rounded-full border border-amber-300 bg-white hover:bg-red-50 text-[#0D0D10] text-xs font-extrabold flex items-center justify-center gap-1.5 shadow-2xs disabled:opacity-60 transition-all whitespace-nowrap"
                   >
-                    <Check className="w-4 h-4 shrink-0" />
-                    <span>{lang === 'ur' ? 'قبول' : 'Accept'}</span>
+                    <X className="w-4 h-4 text-red-600 shrink-0" />
+                    <span>{lang === 'ur' ? 'رد کریں' : 'Decline'}</span>
                   </button>
 
+                  {/* 2. Details Button */}
                   <button
                     type="button"
-                    onClick={() => setDetailsRequest(currentRide)}
-                    className="min-h-[48px] py-2.5 px-2 rounded-xl bg-[#0D0D10] text-[#F4C430] text-xs sm:text-[13px] font-extrabold hover:bg-zinc-900 border border-[#D4A017]/50 inline-flex items-center justify-center gap-1.5 shadow-sm whitespace-nowrap"
+                    onClick={() => setDetailsRequest(ride)}
+                    className="min-h-[44px] py-2 px-3 rounded-full border border-amber-300 bg-white hover:bg-amber-50 text-[#0D0D10] text-xs font-extrabold flex items-center justify-center gap-1.5 shadow-2xs transition-all whitespace-nowrap"
                   >
-                    <Eye className="w-4 h-4 shrink-0" />
+                    <FileText className="w-4 h-4 text-[#9E730B] shrink-0" />
                     <span>{lang === 'ur' ? 'تفصیل' : 'Details'}</span>
                   </button>
 
-                  <button
-                    type="button"
-                    disabled={busyId === currentRide.id}
-                    onClick={() => handleCancelDecline(currentRide.id)}
-                    className="min-h-[48px] py-2.5 px-2 rounded-xl border-2 border-red-300 bg-white text-red-700 text-xs sm:text-[13px] font-extrabold hover:bg-red-50 inline-flex items-center justify-center gap-1.5 disabled:opacity-60 whitespace-nowrap"
-                  >
-                    <X className="w-4 h-4 shrink-0" />
-                    <span>{lang === 'ur' ? 'کینسل' : 'Cancel'}</span>
-                  </button>
+                  {/* 3. Accept Button */}
+                  {alreadyApplied ? (
+                    <button
+                      type="button"
+                      disabled
+                      className="min-h-[44px] py-2 px-3 rounded-full bg-amber-100 text-amber-900 border border-amber-300 text-xs font-extrabold flex items-center justify-center gap-1.5 shadow-2xs whitespace-nowrap"
+                    >
+                      <Check className="w-4 h-4 shrink-0" />
+                      <span>{lang === 'ur' ? 'درخواست جمع' : 'Applied'}</span>
+                    </button>
+                  ) : !walletEligibleForInstant && isInstant && onGoToWallet ? (
+                    <button
+                      type="button"
+                      onClick={onGoToWallet}
+                      className="min-h-[44px] py-2 px-3 rounded-full bg-amber-500 text-[#0D0D10] text-xs font-extrabold flex items-center justify-center gap-1.5 shadow-2xs whitespace-nowrap"
+                    >
+                      <WalletIcon className="w-4 h-4 shrink-0" />
+                      <span>{lang === 'ur' ? 'والیٹ بھریں' : 'Top Up'}</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={busyId === ride.id}
+                      onClick={() => handleAccept(ride.id)}
+                      className="min-h-[44px] py-2 px-3 rounded-full bg-gradient-to-r from-[#0D0D10] to-[#201A09] text-[#F4C430] border border-[#D4A017] hover:brightness-110 active:scale-98 text-xs font-extrabold flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-60 transition-all whitespace-nowrap"
+                    >
+                      <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <span>{lang === 'ur' ? 'قبول کریں' : 'Accept'}</span>
+                    </button>
+                  )}
                 </div>
               </div>
-            </div>
-
-            {visibleRequests.length > 1 && (
-              <div className="flex items-center justify-center gap-3 text-xs font-extrabold text-[#0D0D10]">
-                <button
-                  type="button"
-                  onClick={() => setActiveIndex((i) => (i - 1 + visibleRequests.length) % visibleRequests.length)}
-                  className="p-2 rounded-xl border-2 border-[#0D0D10]/20 bg-white hover:border-[#0D0D10]"
-                  aria-label="Previous ride"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </button>
-                <span className="font-mono text-xs tabular-nums">
-                  {safeIndex + 1} / {visibleRequests.length}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setActiveIndex((i) => (i + 1) % visibleRequests.length)}
-                  className="p-2 rounded-xl border-2 border-[#0D0D10]/20 bg-white hover:border-[#0D0D10]"
-                  aria-label="Next ride"
-                >
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Demand Summary Footer Strip */}
-        {hottestZone && (
-          <button
-            type="button"
-            onClick={() => {
-              setHeatmapModalOpen(true);
-              setFocusTarget({ lat: hottestZone.lat, lng: hottestZone.lng, zoom: 13, ts: Date.now() });
-            }}
-            className="mt-3 w-full rounded-2xl border border-zinc-300 bg-white px-4 py-2.5 flex items-center justify-between gap-2 text-left hover:border-[#0D0D10] transition-colors"
-          >
-            <div className="flex items-center gap-2 min-w-0">
-              <Flame className="w-4 h-4 text-red-600 shrink-0" />
-              <span className="text-xs font-extrabold text-[#0D0D10] truncate">
-                {tr(lang, 'Hot Demand Zone:', 'زیادہ ڈیمانڈ زون:')} {hottestZone.areaName} ({hottestZone.city})
-              </span>
-            </div>
-            <span className="font-mono text-xs font-extrabold text-[#0D0D10] bg-[#FAF6EC] border border-[#D4A017]/50 px-2 py-0.5 rounded-md shrink-0 tabular-nums">
-              {hottestZone.surgeMultiplier.toFixed(1)}x
-            </span>
-          </button>
+            );
+          })
         )}
       </div>
 
-      {/* Ride Details + Interactive Distance/Route Map Modal (Opened from middle Details button) */}
+      {/* 7. Floating Bottom-Right Concentric Gold Radar Button with Surge Badge */}
+      <div className="fixed bottom-20 right-4 sm:bottom-8 sm:right-8 z-40 pointer-events-auto">
+        <button
+          type="button"
+          onClick={() => {
+            setHeatmapModalOpen(true);
+            if (hottestZone) {
+              setFocusTarget({ lat: hottestZone.lat, lng: hottestZone.lng, zoom: 13, ts: Date.now() });
+            }
+          }}
+          className="relative group p-2 flex items-center justify-center focus:outline-hidden"
+          aria-label={lang === 'ur' ? 'ہیٹ میپ اور سرج دیکھیں' : 'View Heatmap & Surge'}
+        >
+          {/* Concentric golden pulse rings matching reference image */}
+          <div className="absolute inset-0 rounded-full border border-[#D4A017]/30 animate-ping opacity-60" />
+          <div className="absolute -inset-1 rounded-full border border-[#D4A017]/40" />
+          <div className="absolute -inset-2.5 rounded-full border border-[#D4A017]/25" />
+          <div className="absolute -inset-4 rounded-full border border-dashed border-[#D4A017]/20" />
+
+          <div className="relative w-16 h-16 rounded-full bg-gradient-to-b from-[#1E1708] via-[#0D0D10] to-[#2B2107] border-2 border-[#F4C430] shadow-[0_8px_25px_rgba(212,160,23,0.45)] flex items-center justify-center text-[#F4C430] active:scale-95 transition-transform">
+            <Car className="w-7 h-7 text-[#F4C430]" />
+
+            {/* Surge Badge */}
+            <span className="absolute -top-1 -right-1 px-1.5 py-0.5 rounded-full bg-[#D4A017] text-[#0D0D10] text-[10px] font-black tracking-tight flex items-center gap-0.5 shadow-sm">
+              <span>⚡</span>
+              <span>{hottestZone ? `${hottestZone.surgeMultiplier.toFixed(1)}x` : '1.4x'}</span>
+            </span>
+          </div>
+        </button>
+      </div>
+
+      {/* Ride Details & Map Modal */}
       {detailsRequest && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div className="w-full sm:max-w-2xl rounded-t-3xl sm:rounded-3xl bg-white border border-zinc-200 shadow-2xl overflow-hidden max-h-[92dvh] flex flex-col">
-            <div className="bg-[#0D0D10] text-white px-4 sm:px-5 py-3.5 flex items-center justify-between gap-2 shrink-0">
+            <div className="bg-[#0D0D10] text-white px-4 sm:px-5 py-3.5 flex items-center justify-between gap-2 shrink-0 border-b border-[#D4A017]/50">
               <div className="min-w-0">
                 <p className="text-[11px] font-mono text-[#D4A017] font-bold">{detailsRequest.id}</p>
                 <h3 className="font-display text-sm sm:text-base font-bold truncate">
-                  {lang === 'ur' ? 'رائیڈ کی مکمل تفصیل اور میپ' : 'Full Ride Details & Route Map'}
+                  {lang === 'ur' ? 'رائیڈ کی مکمل تفصیل اور روٹ' : 'Full Ride Details & Route Map'}
                 </h3>
               </div>
               <button
@@ -703,7 +925,6 @@ export const PartnerRequestsView: React.FC<{
                 )}
               </div>
 
-              {/* Optional Counter Offer inside Details */}
               <div className="flex items-center gap-2 min-w-0">
                 <input
                   type="number"
@@ -716,7 +937,7 @@ export const PartnerRequestsView: React.FC<{
                   type="button"
                   disabled={busyId === detailsRequest.id}
                   onClick={() => handleCounter(detailsRequest.id)}
-                  className="px-4 py-2.5 rounded-xl bg-[#0D0D10] text-white text-xs font-bold hover:bg-zinc-800 whitespace-nowrap shrink-0"
+                  className="px-4 py-2.5 rounded-xl bg-[#0D0D10] text-[#F4C430] border border-[#D4A017] text-xs font-bold hover:bg-zinc-800 whitespace-nowrap shrink-0"
                 >
                   {approved ? tr(lang, 'Send Offer', 'آفر بھیجیں') : tr(lang, 'Offer (Docs)', 'آفر (دستاویزات)')}
                 </button>
@@ -728,9 +949,9 @@ export const PartnerRequestsView: React.FC<{
                 type="button"
                 disabled={busyId === detailsRequest.id}
                 onClick={() => handleAccept(detailsRequest.id)}
-                className="py-3 px-4 rounded-2xl bg-emerald-700 text-white text-xs font-bold hover:bg-emerald-800 flex items-center justify-center gap-1.5"
+                className="py-3 px-4 rounded-2xl bg-gradient-to-r from-[#0D0D10] to-[#201A09] text-[#F4C430] border border-[#D4A017] text-xs font-bold hover:brightness-110 flex items-center justify-center gap-1.5"
               >
-                <Check className="w-4 h-4" />
+                <Check className="w-4 h-4 text-emerald-400" />
                 <span>{lang === 'ur' ? 'رائیڈ قبول کریں' : 'Accept Ride'}</span>
               </button>
               <button
@@ -747,11 +968,11 @@ export const PartnerRequestsView: React.FC<{
         </div>
       )}
 
-      {/* Live Demand Heatmap Modal (Opened cleanly from top-right Heatmap button) */}
+      {/* Live Demand Heatmap Modal */}
       {heatmapModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div className="w-full sm:max-w-3xl rounded-t-3xl sm:rounded-3xl bg-white border border-zinc-200 shadow-2xl overflow-hidden max-h-[92dvh] flex flex-col">
-            <div className="bg-[#0D0D10] text-white px-4 sm:px-5 py-3.5 flex items-center justify-between gap-2 shrink-0">
+            <div className="bg-[#0D0D10] text-white px-4 sm:px-5 py-3.5 flex items-center justify-between gap-2 shrink-0 border-b border-[#D4A017]/50">
               <div className="flex items-center gap-2 min-w-0">
                 <Flame className={`w-5 h-5 ${peakHeatScore >= 65 ? 'text-red-500 animate-pulse' : 'text-[#D4A017]'}`} />
                 <div className="min-w-0">
@@ -809,7 +1030,7 @@ export const PartnerRequestsView: React.FC<{
                         <div className="min-w-0 flex-1">
                           <div className="text-xs font-bold text-[#0D0D10] truncate">{hs.areaName}</div>
                           <div className="text-[11px] text-zinc-500">
-                            {hs.city} · {hs.openRequests} {tr(lang, 'open', 'اوپن')} · {hs.activeBookings}{' '}
+                            {hs?.city || 'Islamabad'} · {hs?.openRequests ?? 0} {tr(lang, 'open', 'اوپن')} · {hs?.activeBookings ?? 0}{' '}
                             {tr(lang, 'active', 'جاری')}
                           </div>
                           <div className="mt-1.5 h-1.5 w-full max-w-[180px] rounded-full bg-zinc-100 overflow-hidden">
@@ -954,19 +1175,38 @@ export const PartnerTripsView: React.FC<{
           </button>
         </div>
 
-        <div className="flex flex-wrap rounded-xl bg-zinc-100 p-1 gap-1 w-full sm:w-auto">
-          {(['active', 'upcoming', 'completed', 'cancelled'] as const).map((tb) => (
-            <button
-              key={tb}
-              type="button"
-              onClick={() => setTab(tb)}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold ${
-                tab === tb ? 'bg-[#0D0D10] text-white' : 'text-zinc-600'
-              }`}
-            >
-              {tabLabels[tb]}
-            </button>
-          ))}
+        <div className="w-full border-b border-zinc-200">
+          <div className="grid grid-cols-4 gap-1">
+            {(['active', 'upcoming', 'completed', 'cancelled'] as const).map((tb) => {
+              const count = trips.filter((tItem) => {
+                if (tb === 'upcoming') return tItem.booking_mode === 'schedule' && tItem.status === 'confirmed';
+                if (tb === 'active') return ['confirmed', 'on_the_way', 'arrived', 'started'].includes(tItem.status);
+                if (tb === 'completed') return tItem.status === 'completed';
+                return tItem.status === 'cancelled';
+              }).length;
+              const isSelected = tab === tb;
+              return (
+                <button
+                  key={tb}
+                  type="button"
+                  onClick={() => setTab(tb)}
+                  className={`relative pb-3 pt-2 px-1 text-[11px] sm:text-xs font-semibold inline-flex items-center justify-center gap-1 whitespace-nowrap transition-colors ${
+                    isSelected ? 'text-[#0D0D10] font-bold' : 'text-zinc-500 hover:text-[#0D0D10]'
+                  }`}
+                >
+                  <span className="truncate">{tabLabels[tb]}</span>
+                  <span
+                    className={`font-mono text-[10px] px-1.5 py-0.5 rounded-full leading-none tabular-nums shrink-0 ${
+                      isSelected ? 'bg-[#0D0D10] text-[#F4C430]' : 'bg-zinc-100 text-zinc-600'
+                    }`}
+                  >
+                    {count}
+                  </span>
+                  {isSelected && <span className="absolute left-1 right-1 -bottom-[1px] h-[2.5px] rounded-full bg-[#D4A017]" />}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 

@@ -72,6 +72,8 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
                     localStorage.removeItem('pr_token_partner');
                     localStorage.removeItem('pr_user_partner');
                     localStorage.removeItem('pr_profile_partner');
+                    localStorage.removeItem('pr_token_admin');
+                    localStorage.removeItem('pr_user_admin');
                   } catch {
                     // ignore
                   }

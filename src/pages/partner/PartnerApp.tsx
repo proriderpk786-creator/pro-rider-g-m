@@ -130,6 +130,9 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
     totalCommission: number;
     netEarnings: number;
     availableBalancePkr: number;
+    minRequiredWalletPkr: number;
+    instantCommissionPct: number;
+    commissionDeductionMode: string;
     pendingSettlementsPkr: number;
     paidWithdrawalsPkr: number;
     completedTrips: any[];
@@ -139,6 +142,9 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
     totalCommission: 0,
     netEarnings: 0,
     availableBalancePkr: 0,
+    minRequiredWalletPkr: 500,
+    instantCommissionPct: 15,
+    commissionDeductionMode: 'on_accept',
     pendingSettlementsPkr: 0,
     paidWithdrawalsPkr: 0,
     completedTrips: [],
@@ -149,12 +155,20 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
   const [demandData, setDemandData] = useState<DemandMapData | null>(null);
   const [availabilityError, setAvailabilityError] = useState<string | null>(null);
   const [gpsSharing, setGpsSharing] = useState(false);
-  const [bellSound, setBellSound] = useState<RideBellSoundId>(() => getSavedRideBellSound());
+  const [bellSound, setBellSound] = useState<RideBellSoundId>(() => getSavedRideBellSound('partner'));
   const [incomingRideNotice, setIncomingRideNotice] = useState<Booking | null>(null);
   const watchIdRef = useRef<number | null>(null);
   const seenRequestIdsRef = useRef<Set<string> | null>(null);
   const bellSoundRef = useRef(bellSound);
   bellSoundRef.current = bellSound;
+
+  useEffect(() => {
+    const onBellUpdated = () => {
+      setBellSound(getSavedRideBellSound('partner'));
+    };
+    window.addEventListener('pr:bell-updated', onBellUpdated);
+    return () => window.removeEventListener('pr:bell-updated', onBellUpdated);
+  }, []);
 
   const loadDemand = useCallback(async () => {
     try {
@@ -174,7 +188,14 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
         apiRequest<{ user: User; partnerProfile: PartnerProfile; documents: PartnerDocument[] }>('/api/partner/profile', {
           role: 'partner',
         }),
-        apiRequest<{ approved: boolean; requests: Booking[] }>('/api/partner/requests', { role: 'partner' }),
+        apiRequest<{
+          approved: boolean;
+          walletBalancePkr?: number;
+          minRequiredWalletPkr?: number;
+          instantCommissionPct?: number;
+          commissionDeductionMode?: string;
+          requests: Booking[];
+        }>('/api/partner/requests', { role: 'partner' }),
         apiRequest<{ trips: Booking[] }>('/api/partner/trips', { role: 'partner' }),
         apiRequest<typeof earnings>('/api/partner/earnings', { role: 'partner' }),
         apiRequest<{ notifications: AppNotification[] }>('/api/partner/notifications', { role: 'partner' }),
@@ -203,7 +224,10 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
           grossEarnings: earnRes.grossEarnings || 0,
           totalCommission: earnRes.totalCommission || 0,
           netEarnings: earnRes.netEarnings || 0,
-          availableBalancePkr: earnRes.availableBalancePkr || 0,
+          availableBalancePkr: earnRes.availableBalancePkr ?? reqRes?.walletBalancePkr ?? 0,
+          minRequiredWalletPkr: earnRes.minRequiredWalletPkr ?? reqRes?.minRequiredWalletPkr ?? config?.minPartnerWalletPkr ?? 500,
+          instantCommissionPct: earnRes.instantCommissionPct ?? reqRes?.instantCommissionPct ?? config?.instantCommissionPct ?? 15,
+          commissionDeductionMode: earnRes.commissionDeductionMode ?? reqRes?.commissionDeductionMode ?? 'on_accept',
           pendingSettlementsPkr: earnRes.pendingSettlementsPkr || 0,
           paidWithdrawalsPkr: earnRes.paidWithdrawalsPkr || 0,
           completedTrips: Array.isArray(earnRes.completedTrips) ? earnRes.completedTrips : [],
@@ -225,13 +249,30 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
         }
         setApproved(Boolean(localProfile && localProfile.verification_status === 'approved'));
         try {
-          const raw = localStorage.getItem('pr_local_bookings_passenger');
-          if (raw) {
+          const collected: Booking[] = [];
+          const acceptedTrips: Booking[] = [];
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (!k || !k.startsWith('pr_local_bookings_passenger')) continue;
+            const raw = localStorage.getItem(k);
+            if (!raw) continue;
             const parsed = JSON.parse(raw) as Booking[];
             if (Array.isArray(parsed)) {
-              setRequests(parsed.filter((b) => ['searching', 'negotiating'].includes(b.status)));
+              for (const b of parsed) {
+                if (['searching', 'negotiating'].includes(b.status) && !b.partner_id) {
+                  collected.push(b);
+                } else if (
+                  localUser?.id &&
+                  b.partner_id === localUser.id &&
+                  ['confirmed', 'on_the_way', 'arrived', 'started', 'completed'].includes(b.status)
+                ) {
+                  acceptedTrips.push(b);
+                }
+              }
             }
           }
+          setRequests(collected);
+          if (acceptedTrips.length > 0) setTrips(acceptedTrips);
         } catch {
           // ignore
         }
@@ -284,6 +325,12 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
   const wsRef = useRoleWebSocket('partner', token, (event) => {
     if (event === 'config:updated') {
       window.dispatchEvent(new Event('pr:refresh-config'));
+    } else if (event === 'booking:priority') {
+      playRideBell(bellSoundRef.current === 'muted' ? 'muted' : 'urgent_dispatch');
+      sendRideBrowserNotification(
+        tr(lang, 'PRIORITY INSTANT RIDE NEARBY', 'قریبی فوری رائیڈ ترجیحی الرٹ'),
+        tr(lang, 'You are the nearest eligible Pro Partner! Tap to accept directly.', 'آپ سب سے قریبی ڈرائیور ہیں! فوری قبول کرنے کے لیے کھولیں۔')
+      );
     } else if (event === 'booking:created') {
       playRideBell(bellSoundRef.current);
       sendRideBrowserNotification(
@@ -292,7 +339,7 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
       );
     }
     if (
-      ['booking:created', 'booking:offer', 'booking:updated', 'partner:verification_updated', 'notification:new'].includes(
+      ['booking:priority', 'booking:created', 'booking:offer', 'booking:updated', 'partner:verification_updated', 'notification:new'].includes(
         event
       )
     ) {
@@ -544,7 +591,11 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col min-w-0 w-full pb-20 md:pb-6">
-        <header className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b border-zinc-200 px-2.5 sm:px-6 h-12 sm:h-16 flex items-center justify-between gap-2 w-full">
+        <header
+          className={`sticky top-0 z-20 bg-white/95 backdrop-blur border-b border-zinc-200 px-2.5 sm:px-6 h-12 sm:h-16 ${
+            tab === 'requests' ? 'hidden md:flex' : 'flex'
+          } items-center justify-between gap-2 w-full`}
+        >
           <div className="flex items-center gap-1.5 sm:gap-3 min-w-0 shrink">
             <div className="md:hidden flex items-center gap-1.5 min-w-0">
               <img
@@ -610,12 +661,15 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
               approved={approved}
               profile={profile}
               requests={Array.isArray(requests) ? requests : []}
+              walletBalancePkr={earnings.availableBalancePkr}
+              minRequiredWalletPkr={earnings.minRequiredWalletPkr}
+              instantCommissionPct={earnings.instantCommissionPct}
               demandData={demandData}
               zones={config?.zones || []}
               bellSound={bellSound}
               onChangeBellSound={(next) => {
                 setBellSound(next);
-                saveRideBellSound(next);
+                saveRideBellSound(next, 'partner');
                 if (next !== 'muted') playRideBell(next);
               }}
               onTestBell={() => playRideBell(bellSound)}
@@ -623,6 +677,10 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
               onDismissIncomingNotice={() => setIncomingRideNotice(null)}
               onRefresh={loadAll}
               onGoToDocs={() => setTab('documents')}
+              onGoToWallet={() => setTab('wallet')}
+              onToggleOnline={handleToggleOnline}
+              onChangeLang={onChangeLang}
+              onLogout={handleLogout}
             />
           )}
           {tab === 'trips' && (
@@ -658,6 +716,12 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
           {tab === 'notifications' && (
             <NotificationsView
               lang={lang}
+              role="partner"
+              bellSound={bellSound}
+              onChangeBellSound={(next) => {
+                setBellSound(next);
+                saveRideBellSound(next, 'partner');
+              }}
               notifications={safeNotifications}
               onMarkAllRead={async () => {
                 try {
