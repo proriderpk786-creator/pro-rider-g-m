@@ -3,6 +3,8 @@ import {
   ArrowLeft,
   CarFront,
   CheckCircle2,
+  Copy,
+  ExternalLink,
   Eye,
   EyeOff,
   FileCheck2,
@@ -21,6 +23,7 @@ import { BrandLogo, LanguageToggle, VehicleImage } from '../../components/BrandM
 import { DEFAULT_PUBLIC_CONFIG } from '../../config/defaultConfig';
 import { formatFirebaseAuthError, useFirebase } from '../../contexts/FirebaseContext';
 import { useTheme } from '../../contexts/ThemeContext';
+import { FIREBASE_PROJECT_ID } from '../../firebase';
 import { formatVehicleLabel, tr, trService, trVerificationStatus } from '../../i18n/translations';
 import { apiRequest, isBackendOfflineError, setRoleToken, setStoredRoleUser } from '../../utils/api';
 import { compressAndReadUploadFile } from '../../utils/imageUpload';
@@ -68,6 +71,17 @@ export const PartnerAuth: React.FC<{
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [unauthorizedHost, setUnauthorizedHost] = useState<string | null>(null);
+  const [needsProviderEnable, setNeedsProviderEnable] = useState(false);
+  const [copiedDomain, setCopiedDomain] = useState(false);
+
+  const captureAuthError = (err: unknown, providerName: string) => {
+    const code = String((err as any)?.code || '');
+    const host = typeof window !== 'undefined' ? window.location.hostname : '';
+    setUnauthorizedHost(code === 'auth/unauthorized-domain' && host ? host : null);
+    setNeedsProviderEnable(code === 'auth/operation-not-allowed');
+    setError(formatFirebaseAuthError(err, providerName));
+  };
 
   const buildLocalPartnerSession = (
     fbUser: { uid: string; displayName: string | null; email: string | null; phoneNumber: string | null },
@@ -158,6 +172,9 @@ export const PartnerAuth: React.FC<{
 
   useEffect(() => {
     if (redirectError) {
+      if (redirectError.includes('Authorized domains') && typeof window !== 'undefined') {
+        setUnauthorizedHost(window.location.hostname);
+      }
       setError(redirectError);
       clearRedirectState();
     }
@@ -171,7 +188,7 @@ export const PartnerAuth: React.FC<{
       .getIdToken()
       .then((tk) => (active ? finalizePartnerSession(tk, redirectAuthUser) : undefined))
       .catch((err) => {
-        if (active) setError(formatFirebaseAuthError(err, 'Google'));
+        if (active) captureAuthError(err, 'Google');
       })
       .finally(() => {
         clearRedirectState();
@@ -185,12 +202,14 @@ export const PartnerAuth: React.FC<{
   const handleGoogleSignIn = async () => {
     setError(null);
     setInfo(null);
+    setUnauthorizedHost(null);
+    setNeedsProviderEnable(false);
     setLoading(true);
     try {
       const { idToken, user: fbUser } = await signInWithGooglePopup('partner', city, lang);
       await finalizePartnerSession(idToken, fbUser);
     } catch (err: any) {
-      setError(formatFirebaseAuthError(err, 'Google'));
+      captureAuthError(err, 'Google');
     } finally {
       setLoading(false);
     }
@@ -200,6 +219,8 @@ export const PartnerAuth: React.FC<{
     e.preventDefault();
     setError(null);
     setInfo(null);
+    setUnauthorizedHost(null);
+    setNeedsProviderEnable(false);
 
     const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail || !cleanEmail.includes('@')) {
@@ -327,38 +348,45 @@ export const PartnerAuth: React.FC<{
             code === 'auth/unauthorized-domain' ||
             code === 'auth/network-request-failed'
           ) {
-            const res = await apiRequest<{ token: string; user: User; partnerProfile: PartnerProfile }>(
-              '/api/auth/partner/register',
-              {
-                method: 'POST',
-                body: {
-                  fullName,
-                  phone: phone.trim(),
-                  whatsapp: whatsapp.trim() || phone.trim(),
-                  email: cleanEmail,
-                  city,
-                  operatingArea,
-                  password,
-                  vehicleCategoryId: selectedRegisterFleet.id,
-                  seatingCapacity: selectedRegisterFleet.seating_capacity,
-                },
-              }
-            );
-            setRoleToken('partner', res.token);
-            setStoredRoleUser('partner', res.user);
             try {
-              localStorage.setItem('pr_profile_partner', JSON.stringify(res.partnerProfile));
-            } catch {
-              // ignore
+              const res = await apiRequest<{ token: string; user: User; partnerProfile: PartnerProfile }>(
+                '/api/auth/partner/register',
+                {
+                  method: 'POST',
+                  body: {
+                    fullName,
+                    phone: phone.trim(),
+                    whatsapp: whatsapp.trim() || phone.trim(),
+                    email: cleanEmail,
+                    city,
+                    operatingArea,
+                    password,
+                    vehicleCategoryId: selectedRegisterFleet.id,
+                    seatingCapacity: selectedRegisterFleet.seating_capacity,
+                  },
+                }
+              );
+              setRoleToken('partner', res.token);
+              setStoredRoleUser('partner', res.user);
+              try {
+                localStorage.setItem('pr_profile_partner', JSON.stringify(res.partnerProfile));
+              } catch {
+                // ignore
+              }
+              onAuthenticated(res.token, res.user, res.partnerProfile);
+              return;
+            } catch (apiFallbackErr) {
+              if (isBackendOfflineError(apiFallbackErr)) {
+                throw fbErr;
+              }
+              throw apiFallbackErr;
             }
-            onAuthenticated(res.token, res.user, res.partnerProfile);
-            return;
           }
           throw fbErr;
         }
       }
     } catch (err: any) {
-      setError(formatFirebaseAuthError(err, 'Pro Partner Auth'));
+      captureAuthError(err, 'Pro Partner Auth');
     } finally {
       setLoading(false);
     }
@@ -452,7 +480,51 @@ export const PartnerAuth: React.FC<{
         </>
       )}
 
-      {error && <div className="rounded-xl bg-red-50 border border-red-200 px-3.5 py-2.5 text-xs text-red-700">{error}</div>}
+      {error && (
+        <div className="rounded-xl bg-red-50 border border-red-200 px-3.5 py-2.5 text-xs text-red-700 leading-relaxed space-y-2.5">
+          <p>{error}</p>
+          {unauthorizedHost && FIREBASE_PROJECT_ID && (
+            <div className="pt-2 border-t border-red-200/80 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard?.writeText(unauthorizedHost).catch(() => {});
+                  setCopiedDomain(true);
+                  setTimeout(() => setCopiedDomain(false), 2500);
+                }}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white border border-red-300 text-red-800 font-semibold hover:bg-red-100/60"
+              >
+                <Copy className="w-3.5 h-3.5" />
+                {copiedDomain
+                  ? tr(lang, `Copied: ${unauthorizedHost}`, `کاپی ہو گیا: ${unauthorizedHost}`)
+                  : tr(lang, `Copy Domain (${unauthorizedHost})`, `ڈومین کاپی کریں (${unauthorizedHost})`)}
+              </button>
+              <a
+                href={`https://console.firebase.google.com/project/${FIREBASE_PROJECT_ID}/authentication/settings`}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#0D0D10] text-[#F4C430] font-semibold hover:opacity-90"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                {tr(lang, 'Open Firebase Authorized Domains', 'فائر بیس سیٹنگ کھولیں')}
+              </a>
+            </div>
+          )}
+          {needsProviderEnable && FIREBASE_PROJECT_ID && (
+            <div className="pt-2 border-t border-red-200/80">
+              <a
+                href={`https://console.firebase.google.com/project/${FIREBASE_PROJECT_ID}/authentication/providers`}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#0D0D10] text-[#F4C430] font-semibold hover:opacity-90"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                {tr(lang, 'Enable Email/Password in Firebase Console', 'فائر بیس میں ای میل لاگ ان آن کریں')}
+              </a>
+            </div>
+          )}
+        </div>
+      )}
       {info && <div className="rounded-xl bg-amber-50 border border-amber-200 px-3.5 py-2.5 text-xs text-amber-900">{info}</div>}
 
       {emailVerificationPending ? (

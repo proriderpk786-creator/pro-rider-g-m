@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import {
   ArrowLeft,
   CheckCircle2,
+  Copy,
+  ExternalLink,
   Eye,
   EyeOff,
   Lock,
@@ -16,6 +18,7 @@ import heroMobilityImg from '../../assets/images/hero_mobility_pakistan_17945840
 import { BrandLogo, LanguageToggle } from '../../components/BrandMark';
 import { formatFirebaseAuthError, useFirebase } from '../../contexts/FirebaseContext';
 import { useTheme } from '../../contexts/ThemeContext';
+import { FIREBASE_PROJECT_ID } from '../../firebase';
 import { tr } from '../../i18n/translations';
 import type { Language, User } from '../../types';
 import { apiRequest, isBackendOfflineError, setRoleToken, setStoredRoleUser } from '../../utils/api';
@@ -60,6 +63,17 @@ export const PassengerAuth: React.FC<PassengerAuthProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [unauthorizedHost, setUnauthorizedHost] = useState<string | null>(null);
+  const [needsProviderEnable, setNeedsProviderEnable] = useState(false);
+  const [copiedDomain, setCopiedDomain] = useState(false);
+
+  const captureAuthError = (err: unknown, providerName: string) => {
+    const code = String((err as any)?.code || '');
+    const host = typeof window !== 'undefined' ? window.location.hostname : '';
+    setUnauthorizedHost(code === 'auth/unauthorized-domain' && host ? host : null);
+    setNeedsProviderEnable(code === 'auth/operation-not-allowed');
+    setError(formatFirebaseAuthError(err, providerName));
+  };
 
   const buildFirebaseUserRecord = (
     fbUser: {
@@ -112,6 +126,9 @@ export const PassengerAuth: React.FC<PassengerAuthProps> = ({
 
   useEffect(() => {
     if (redirectError) {
+      if (redirectError.includes('Authorized domains') && typeof window !== 'undefined') {
+        setUnauthorizedHost(window.location.hostname);
+      }
       setError(redirectError);
       clearRedirectState();
     }
@@ -125,7 +142,7 @@ export const PassengerAuth: React.FC<PassengerAuthProps> = ({
       .getIdToken()
       .then((tk) => (active ? finalizeSession(tk, redirectAuthUser) : undefined))
       .catch((err) => {
-        if (active) setError(formatFirebaseAuthError(err, 'Google'));
+        if (active) captureAuthError(err, 'Google');
       })
       .finally(() => {
         clearRedirectState();
@@ -139,12 +156,14 @@ export const PassengerAuth: React.FC<PassengerAuthProps> = ({
   const handleGoogleSignIn = async () => {
     setError(null);
     setInfo(null);
+    setUnauthorizedHost(null);
+    setNeedsProviderEnable(false);
     setLoading(true);
     try {
       const { idToken, user: fbUser } = await signInWithGooglePopup('passenger', city, lang);
       await finalizeSession(idToken, fbUser);
     } catch (err: any) {
-      setError(formatFirebaseAuthError(err, 'Google'));
+      captureAuthError(err, 'Google');
     } finally {
       setLoading(false);
     }
@@ -154,6 +173,8 @@ export const PassengerAuth: React.FC<PassengerAuthProps> = ({
     e.preventDefault();
     setError(null);
     setInfo(null);
+    setUnauthorizedHost(null);
+    setNeedsProviderEnable(false);
 
     const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail || !cleanEmail.includes('@')) {
@@ -242,22 +263,29 @@ export const PassengerAuth: React.FC<PassengerAuthProps> = ({
             code === 'auth/unauthorized-domain' ||
             code === 'auth/network-request-failed'
           ) {
-            const expressRes = await apiRequest<{ token: string; user: User }>('/api/auth/passenger/register', {
-              method: 'POST',
-              body: {
-                fullName,
-                phone: phone.trim(),
-                whatsapp: phone.trim(),
-                email: cleanEmail,
-                city,
-                password,
-                acceptedPolicy: true,
-              },
-            });
-            setRoleToken('passenger', expressRes.token);
-            setStoredRoleUser('passenger', expressRes.user);
-            onAuthenticated(expressRes.token, expressRes.user);
-            return;
+            try {
+              const expressRes = await apiRequest<{ token: string; user: User }>('/api/auth/passenger/register', {
+                method: 'POST',
+                body: {
+                  fullName,
+                  phone: phone.trim(),
+                  whatsapp: phone.trim(),
+                  email: cleanEmail,
+                  city,
+                  password,
+                  acceptedPolicy: true,
+                },
+              });
+              setRoleToken('passenger', expressRes.token);
+              setStoredRoleUser('passenger', expressRes.user);
+              onAuthenticated(expressRes.token, expressRes.user);
+              return;
+            } catch (apiFallbackErr) {
+              if (isBackendOfflineError(apiFallbackErr)) {
+                throw fbErr;
+              }
+              throw apiFallbackErr;
+            }
           }
           throw fbErr;
         }
@@ -297,7 +325,7 @@ export const PassengerAuth: React.FC<PassengerAuthProps> = ({
         }
       }
     } catch (err: any) {
-      setError(formatFirebaseAuthError(err, 'Email'));
+      captureAuthError(err, 'Email');
     } finally {
       setLoading(false);
     }
@@ -423,8 +451,48 @@ export const PassengerAuth: React.FC<PassengerAuthProps> = ({
       )}
 
       {error && (
-        <div className="rounded-xl bg-red-50 border border-red-200 px-3.5 py-2.5 text-xs text-red-700 font-medium leading-relaxed">
-          {error}
+        <div className="rounded-xl bg-red-50 border border-red-200 px-3.5 py-2.5 text-xs text-red-700 font-medium leading-relaxed space-y-2.5">
+          <p>{error}</p>
+          {unauthorizedHost && FIREBASE_PROJECT_ID && (
+            <div className="pt-2 border-t border-red-200/80 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard?.writeText(unauthorizedHost).catch(() => {});
+                  setCopiedDomain(true);
+                  setTimeout(() => setCopiedDomain(false), 2500);
+                }}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white border border-red-300 text-red-800 font-semibold hover:bg-red-100/60"
+              >
+                <Copy className="w-3.5 h-3.5" />
+                {copiedDomain
+                  ? tr(lang, `Copied: ${unauthorizedHost}`, `کاپی ہو گیا: ${unauthorizedHost}`)
+                  : tr(lang, `Copy Domain (${unauthorizedHost})`, `ڈومین کاپی کریں (${unauthorizedHost})`)}
+              </button>
+              <a
+                href={`https://console.firebase.google.com/project/${FIREBASE_PROJECT_ID}/authentication/settings`}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#0D0D10] text-[#F4C430] font-semibold hover:opacity-90"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                {tr(lang, 'Open Firebase Authorized Domains', 'فائر بیس سیٹنگ کھولیں')}
+              </a>
+            </div>
+          )}
+          {needsProviderEnable && FIREBASE_PROJECT_ID && (
+            <div className="pt-2 border-t border-red-200/80">
+              <a
+                href={`https://console.firebase.google.com/project/${FIREBASE_PROJECT_ID}/authentication/providers`}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#0D0D10] text-[#F4C430] font-semibold hover:opacity-90"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                {tr(lang, 'Enable Email/Password in Firebase Console', 'فائر بیس میں ای میل لاگ ان آن کریں')}
+              </a>
+            </div>
+          )}
         </div>
       )}
       {info && (

@@ -5,6 +5,8 @@ import firebaseConfig from '../firebase-applet-config.json';
 
 const app = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
 
+export const FIREBASE_PROJECT_ID = (firebaseConfig as { projectId?: string }).projectId || '';
+
 // Pass firestoreDatabaseId when configured for a named Firestore Enterprise DB
 const configuredDatabaseId = (firebaseConfig as { firestoreDatabaseId?: string }).firestoreDatabaseId;
 export const db = configuredDatabaseId ? getFirestore(app, configuredDatabaseId) : getFirestore(app);

@@ -218,6 +218,13 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   useEffect(() => {
     testFirestoreConnection().then((ok) => setFirestoreOnline(ok));
+    let hadPendingRedirect = false;
+    try {
+      hadPendingRedirect = sessionStorage.getItem('pr_fb_redirect_pending') === '1';
+      sessionStorage.removeItem('pr_fb_redirect_pending');
+    } catch {
+      // ignore storage errors
+    }
     getRedirectResult(auth)
       .then((res) => {
         if (res?.user) {
@@ -225,7 +232,9 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         }
       })
       .catch((err) => {
-        setRedirectError(formatFirebaseAuthError(err, 'Social Login'));
+        if (hadPendingRedirect) {
+          setRedirectError(formatFirebaseAuthError(err, 'Social Login'));
+        }
       });
     const unsub = onAuthStateChanged(auth, (user) => {
       setFirebaseUser(user);
@@ -378,7 +387,13 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         return { idToken, user: cred.user };
       } catch (err: any) {
         if (err?.code === 'auth/popup-blocked') {
+          try {
+            sessionStorage.setItem('pr_fb_redirect_pending', '1');
+          } catch {
+            // ignore
+          }
           await signInWithRedirect(auth, googleProvider);
+          return await new Promise<{ idToken: string; user: FirebaseUser }>(() => {});
         }
         throw err;
       }
@@ -401,7 +416,13 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         return { idToken, user: cred.user };
       } catch (err: any) {
         if (err?.code === 'auth/popup-blocked') {
+          try {
+            sessionStorage.setItem('pr_fb_redirect_pending', '1');
+          } catch {
+            // ignore
+          }
           await signInWithRedirect(auth, facebookProvider);
+          return await new Promise<{ idToken: string; user: FirebaseUser }>(() => {});
         }
         throw err;
       }

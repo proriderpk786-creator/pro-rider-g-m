@@ -142,10 +142,12 @@ export async function apiRequest<T = any>(
     if (res.status === 429 && data?.quotaExceeded && typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('gmp-quota-exceeded'));
     }
+    const missingBackend =
+      !data?.error && [404, 405, 501, 502, 503, 504].includes(res.status);
     throw new ApiRequestError(
       data?.error || `Request failed (${res.status})`,
       res.status,
-      false
+      missingBackend
     );
   }
 
