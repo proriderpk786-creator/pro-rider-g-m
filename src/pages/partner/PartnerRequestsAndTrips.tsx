@@ -14,13 +14,11 @@ import {
   Lock,
   LogOut,
   MapPin,
-  Moon,
   Navigation,
   Radio,
   ShieldCheck,
   Sparkles,
   Star,
-  Sun,
   Users,
   Volume2,
   VolumeX,
@@ -28,7 +26,7 @@ import {
   X,
 } from 'lucide-react';
 import { StreetMap, type MapFocusTarget } from '../../components/StreetMap';
-import { useTheme } from '../../contexts/ThemeContext';
+import { ProfileThemeRowButton } from '../../components/ThemeSwitcher';
 import { formatVehicleLabel, tr, trBookingStatus, trPaymentStatus, trService } from '../../i18n/translations';
 import { apiRequest, isBackendOfflineError } from '../../utils/api';
 import { downloadBookingPdf } from '../../utils/pdfGenerator';
@@ -137,7 +135,6 @@ export const PartnerRequestsView: React.FC<{
   onChangeLang,
   onLogout,
 }) => {
-  const { isDark, setThemeId } = useTheme();
   const [detailsRequest, setDetailsRequest] = useState<Booking | null>(null);
   const [heatmapModalOpen, setHeatmapModalOpen] = useState(false);
   const [bellMenuOpen, setBellMenuOpen] = useState(false);
@@ -442,33 +439,7 @@ export const PartnerRequestsView: React.FC<{
           )}
         </button>
 
-        <button
-          type="button"
-          onClick={() => {
-            if (isDark) {
-              setThemeId('classic-ivory');
-            } else {
-              setThemeId('obsidian-gold');
-            }
-          }}
-          className="h-7 px-1.5 rounded-full border border-[#D4A017]/80 bg-white hover:bg-amber-50/50 flex items-center justify-center gap-1 shadow-2xs transition-all min-w-0"
-        >
-          {isDark ? (
-            <>
-              <Sun className="w-3 h-3 text-amber-600 shrink-0" />
-              <span className="text-[10px] font-extrabold text-[#0D0D10] truncate">
-                {lang === 'ur' ? 'لائٹ' : 'Light'}
-              </span>
-            </>
-          ) : (
-            <>
-              <Moon className="w-3 h-3 text-zinc-700 shrink-0" />
-              <span className="text-[10px] font-extrabold text-[#0D0D10] truncate">
-                {lang === 'ur' ? 'ڈارک' : 'Dark'}
-              </span>
-            </>
-          )}
-        </button>
+        <ProfileThemeRowButton lang={lang} headerCompact pillStyle />
 
         <button
           type="button"

@@ -14,8 +14,9 @@ import {
   Wallet as WalletIcon,
   X,
 } from 'lucide-react';
-import { BrandLogo, LanguageToggle, PWAInstallButton, ThemeModeToggle } from '../../components/BrandMark';
+import { BrandLogo, LanguageToggle, PWAInstallButton } from '../../components/BrandMark';
 import { ProRiderAiCopilot } from '../../components/ProRiderAiCopilot';
+import { ProfileThemeRowButton } from '../../components/ThemeSwitcher';
 import { useFirebase } from '../../contexts/FirebaseContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { t, tr } from '../../i18n/translations';
@@ -580,7 +581,7 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
             </div>
 
             <div className="scale-90 sm:scale-100 origin-right shrink-0 flex items-center gap-1.5">
-              <ThemeModeToggle lang={lang} dark={isDark} />
+              <ProfileThemeRowButton lang={lang} dark={isDark} headerCompact />
               <LanguageToggle lang={lang} onChange={onChangeLang} dark={isDark} />
             </div>
             <PWAInstallButton />

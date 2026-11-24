@@ -15,6 +15,7 @@ import {
   Upload,
   User as UserIcon,
 } from 'lucide-react';
+import fallbackSedanHeroImg from '../../assets/images/fleet_premium_1794584050155.jpg';
 import heroMobilityImg from '../../assets/images/hero_mobility_pakistan_1794584048013.jpg';
 import { BrandLogo, LanguageToggle, VehicleImage } from '../../components/BrandMark';
 import { DEFAULT_PUBLIC_CONFIG } from '../../config/defaultConfig';
@@ -742,8 +743,15 @@ export const PartnerAuth: React.FC<{
               <img
                 src={heroMobilityImg}
                 alt="PRO PARTNER"
-                referrerPolicy="no-referrer"
+                onError={(e) => {
+                  const img = e.currentTarget;
+                  if (img.dataset.fallbackApplied !== '1') {
+                    img.dataset.fallbackApplied = '1';
+                    img.src = fallbackSedanHeroImg;
+                  }
+                }}
                 className="w-full h-full object-cover object-center opacity-80"
+                loading="eager"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/35 to-black/25 flex flex-col justify-end p-5 sm:p-8">
                 <p className="text-[11px] font-bold uppercase tracking-widest !text-[#F4C430]">
@@ -769,8 +777,15 @@ export const PartnerAuth: React.FC<{
               <img
                 src={heroMobilityImg}
                 alt="PRO RIDER AI Partner Showcase"
-                referrerPolicy="no-referrer"
+                onError={(e) => {
+                  const img = e.currentTarget;
+                  if (img.dataset.fallbackApplied !== '1') {
+                    img.dataset.fallbackApplied = '1';
+                    img.src = fallbackSedanHeroImg;
+                  }
+                }}
                 className="w-full h-full object-cover object-center"
+                loading="eager"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent flex flex-col justify-end p-8">
                 <span className="inline-flex items-center gap-1.5 text-xs font-bold text-[#F4C430] uppercase tracking-widest">

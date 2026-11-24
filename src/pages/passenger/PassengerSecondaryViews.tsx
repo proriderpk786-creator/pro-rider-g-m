@@ -22,7 +22,6 @@ import {
   X,
 } from 'lucide-react';
 import { ShareTripStatusModal } from '../../components/ShareTripStatusModal';
-import { ProfileThemeRowButton } from '../../components/ThemeSwitcher';
 import { tr, trBookingStatus, trPaymentStatus, trService } from '../../i18n/translations';
 import { apiRequest } from '../../utils/api';
 import { downloadBookingPdf, downloadWalletStatementPdf, shareBookingPdf } from '../../utils/pdfGenerator';
@@ -1287,7 +1286,7 @@ export const PassengerProfileView: React.FC<{
 
   return (
     <div className="space-y-6 max-w-4xl">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="font-display text-2xl font-bold text-[#0D0D10]">
           {tr(lang, 'Passenger Profile & Settings', 'مسافر پروفائل اور سیٹنگز')}
         </h2>
@@ -1361,9 +1360,6 @@ export const PassengerProfileView: React.FC<{
           </div>
           <ChevronRight className={`w-4 h-4 text-zinc-400 shrink-0 ${lang === 'ur' ? 'rotate-180' : ''}`} />
         </button>
-
-        {/* Compact Theme Button Row */}
-        <ProfileThemeRowButton lang={lang} />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

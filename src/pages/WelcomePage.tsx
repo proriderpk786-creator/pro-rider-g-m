@@ -15,7 +15,9 @@ import {
   Users,
   Wallet,
 } from 'lucide-react';
-import sovereignHeroImg from '../../public/assets/aistudio/Meta_AI_922449561_2227628244634402_903597125062342127_n_20261122_182719.webp_add99c4b.jpg';
+import fallbackSedanHeroImg from '../assets/images/fleet_premium_1794584050155.jpg';
+import heroMobilityImg from '../assets/images/hero_mobility_pakistan_1794584048013.jpg';
+import sovereignPosterImg from '../assets/images/sovereign_pakistan_hero_182601.jpg';
 import { BrandLogo, LanguageToggle, PWAInstallButton, ThemeModeToggle } from '../components/BrandMark';
 import { useTheme } from '../contexts/ThemeContext';
 import { t, tr } from '../i18n/translations';
@@ -29,7 +31,8 @@ interface WelcomePageProps {
 
 export const WelcomePage: React.FC<WelcomePageProps> = ({ lang, onChangeLang, onNavigate }) => {
   const { homeLayout } = useTheme();
-  const [heroImgFailed, setHeroImgFailed] = useState(false);
+  const [heroImgStage, setHeroImgStage] = useState<'primary' | 'fallback' | 'failed'>('primary');
+  const [sovereignImgStage, setSovereignImgStage] = useState<'primary' | 'fallback' | 'hero' | 'failed'>('primary');
 
   const ExploreWebsiteBanner = (
     <button
@@ -109,21 +112,23 @@ export const WelcomePage: React.FC<WelcomePageProps> = ({ lang, onChangeLang, on
     <div
       className={`hero-image-container relative w-full min-h-[215px] sm:min-h-[300px] aspect-[16/9] rounded-2xl sm:rounded-3xl overflow-hidden border border-zinc-200 bg-gradient-to-br from-[#16171C] to-[#0D0D10] shadow-xl flex items-center justify-center ${extraClass}`}
     >
-      {!heroImgFailed ? (
+      {heroImgStage !== 'failed' ? (
         <img
-          src={sovereignHeroImg}
+          src={heroImgStage === 'primary' ? heroMobilityImg : fallbackSedanHeroImg}
           alt={tr(lang, 'PRO RIDER AI executive sedan in Islamabad', 'پرو رائیڈر اے آئی ایگزیکٹو سیڈان اسلام آباد')}
-          referrerPolicy="no-referrer"
-          onError={() => setHeroImgFailed(true)}
-          className="hero-image-cover w-full h-full object-cover object-center"
+          onError={() =>
+            setHeroImgStage((prev) => (prev === 'primary' ? 'fallback' : 'failed'))
+          }
+          className="hero-image-cover absolute inset-0 w-full h-full object-cover object-center"
           loading="eager"
+          decoding="async"
         />
       ) : (
         <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-[#18181B] via-[#0D0D10] to-[#1F1A0C] p-6">
           <CarFront className="w-16 h-16 text-[#D4A017]/60" />
         </div>
       )}
-      <div className="pr-preserve-light absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent flex items-end justify-between gap-2 p-4 sm:p-6 pointer-events-none">
+      <div className="pr-preserve-light absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/80 via-black/30 to-transparent flex items-end justify-between gap-2 p-4 sm:p-6 pointer-events-none">
         <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/65 border border-[#D4A017]/50 text-[11px] sm:text-xs font-semibold !text-[#F4C430] backdrop-blur-xs">
           <MapPin className="w-3.5 h-3.5 shrink-0" />
           {tr(lang, 'Islamabad · Rawalpindi · Lahore · Karachi', 'اسلام آباد · راولپنڈی · لاہور · کراچی')}
@@ -134,6 +139,13 @@ export const WelcomePage: React.FC<WelcomePageProps> = ({ lang, onChangeLang, on
 
   // SOVEREIGN PAKISTAN POSTER LAYOUT (Exact match to reference image without duplicate HTML text/headers)
   if (homeLayout === 'sovereign') {
+    const sovereignSrc =
+      sovereignImgStage === 'primary'
+        ? sovereignPosterImg
+        : sovereignImgStage === 'fallback'
+        ? '/assets/aistudio/Meta_AI_925947838_917402431363083_8268209735092311524_n_20261122_182601_f4b79422.webp'
+        : heroMobilityImg;
+
     return (
       <div dir={lang === 'ur' ? 'rtl' : 'ltr'} className="min-h-screen bg-[#070709] text-white flex flex-col items-center justify-center relative overflow-x-hidden selection:bg-[#F4C430] selection:text-black py-2 sm:py-6 px-2 sm:px-4">
         {/* Floating Language & Theme Switcher in top corner */}
@@ -145,13 +157,27 @@ export const WelcomePage: React.FC<WelcomePageProps> = ({ lang, onChangeLang, on
 
         {/* The Exact Pure Sovereign Poster with Hotspot Interactive Buttons */}
         <main className="w-full flex-1 flex items-center justify-center">
-          <div className="relative w-full max-w-[460px] sm:max-w-[490px] aspect-[1072/2384] mx-auto select-none rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl border border-[#D4A017]/40 bg-black">
-            <img
-              src="/assets/aistudio/Meta_AI_925947838_917402431363083_8268209735092311524_n_20261122_182601_f4b79422.webp"
-              alt="PRO RIDER AI — Your Ride, Your Partner, Your Pakistan"
-              className="w-full h-full object-cover block pointer-events-none"
-              loading="eager"
-            />
+          <div className="relative w-full max-w-[460px] sm:max-w-[490px] aspect-[1072/2384] shrink-0 mx-auto select-none rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl border border-[#D4A017]/40 bg-black">
+            {sovereignImgStage !== 'failed' ? (
+              <img
+                src={sovereignSrc}
+                alt="PRO RIDER AI — Your Ride, Your Partner, Your Pakistan"
+                onError={() =>
+                  setSovereignImgStage((prev) =>
+                    prev === 'primary' ? 'fallback' : prev === 'fallback' ? 'hero' : 'failed'
+                  )
+                }
+                className="absolute inset-0 w-full h-full object-cover object-center block pointer-events-none z-0"
+                loading="eager"
+                decoding="async"
+              />
+            ) : (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-[#14110A] via-[#070709] to-[#120E05] p-6 text-center gap-3">
+                <CarFront className="w-16 h-16 text-[#F4C430]" />
+                <p className="font-display text-2xl font-bold text-[#F4C430]">PRO RIDER AI</p>
+                <p className="text-xs text-zinc-300">{t(lang, 'welcomeSub')}</p>
+              </div>
+            )}
 
             {/* Interactive Functional Buttons directly over image buttons */}
 
@@ -165,7 +191,7 @@ export const WelcomePage: React.FC<WelcomePageProps> = ({ lang, onChangeLang, on
               }}
               title={t(lang, 'pickAndDrop')}
               aria-label={t(lang, 'pickAndDrop')}
-              className="absolute rounded-2xl cursor-pointer transition-all hover:bg-[#F4C430]/15 hover:ring-2 hover:ring-[#F4C430]/80 active:scale-95 focus:outline-none focus:ring-2 focus:ring-[#F4C430]"
+              className="absolute z-10 rounded-2xl cursor-pointer transition-all hover:bg-[#F4C430]/15 hover:ring-2 hover:ring-[#F4C430]/80 active:scale-95 focus:outline-none focus:ring-2 focus:ring-[#F4C430]"
               style={{ left: '4.48%', top: '63.25%', width: '29.10%', height: '11.83%' }}
             />
 
@@ -179,7 +205,7 @@ export const WelcomePage: React.FC<WelcomePageProps> = ({ lang, onChangeLang, on
               }}
               title={t(lang, 'rideSharing')}
               aria-label={t(lang, 'rideSharing')}
-              className="absolute rounded-2xl cursor-pointer transition-all hover:bg-[#F4C430]/15 hover:ring-2 hover:ring-[#F4C430]/80 active:scale-95 focus:outline-none focus:ring-2 focus:ring-[#F4C430]"
+              className="absolute z-10 rounded-2xl cursor-pointer transition-all hover:bg-[#F4C430]/15 hover:ring-2 hover:ring-[#F4C430]/80 active:scale-95 focus:outline-none focus:ring-2 focus:ring-[#F4C430]"
               style={{ left: '37.13%', top: '63.25%', width: '29.10%', height: '11.83%' }}
             />
 
@@ -193,7 +219,7 @@ export const WelcomePage: React.FC<WelcomePageProps> = ({ lang, onChangeLang, on
               }}
               title={t(lang, 'fuelSharing')}
               aria-label={t(lang, 'fuelSharing')}
-              className="absolute rounded-2xl cursor-pointer transition-all hover:bg-[#F4C430]/15 hover:ring-2 hover:ring-[#F4C430]/80 active:scale-95 focus:outline-none focus:ring-2 focus:ring-[#F4C430]"
+              className="absolute z-10 rounded-2xl cursor-pointer transition-all hover:bg-[#F4C430]/15 hover:ring-2 hover:ring-[#F4C430]/80 active:scale-95 focus:outline-none focus:ring-2 focus:ring-[#F4C430]"
               style={{ left: '66.60%', top: '63.25%', width: '28.92%', height: '11.83%' }}
             />
 
@@ -207,7 +233,7 @@ export const WelcomePage: React.FC<WelcomePageProps> = ({ lang, onChangeLang, on
               }}
               title={t(lang, 'asPassenger')}
               aria-label={t(lang, 'asPassenger')}
-              className="absolute rounded-2xl cursor-pointer transition-all hover:bg-[#F4C430]/20 hover:ring-2 hover:ring-[#F4C430] active:scale-95 focus:outline-none focus:ring-2 focus:ring-[#F4C430]"
+              className="absolute z-10 rounded-2xl cursor-pointer transition-all hover:bg-[#F4C430]/20 hover:ring-2 hover:ring-[#F4C430] active:scale-95 focus:outline-none focus:ring-2 focus:ring-[#F4C430]"
               style={{ left: '4.20%', top: '79.87%', width: '44.31%', height: '6.54%' }}
             />
 
@@ -217,7 +243,7 @@ export const WelcomePage: React.FC<WelcomePageProps> = ({ lang, onChangeLang, on
               onClick={() => onNavigate('/partner')}
               title={t(lang, 'asPartner')}
               aria-label={t(lang, 'asPartner')}
-              className="absolute rounded-2xl cursor-pointer transition-all hover:bg-[#F4C430]/20 hover:ring-2 hover:ring-[#F4C430] active:scale-95 focus:outline-none focus:ring-2 focus:ring-[#F4C430]"
+              className="absolute z-10 rounded-2xl cursor-pointer transition-all hover:bg-[#F4C430]/20 hover:ring-2 hover:ring-[#F4C430] active:scale-95 focus:outline-none focus:ring-2 focus:ring-[#F4C430]"
               style={{ left: '51.12%', top: '79.87%', width: '44.40%', height: '6.54%' }}
             />
 
@@ -227,7 +253,7 @@ export const WelcomePage: React.FC<WelcomePageProps> = ({ lang, onChangeLang, on
               onClick={() => onNavigate('/website')}
               title={tr(lang, 'Visit Website', 'ویب سائٹ دیکھیں')}
               aria-label={tr(lang, 'Visit Website', 'ویب سائٹ دیکھیں')}
-              className="absolute rounded-full cursor-pointer transition-all hover:bg-[#F4C430]/20 hover:ring-2 hover:ring-[#F4C430] active:scale-95 focus:outline-none focus:ring-2 focus:ring-[#F4C430]"
+              className="absolute z-10 rounded-full cursor-pointer transition-all hover:bg-[#F4C430]/20 hover:ring-2 hover:ring-[#F4C430] active:scale-95 focus:outline-none focus:ring-2 focus:ring-[#F4C430]"
               style={{ left: '30.78%', top: '88.25%', width: '38.25%', height: '4.36%' }}
             />
 
@@ -238,7 +264,7 @@ export const WelcomePage: React.FC<WelcomePageProps> = ({ lang, onChangeLang, on
               rel="noreferrer"
               title="WhatsApp: 03125007782"
               aria-label="WhatsApp: 03125007782"
-              className="absolute rounded-full cursor-pointer transition-all hover:bg-emerald-500/25 hover:ring-2 hover:ring-emerald-400 active:scale-95 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+              className="absolute z-10 rounded-full cursor-pointer transition-all hover:bg-emerald-500/25 hover:ring-2 hover:ring-emerald-400 active:scale-95 focus:outline-none focus:ring-2 focus:ring-emerald-400"
               style={{ left: '20.52%', top: '94.80%', width: '58.77%', height: '3.15%' }}
             />
           </div>
@@ -501,14 +527,24 @@ export const WelcomePage: React.FC<WelcomePageProps> = ({ lang, onChangeLang, on
                   </button>
                 </div>
               </div>
-              <div className="lg:col-span-7 relative min-h-[240px] sm:min-h-[320px]">
-                <img
-                  src={sovereignHeroImg}
-                  alt="PRO RIDER AI"
-                  referrerPolicy="no-referrer"
-                  className="w-full h-full object-cover object-center"
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-black/20 flex items-end p-5">
+              <div className="lg:col-span-7 relative min-h-[240px] sm:min-h-[320px] aspect-[16/10] lg:aspect-auto bg-[#0D0D10]">
+                {heroImgStage !== 'failed' ? (
+                  <img
+                    src={heroImgStage === 'primary' ? heroMobilityImg : fallbackSedanHeroImg}
+                    alt={tr(lang, 'PRO RIDER AI executive sedan in Islamabad', 'پرو رائیڈر اے آئی ایگزیکٹو سیڈان اسلام آباد')}
+                    onError={() =>
+                      setHeroImgStage((prev) => (prev === 'primary' ? 'fallback' : 'failed'))
+                    }
+                    className="hero-image-cover absolute inset-0 w-full h-full object-cover object-center"
+                    loading="eager"
+                    decoding="async"
+                  />
+                ) : (
+                  <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-[#18181B] via-[#0D0D10] to-[#1F1A0C] p-6">
+                    <CarFront className="w-16 h-16 text-[#D4A017]/60" />
+                  </div>
+                )}
+                <div className="absolute inset-0 z-10 bg-gradient-to-t from-black/75 via-transparent to-black/20 flex items-end p-5 pointer-events-none">
                   <span className="text-xs font-semibold text-[#F4C430]">
                     {t(lang, 'welcomeSub')}
                   </span>

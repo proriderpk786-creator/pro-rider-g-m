@@ -3,6 +3,7 @@ import {
   ArrowRight,
   Building2,
   CalendarClock,
+  CarFront,
   CheckCircle2,
   ChevronDown,
   FileText,
@@ -12,6 +13,7 @@ import {
   ShieldCheck,
   Users,
 } from 'lucide-react';
+import fallbackSedanHeroImg from '../assets/images/fleet_premium_1794584050155.jpg';
 import heroMobilityImg from '../assets/images/hero_mobility_pakistan_1794584048013.jpg';
 import { BrandLogo, LanguageToggle, PWAInstallButton, VehicleImage } from '../components/BrandMark';
 import { ProRiderAiCopilot } from '../components/ProRiderAiCopilot';
@@ -33,6 +35,7 @@ export const PublicWebsitePage: React.FC<PublicWebsitePageProps> = ({
 }) => {
   const [openFaq, setOpenFaq] = useState<number | null>(0);
   const [contactSent, setContactSent] = useState(false);
+  const [heroImgStage, setHeroImgStage] = useState<'primary' | 'fallback' | 'failed'>('primary');
 
   const faqs = [
     {
@@ -169,13 +172,23 @@ export const PublicWebsitePage: React.FC<PublicWebsitePageProps> = ({
 
           <div className="lg:col-span-6 flex items-center justify-center">
             <div className="hero-image-container relative w-full min-h-[220px] aspect-[16/9] lg:aspect-[16/10] lg:min-h-[360px] max-h-[500px] rounded-2xl sm:rounded-3xl overflow-hidden border border-zinc-200 bg-[#0D0D10] shadow-xl flex items-center justify-center">
-              <img
-                src={heroMobilityImg}
-                alt="PRO RIDER AI Fleet"
-                referrerPolicy="no-referrer"
-                className="hero-image-cover w-full h-full object-cover object-center"
-                loading="eager"
-              />
+              {heroImgStage !== 'failed' ? (
+                <img
+                  src={heroImgStage === 'primary' ? heroMobilityImg : fallbackSedanHeroImg}
+                  alt="PRO RIDER AI Fleet"
+                  onError={() =>
+                    setHeroImgStage((prev) => (prev === 'primary' ? 'fallback' : 'failed'))
+                  }
+                  className="hero-image-cover absolute inset-0 w-full h-full object-cover object-center"
+                  loading="eager"
+                  decoding="async"
+                />
+              ) : (
+                <div className="w-full h-full flex flex-col items-center justify-center gap-2 bg-gradient-to-br from-[#18181B] via-[#0D0D10] to-[#1F1A0C] p-6">
+                  <CarFront className="w-14 h-14 text-[#D4A017]" />
+                  <span className="font-display text-sm font-bold text-[#F4C430]">PRO RIDER AI</span>
+                </div>
+              )}
             </div>
           </div>
         </div>

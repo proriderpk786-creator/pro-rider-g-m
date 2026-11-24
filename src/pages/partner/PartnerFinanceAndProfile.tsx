@@ -13,7 +13,6 @@ import {
   Landmark,
   Lock,
   LogOut,
-  Palette,
   Plus,
   ShieldCheck,
   Sparkles,
@@ -23,7 +22,6 @@ import {
   Wallet as WalletIcon,
   X,
 } from 'lucide-react';
-import { ProfileThemeRowButton } from '../../components/ThemeSwitcher';
 import { tr } from '../../i18n/translations';
 import { apiRequest, isBackendOfflineError } from '../../utils/api';
 import { compressAndReadUploadFile } from '../../utils/imageUpload';
@@ -499,7 +497,6 @@ export const PartnerProfileView: React.FC<{
   );
 
   const [editingOpen, setEditingOpen] = useState(false);
-  const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [busySlot, setBusySlot] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -858,9 +855,9 @@ export const PartnerProfileView: React.FC<{
       )}
 
       {/* Main Social-Style Showcase Card (Matching User Reference Screenshot) */}
-      <div className={`rounded-3xl border ${activeTemplate.borderClass} ${activeTemplate.cardBg} shadow-sm overflow-hidden`}>
+      <div className={`rounded-3xl border ${activeTemplate.borderClass} ${activeTemplate.cardBg} shadow-sm`}>
         {/* Cover Banner */}
-        <div className="relative h-44 sm:h-48 w-full bg-gradient-to-br from-[#0D0D10] via-[#1C1E26] to-[#2B2210] overflow-hidden">
+        <div className="relative h-44 sm:h-48 w-full rounded-t-3xl bg-gradient-to-br from-[#0D0D10] via-[#1C1E26] to-[#2B2210] overflow-hidden">
           {resolvedCover ? (
             <img
               src={resolvedCover}
@@ -984,11 +981,11 @@ export const PartnerProfileView: React.FC<{
           </div>
 
           {/* Action Buttons Row matching Screenshot Layout */}
-          <div className="mt-4 flex flex-wrap items-center gap-2.5">
+          <div className="mt-4 flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => setEditingOpen((v) => !v)}
-              className={`min-h-[40px] inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border text-xs font-semibold transition-colors ${activeTemplate.buttonBg}`}
+              className={`min-h-[38px] inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border text-xs font-semibold transition-colors ${activeTemplate.buttonBg}`}
             >
               <Edit3 className="w-3.5 h-3.5" />
               <span>{tr(lang, 'Edit profile', 'پروفائل ایڈٹ')}</span>
@@ -996,50 +993,13 @@ export const PartnerProfileView: React.FC<{
 
             <button
               type="button"
-              onClick={() => setTemplatePickerOpen((v) => !v)}
-              className={`min-h-[40px] inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border text-xs font-semibold transition-colors ${activeTemplate.buttonBg}`}
-            >
-              <Palette className="w-3.5 h-3.5" />
-              <span>{tr(lang, 'Template', 'ٹیمپلیٹ')}</span>
-            </button>
-
-            <button
-              type="button"
               onClick={onLogout}
-              className={`min-h-[40px] inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border text-xs font-semibold transition-colors ${activeTemplate.buttonBg}`}
+              className={`min-h-[38px] inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border text-xs font-semibold transition-colors ${activeTemplate.buttonBg}`}
             >
               <LogOut className="w-3.5 h-3.5" />
               <span>{tr(lang, 'Sign out', 'لاگ آؤٹ')}</span>
             </button>
           </div>
-
-          {/* Inline Template Picker */}
-          {templatePickerOpen && (
-            <div className="mt-3 p-3 rounded-2xl border border-zinc-200 bg-zinc-50 text-[#0D0D10] grid grid-cols-3 gap-2">
-              {TEMPLATES.map((tpl) => {
-                const selected = tpl.id === templateId;
-                return (
-                  <button
-                    key={tpl.id}
-                    type="button"
-                    onClick={async () => {
-                      setTemplateId(tpl.id);
-                      setTemplatePickerOpen(false);
-                      await persistShowcase({ profileTemplate: tpl.id });
-                    }}
-                    className={`px-3 py-2 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 ${
-                      selected
-                        ? 'border-[#D4A017] bg-[#0D0D10] text-[#F4C430]'
-                        : 'border-zinc-200 bg-white text-[#0D0D10] hover:bg-zinc-100'
-                    }`}
-                  >
-                    {selected && <Check className="w-3.5 h-3.5" />}
-                    <span>{lang === 'ur' ? tpl.labelUr : tpl.labelEn}</span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
 
           {/* Genuine Driver Metrics Grid (Divided cleanly like Screenshot) */}
           <div className={`mt-5 pt-5 border-t ${activeTemplate.borderClass} grid grid-cols-4 gap-2 text-center`}>
@@ -1272,9 +1232,6 @@ export const PartnerProfileView: React.FC<{
           </div>
           <ChevronRight className="w-4 h-4 text-zinc-400 shrink-0" />
         </button>
-
-        {/* Compact Theme Button Row */}
-        <ProfileThemeRowButton lang={lang} />
       </div>
 
       {/* Showcase Display & Document Photos Privacy Grid (On-image Lock Toggle on EVERY Photo) */}
