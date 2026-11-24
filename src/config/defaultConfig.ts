@@ -18,8 +18,8 @@ export const DEFAULT_PUBLIC_CONFIG: PublicConfig = {
     ratePerKm: 38,
   },
   themeConfig: {
-    themeId: 'classic-ivory',
-    homeLayout: 'classic',
+    themeId: 'obsidian-gold',
+    homeLayout: 'sovereign',
     authLayout: 'hero-sheet',
     forceGlobal: false,
     updatedAt: 0,

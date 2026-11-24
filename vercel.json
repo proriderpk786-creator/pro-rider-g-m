@@ -16,7 +16,7 @@
   ],
   "rewrites": [
     {
-      "source": "/(.*)",
+      "source": "/((?!assets/|api/|sw\\.js|workbox-.*|manifest\\.webmanifest|icon\\.svg|apple-touch-icon\\.png|pwa-.*\\.png).*)",
       "destination": "/index.html"
     }
   ]

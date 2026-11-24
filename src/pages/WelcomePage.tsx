@@ -116,9 +116,13 @@ export const WelcomePage: React.FC<WelcomePageProps> = ({ lang, onChangeLang, on
         <img
           src={heroImgStage === 'primary' ? heroMobilityImg : fallbackSedanHeroImg}
           alt={tr(lang, 'PRO RIDER AI executive sedan in Islamabad', 'پرو رائیڈر اے آئی ایگزیکٹو سیڈان اسلام آباد')}
-          onError={() =>
-            setHeroImgStage((prev) => (prev === 'primary' ? 'fallback' : 'failed'))
-          }
+          onError={(e) => {
+            console.error(
+              '[WelcomePage] Hero image failed to load:',
+              e.currentTarget.getAttribute('src') || e.currentTarget.src
+            );
+            setHeroImgStage((prev) => (prev === 'primary' ? 'fallback' : 'failed'));
+          }}
           className="hero-image-cover absolute inset-0 w-full h-full object-cover object-center"
           loading="eager"
           decoding="async"
@@ -162,11 +166,15 @@ export const WelcomePage: React.FC<WelcomePageProps> = ({ lang, onChangeLang, on
               <img
                 src={sovereignSrc}
                 alt="PRO RIDER AI — Your Ride, Your Partner, Your Pakistan"
-                onError={() =>
+                onError={(e) => {
+                  console.error(
+                    '[WelcomePage] Sovereign hero image failed to load:',
+                    e.currentTarget.getAttribute('src') || e.currentTarget.src
+                  );
                   setSovereignImgStage((prev) =>
                     prev === 'primary' ? 'fallback' : prev === 'fallback' ? 'hero' : 'failed'
-                  )
-                }
+                  );
+                }}
                 className="absolute inset-0 w-full h-full object-cover object-center block pointer-events-none z-0"
                 loading="eager"
                 decoding="async"
@@ -532,9 +540,13 @@ export const WelcomePage: React.FC<WelcomePageProps> = ({ lang, onChangeLang, on
                   <img
                     src={heroImgStage === 'primary' ? heroMobilityImg : fallbackSedanHeroImg}
                     alt={tr(lang, 'PRO RIDER AI executive sedan in Islamabad', 'پرو رائیڈر اے آئی ایگزیکٹو سیڈان اسلام آباد')}
-                    onError={() =>
-                      setHeroImgStage((prev) => (prev === 'primary' ? 'fallback' : 'failed'))
-                    }
+                    onError={(e) => {
+                      console.error(
+                        '[WelcomePage] Executive hero image failed to load:',
+                        e.currentTarget.getAttribute('src') || e.currentTarget.src
+                      );
+                      setHeroImgStage((prev) => (prev === 'primary' ? 'fallback' : 'failed'));
+                    }}
                     className="hero-image-cover absolute inset-0 w-full h-full object-cover object-center"
                     loading="eager"
                     decoding="async"
