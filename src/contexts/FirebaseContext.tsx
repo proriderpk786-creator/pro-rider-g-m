@@ -94,25 +94,26 @@ export function normalizePakistanPhoneE164(raw: string): string {
 export function formatFirebaseAuthError(err: unknown, providerName = 'Auth'): string {
   const code = String((err as any)?.code || '');
   const rawMessage = String((err as any)?.message || err || '');
-  const host = typeof window !== 'undefined' ? window.location.hostname : 'this domain';
 
   if (code === 'auth/unauthorized-domain') {
-    return `Domain "${host}" is not authorized in Firebase Console → Authentication → Settings → Authorized domains. (اس ڈومین کو Firebase Authorized Domains میں شامل کریں)`;
+    console.warn('[Auth] Domain not yet authorized for social login.');
+    return `${providerName} sign-in is temporarily unavailable on this web address. Please use Email & Password below. (اس لنک پر ${providerName} سائن اِن عارضی طور پر دستیاب نہیں ہے۔ براہ کرم نیچے ای میل اور پاس ورڈ استعمال کریں)`;
   }
   if (code === 'auth/operation-not-allowed') {
-    return `${providerName} sign-in is not yet enabled in Firebase Console → Authentication → Sign-in method. (${providerName} کو Firebase Console میں Enable کریں)`;
+    console.warn(`[Auth] Provider ${providerName} is not enabled.`);
+    return `${providerName} sign-in is currently unavailable. Please try another sign-in method. (یہ سائن اِن طریقہ فی الحال دستیاب نہیں ہے)`;
   }
   if (code === 'auth/account-exists-with-different-credential') {
     return 'An account already exists with the same email using Google or Email sign-in. Please sign in with Google or Email instead. (یہ ای میل پہلے سے Google یا Email سے رجسٹرڈ ہے)';
   }
   if (code === 'auth/popup-blocked') {
-    return 'Browser blocked the sign-in popup window. Please allow popups or tap again to redirect.';
+    return 'Browser blocked the sign-in popup window. Please allow popups or try again.';
   }
   if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
     return `${providerName} sign-in window was closed before completing login.`;
   }
   if (code === 'auth/billing-not-enabled') {
-    return 'Firebase Phone SMS requires Firebase Blaze plan or test phone numbers configured in Firebase Console → Authentication → Phone.';
+    return 'SMS verification is temporarily unavailable. Please sign in with Google or Email. (ایس ایم ایس سروس فی الحال دستیاب نہیں، Google یا ای میل استعمال کریں)';
   }
   if (code === 'auth/invalid-phone-number') {
     return 'Please enter a valid Pakistan mobile number (e.g. 03125007782 or +923125007782).';

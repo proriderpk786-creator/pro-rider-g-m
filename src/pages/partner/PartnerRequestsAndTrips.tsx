@@ -271,11 +271,17 @@ export const PartnerRequestsView: React.FC<{
             if (!raw) continue;
             const parsed = JSON.parse(raw) as Booking[];
             if (Array.isArray(parsed)) {
-              const updated = parsed.map((b) =>
-                b.id === bookingId
-                  ? { ...b, status: 'confirmed' as const, partner_id: profile.user_id }
-                  : b
-              );
+              const updated = parsed.map((b) => {
+                if (b.id === bookingId) {
+                  const isSchedule = b.booking_mode === 'schedule' || ['pick_and_drop', 'ride_sharing', 'fuel_sharing'].includes(b.service_type);
+                  if (isSchedule) {
+                    setStatusNotice(tr(lang, 'Application submitted for Super Admin review.', 'ماہانہ بکنگ کی درخواست سپر ایڈمن کو بھیج دی گئی ہے۔'));
+                    return b;
+                  }
+                  return { ...b, status: 'confirmed' as const, partner_id: profile.user_id };
+                }
+                return b;
+              });
               localStorage.setItem(k, JSON.stringify(updated));
             }
           }

@@ -1455,7 +1455,7 @@ export function registerAppRoutes(app: Express) {
         ratePerKm = 16;
       }
       const totalKm = Math.round(dist * dailyTrips * inferredPkgDays * 10) / 10;
-      estimatedFare = Math.max(100, Math.round(totalKm * ratePerKm));
+      estimatedFare = Math.max(100, Math.round(totalKm * ratePerKm * seats));
     }
 
     if (packageId && !['pkg-22-days', 'pkg-26-days', 'pkg-custom'].includes(String(packageId))) {

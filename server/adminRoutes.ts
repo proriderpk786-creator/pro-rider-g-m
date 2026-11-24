@@ -76,9 +76,9 @@ export function registerAdminRoutes(app: Express) {
                  (SELECT COALESCE(SUM(amount_pkr), 0) FROM wallet_transactions WHERE user_id = u.id AND role = 'partner' AND status = 'pending' AND type = 'withdrawal')
                )) AS wallet_balance_pkr
         FROM users u
-        JOIN partner_profiles pp ON pp.user_id = u.id
+        LEFT JOIN partner_profiles pp ON pp.user_id = u.id
         WHERE u.role = 'partner'
-        ORDER BY pp.updated_at DESC
+        ORDER BY COALESCE(pp.updated_at, u.created_at) DESC
       `)
       .all() as any[];
 
@@ -220,8 +220,8 @@ export function registerAdminRoutes(app: Express) {
                p.full_name AS passenger_name, p.phone AS passenger_phone,
                d.full_name AS partner_name, d.phone AS partner_phone
         FROM bookings b
-        JOIN fleet_categories fc ON fc.id = b.vehicle_category_id
-        JOIN users p ON p.id = b.passenger_id
+        LEFT JOIN fleet_categories fc ON fc.id = b.vehicle_category_id
+        LEFT JOIN users p ON p.id = b.passenger_id
         LEFT JOIN users d ON d.id = b.partner_id
         ORDER BY b.created_at DESC
       `)

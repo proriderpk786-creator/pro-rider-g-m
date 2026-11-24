@@ -454,7 +454,7 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
       ratePerKm = 16;
     }
 
-    const calculatedTotal = Math.round(totalKm * ratePerKm);
+    const calculatedTotal = Math.round(totalKm * ratePerKm * Math.max(1, passengersCount));
     return {
       ratePerKm,
       totalKm,
@@ -474,7 +474,7 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
   const referenceFare = useMemo(() => {
     if (!selectedVehicle) return 20240;
     return calculateVehiclePrice(selectedVehicle).totalPrice;
-  }, [selectedVehicle, route?.distanceKm, returnJourney, selectedPackageDays, serviceType, bookingMode]);
+  }, [selectedVehicle, route?.distanceKm, returnJourney, selectedPackageDays, serviceType, bookingMode, passengersCount]);
 
   useEffect(() => {
     setOfferedFare(referenceFare);
