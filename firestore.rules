@@ -47,6 +47,10 @@ service cloud.firestore {
       return exists(/databases/$(database)/documents/users/$(userId)/aiThreads/$(threadId));
     }
 
+    function parentPartnerAppExists(partnerId) {
+      return exists(/databases/$(database)/documents/partnerApplications/$(partnerId));
+    }
+
     // =========================================================================
     // Validation Blueprints (Anti-Update-Gap: NO existing()/diff() inside!)
     // =========================================================================
@@ -128,10 +132,126 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidPartnerApplication(data, expectedUid) {
+      return data.keys().hasAll(['uid', 'fullName', 'operatingCity', 'verificationStatus', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'uid', 'fullName', 'email', 'phone', 'referencePhone',
+          'cnicNumber', 'cnicExpiry', 'licenceNumber', 'licenceExpiry',
+          'vehicleCategoryId', 'vehicleName', 'vehicleNumber', 'seatingCapacity', 'fuelType',
+          'operatingCity', 'serviceEligibility', 'verificationStatus', 'adminNotes',
+          'docsCount', 'submittedAt', 'createdAt', 'updatedAt'
+        ])
+        && data.uid is string && data.uid.size() > 0 && data.uid.size() <= 128 && data.uid == expectedUid
+        && data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 120
+        && (!('email' in data) || (data.email is string && data.email.size() <= 180))
+        && (!('phone' in data) || (data.phone is string && data.phone.size() <= 32))
+        && (!('referencePhone' in data) || (data.referencePhone is string && data.referencePhone.size() <= 32))
+        && (!('cnicNumber' in data) || (data.cnicNumber is string && data.cnicNumber.size() <= 40))
+        && (!('cnicExpiry' in data) || (data.cnicExpiry is string && data.cnicExpiry.size() <= 24))
+        && (!('licenceNumber' in data) || (data.licenceNumber is string && data.licenceNumber.size() <= 60))
+        && (!('licenceExpiry' in data) || (data.licenceExpiry is string && data.licenceExpiry.size() <= 24))
+        && (!('vehicleCategoryId' in data) || (data.vehicleCategoryId is string && data.vehicleCategoryId.size() <= 64))
+        && (!('vehicleName' in data) || (data.vehicleName is string && data.vehicleName.size() <= 120))
+        && (!('vehicleNumber' in data) || (data.vehicleNumber is string && data.vehicleNumber.size() <= 40))
+        && (!('seatingCapacity' in data) || (data.seatingCapacity is number && data.seatingCapacity >= 1 && data.seatingCapacity <= 30))
+        && (!('fuelType' in data) || (data.fuelType is string && data.fuelType.size() <= 40))
+        && data.operatingCity is string && data.operatingCity.size() >= 1 && data.operatingCity.size() <= 80
+        && (!('serviceEligibility' in data) || (
+          data.serviceEligibility is list
+          && data.serviceEligibility.size() <= 3
+          && (data.serviceEligibility.size() == 0 || data.serviceEligibility[0] is string)
+        ))
+        && data.verificationStatus is string
+        && data.verificationStatus in ['incomplete', 'documents_pending', 'under_review', 'approved', 'rejected', 'suspended']
+        && (!('adminNotes' in data) || (data.adminNotes is string && data.adminNotes.size() <= 500))
+        && (!('docsCount' in data) || (data.docsCount is number && data.docsCount >= 0 && data.docsCount <= 12))
+        && (!('submittedAt' in data) || (data.submittedAt is timestamp))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPartnerApplicationDoc(data, expectedUid, expectedDocType) {
+      return data.keys().hasAll(['uid', 'docType', 'fileName', 'fileDataUrl', 'status', 'uploadedAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'uid', 'docType', 'fileName', 'fileDataUrl', 'status',
+          'expiryDate', 'reviewNotes', 'isPublic', 'uploadedAt', 'updatedAt'
+        ])
+        && data.uid is string && data.uid.size() > 0 && data.uid.size() <= 128 && data.uid == expectedUid
+        && data.docType is string
+        && data.docType in ['profile_photo', 'cnic_front', 'cnic_back', 'driving_licence', 'vehicle_registration', 'vehicle_photo']
+        && data.docType == expectedDocType
+        && data.fileName is string && data.fileName.size() >= 1 && data.fileName.size() <= 200
+        && data.fileDataUrl is string && data.fileDataUrl.size() >= 1 && data.fileDataUrl.size() <= 800000
+        && data.status is string && data.status in ['pending', 'approved', 'rejected']
+        && (!('expiryDate' in data) || (data.expiryDate is string && data.expiryDate.size() <= 24))
+        && (!('reviewNotes' in data) || (data.reviewNotes is string && data.reviewNotes.size() <= 400))
+        && (!('isPublic' in data) || (data.isPublic is bool))
+        && data.uploadedAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     // Server-managed Super Admin Registry (client writes strictly denied)
     match /admins/{adminUid} {
       allow get: if isValidId(adminUid) && (isOwner(adminUid) || isAdmin());
       allow list, write: if false;
+    }
+
+    // Pro Partner Verification Applications & Documents (Synced for Super Admin)
+    match /partnerApplications/{partnerId} {
+      allow get: if isValidId(partnerId) && (isOwner(partnerId) || isAdmin());
+      allow list: if isVerifiedUser() && (existing().uid == request.auth.uid || isAdmin());
+      allow create: if isValidId(partnerId)
+        && isOwner(partnerId)
+        && isValidPartnerApplication(incoming(), partnerId)
+        && incoming().verificationStatus in ['incomplete', 'documents_pending', 'under_review']
+        && !('adminNotes' in incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(partnerId)
+        && isValidPartnerApplication(incoming(), partnerId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            isOwner(partnerId)
+            && existing().verificationStatus != 'suspended'
+            && (
+              incoming().verificationStatus in ['incomplete', 'documents_pending', 'under_review']
+              || incoming().verificationStatus == existing().verificationStatus
+            )
+            && !incoming().diff(existing()).affectedKeys().hasAny(['adminNotes'])
+          )
+        );
+      allow delete: if isValidId(partnerId) && isAdmin();
+
+      match /documents/{docType} {
+        allow get: if isValidId(partnerId) && isValidId(docType) && (isOwner(partnerId) || isAdmin());
+        allow list: if isVerifiedUser() && (existing().uid == request.auth.uid || isAdmin());
+        allow create: if isValidId(partnerId) && isValidId(docType)
+          && isOwner(partnerId)
+          && parentPartnerAppExists(partnerId)
+          && isValidPartnerApplicationDoc(incoming(), partnerId, docType)
+          && incoming().status == 'pending'
+          && !('reviewNotes' in incoming())
+          && incoming().uploadedAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isValidId(partnerId) && isValidId(docType)
+          && isValidPartnerApplicationDoc(incoming(), partnerId, docType)
+          && incoming().uid == existing().uid
+          && incoming().docType == existing().docType
+          && incoming().updatedAt == request.time
+          && (
+            isAdmin() ||
+            (
+              isOwner(partnerId)
+              && incoming().status == 'pending'
+              && !incoming().diff(existing()).affectedKeys().hasAny(['reviewNotes'])
+            )
+          );
+        allow delete: if isValidId(partnerId) && isValidId(docType) && isAdmin();
+      }
     }
 
     // User Profiles (non-PII fields only)

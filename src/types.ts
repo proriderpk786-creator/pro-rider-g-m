@@ -77,6 +77,7 @@ export interface PartnerProfile {
   profile_published?: number;
   profile_template?: 'clean_light' | 'obsidian_gold' | 'emerald_pro';
   showcase_gallery?: ShowcaseGalleryItem[];
+  reference_phone?: string;
 }
 
 export interface PartnerDocument {

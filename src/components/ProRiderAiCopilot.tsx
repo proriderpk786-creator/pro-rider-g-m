@@ -17,6 +17,7 @@ import {
   X,
 } from 'lucide-react';
 import { useFirebase, type GroundedPlace, type GroundedSource } from '../contexts/FirebaseContext';
+import { useTheme } from '../contexts/ThemeContext';
 import { tr } from '../i18n/translations';
 import type { Language } from '../types';
 import { apiRequest } from '../utils/api';
@@ -101,6 +102,7 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
   showFloatingOnMobile = false,
 }) => {
   const { firebaseUser, aiThreads, createAiThread, saveAiMessage, fetchThreadMessages } = useFirebase();
+  const { isDark } = useTheme();
 
   const [open, setOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<CopilotTab>('chat');
@@ -498,19 +500,28 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
 
       {/* Slide-over Copilot Panel */}
       {open && (
-        <div dir={lang === 'ur' ? 'rtl' : 'ltr'} className="fixed inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-[2px]">
-          <div className="w-full max-w-md bg-white h-full flex flex-col shadow-2xl border-l border-zinc-200">
+        <div
+          dir={lang === 'ur' ? 'rtl' : 'ltr'}
+          className="fixed inset-0 z-50 flex justify-end bg-black/55 backdrop-blur-[2px]"
+        >
+          <div
+            className={`pr-preserve-light w-full max-w-md h-full flex flex-col shadow-2xl border-l ${
+              isDark
+                ? 'bg-[#0F1015] border-[#D4A017]/35 text-white'
+                : 'bg-white border-zinc-200 text-[#0D0D10]'
+            }`}
+          >
             {/* Header */}
-            <div className="bg-[#0D0D10] text-white px-5 py-4 flex items-center justify-between border-b border-zinc-800 shrink-0">
+            <div className="bg-[#0D0D10] text-white px-5 py-4 flex items-center justify-between border-b border-[#D4A017]/30 shrink-0">
               <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-[#D4A017] text-[#0D0D10] flex items-center justify-center">
+                <div className="w-9 h-9 rounded-xl bg-[#D4A017] text-[#0D0D10] flex items-center justify-center shrink-0">
                   <Bot className="w-5 h-5" />
                 </div>
                 <div>
-                  <h2 className="font-display text-sm font-bold leading-tight">
+                  <h2 className="font-display text-sm font-bold leading-tight text-white">
                     {tr(lang, 'PRO RIDER AI Copilot', 'پرو رائیڈر اے آئی کوپائلٹ')}
                   </h2>
-                  <p className="text-[11px] text-[#D4A017] font-mono">
+                  <p className="text-[11px] text-[#F4C430] font-mono">
                     {persona === 'partner'
                       ? tr(lang, 'Pro Partner Assistant', 'پرو پارٹنر اسسٹنٹ')
                       : tr(lang, 'Maps · Search · Live Voice', 'میپس · سرچ · لائیو وائس')}
@@ -523,7 +534,7 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                     type="button"
                     onClick={() => setShowThreads((v) => !v)}
                     title={tr(lang, 'Cloud Chat History', 'محفوظ چیٹ ہسٹری')}
-                    className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-300"
+                    className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-200"
                   >
                     <History className="w-4 h-4" />
                   </button>
@@ -535,7 +546,7 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                     setOpen(false);
                   }}
                   aria-label={tr(lang, 'Close Copilot', 'اسسٹنٹ بند کریں')}
-                  className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-300"
+                  className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-200"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -543,12 +554,22 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
             </div>
 
             {/* Primary Mode Tabs */}
-            <div className="px-4 py-2.5 bg-zinc-50 border-b border-zinc-200 flex items-center gap-2 shrink-0">
+            <div
+              className={`px-4 py-2.5 border-b flex items-center gap-2 shrink-0 ${
+                isDark ? 'bg-[#14161E] border-zinc-800' : 'bg-zinc-50 border-zinc-200'
+              }`}
+            >
               <button
                 type="button"
                 onClick={() => setActiveTab('chat')}
-                className={`flex-1 py-2 rounded-xl text-xs font-bold inline-flex items-center justify-center gap-1.5 transition-colors ${
-                  activeTab === 'chat' ? 'bg-[#0D0D10] text-white' : 'bg-white text-zinc-600 border border-zinc-200'
+                className={`pr-no-recolor flex-1 py-2 rounded-xl text-xs font-extrabold inline-flex items-center justify-center gap-1.5 transition-colors border ${
+                  activeTab === 'chat'
+                    ? isDark
+                      ? 'bg-[#D4A017] text-[#0D0D10] border-[#F4C430]'
+                      : 'bg-[#0D0D10] text-white border-[#0D0D10]'
+                    : isDark
+                    ? 'bg-[#1B1D26] text-zinc-200 border-zinc-700 hover:border-zinc-500'
+                    : 'bg-white text-zinc-700 border-zinc-200 hover:border-zinc-400'
                 }`}
               >
                 <MessageSquare className="w-3.5 h-3.5" />
@@ -557,10 +578,12 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
               <button
                 type="button"
                 onClick={() => setActiveTab('voice')}
-                className={`flex-1 py-2 rounded-xl text-xs font-bold inline-flex items-center justify-center gap-1.5 transition-colors ${
+                className={`pr-no-recolor flex-1 py-2 rounded-xl text-xs font-extrabold inline-flex items-center justify-center gap-1.5 transition-colors border ${
                   activeTab === 'voice'
-                    ? 'bg-[#D4A017] text-[#0D0D10]'
-                    : 'bg-white text-zinc-600 border border-zinc-200'
+                    ? 'bg-[#D4A017] text-[#0D0D10] border-[#F4C430]'
+                    : isDark
+                    ? 'bg-[#1B1D26] text-zinc-200 border-zinc-700 hover:border-zinc-500'
+                    : 'bg-white text-zinc-700 border-zinc-200 hover:border-zinc-400'
                 }`}
               >
                 <Radio className="w-3.5 h-3.5" />
@@ -569,8 +592,14 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
             </div>
 
             {showThreads && firebaseUser && (
-              <div className="px-4 py-3 bg-amber-50 border-b border-amber-200 max-h-48 overflow-y-auto space-y-1.5">
-                <div className="flex items-center justify-between text-[11px] font-bold text-amber-900">
+              <div
+                className={`px-4 py-3 border-b max-h-48 overflow-y-auto space-y-1.5 ${
+                  isDark
+                    ? 'bg-[#1B180E] border-[#D4A017]/35 text-amber-200'
+                    : 'bg-amber-50 border-amber-200 text-amber-900'
+                }`}
+              >
+                <div className="flex items-center justify-between text-[11px] font-bold">
                   <span>{tr(lang, 'Saved Cloud Conversations', 'محفوظ کلاؤڈ گفتگو')} ({firebaseUser.email})</span>
                   <button
                     type="button"
@@ -578,7 +607,7 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                       setActiveThreadId(null);
                       setShowThreads(false);
                     }}
-                    className="underline"
+                    className="underline font-extrabold"
                   >
                     {tr(lang, 'New Chat', 'نئی چیٹ')}
                   </button>
@@ -588,11 +617,17 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                     key={t.id}
                     type="button"
                     onClick={() => handleLoadThread(t.id)}
-                    className="w-full text-left px-2.5 py-2 rounded-lg bg-white border border-amber-200 hover:border-[#D4A017] text-xs"
+                    className={`w-full text-left px-2.5 py-2 rounded-lg border text-xs ${
+                      isDark
+                        ? 'bg-[#131419] border-zinc-700 hover:border-[#D4A017] text-white'
+                        : 'bg-white border-amber-200 hover:border-[#D4A017] text-[#0D0D10]'
+                    }`}
                   >
-                    <p className="font-semibold text-[#0D0D10] truncate">{t.title}</p>
+                    <p className="font-bold truncate">{t.title}</p>
                     {t.lastMessagePreview && (
-                      <p className="text-[11px] text-zinc-500 truncate">{t.lastMessagePreview}</p>
+                      <p className={`text-[11px] truncate ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
+                        {t.lastMessagePreview}
+                      </p>
                     )}
                   </button>
                 ))}
@@ -602,18 +637,26 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
             {activeTab === 'chat' ? (
               <>
                 {/* Grounding & Depth Selectors */}
-                <div className="px-4 py-2.5 border-b border-zinc-100 space-y-2 shrink-0">
-                  <div className="grid grid-cols-3 gap-1.5 text-[11px] font-semibold">
+                <div
+                  className={`px-4 py-2.5 border-b space-y-2 shrink-0 ${
+                    isDark ? 'bg-[#111218] border-zinc-800' : 'bg-white border-zinc-100'
+                  }`}
+                >
+                  <div className="grid grid-cols-3 gap-1.5 text-[11px] font-bold">
                     <button
                       type="button"
                       onClick={() => {
                         setToolMode('chat');
                         setChatError(null);
                       }}
-                      className={`py-1.5 rounded-lg inline-flex items-center justify-center gap-1 border ${
+                      className={`pr-no-recolor py-1.5 rounded-lg inline-flex items-center justify-center gap-1 border transition-colors ${
                         toolMode === 'chat'
-                          ? 'bg-[#0D0D10] text-white border-[#0D0D10]'
-                          : 'bg-white text-zinc-600 border-zinc-200'
+                          ? isDark
+                            ? 'bg-[#D4A017] text-[#0D0D10] border-[#F4C430]'
+                            : 'bg-[#0D0D10] text-white border-[#0D0D10]'
+                          : isDark
+                          ? 'bg-[#1B1D26] text-zinc-200 border-zinc-700 hover:border-zinc-500'
+                          : 'bg-white text-zinc-700 border-zinc-200'
                       }`}
                     >
                       <Bot className="w-3 h-3" />
@@ -625,10 +668,12 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                         setToolMode('maps');
                         setChatError(null);
                       }}
-                      className={`py-1.5 rounded-lg inline-flex items-center justify-center gap-1 border ${
+                      className={`pr-no-recolor py-1.5 rounded-lg inline-flex items-center justify-center gap-1 border transition-colors ${
                         toolMode === 'maps'
-                          ? 'bg-emerald-700 text-white border-emerald-700'
-                          : 'bg-white text-zinc-600 border-zinc-200'
+                          ? 'bg-emerald-600 text-white border-emerald-500'
+                          : isDark
+                          ? 'bg-[#1B1D26] text-zinc-200 border-zinc-700 hover:border-emerald-500'
+                          : 'bg-white text-zinc-700 border-zinc-200'
                       }`}
                     >
                       <Compass className="w-3 h-3" />
@@ -640,10 +685,12 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                         setToolMode('search');
                         setChatError(null);
                       }}
-                      className={`py-1.5 rounded-lg inline-flex items-center justify-center gap-1 border ${
+                      className={`pr-no-recolor py-1.5 rounded-lg inline-flex items-center justify-center gap-1 border transition-colors ${
                         toolMode === 'search'
-                          ? 'bg-blue-700 text-white border-blue-700'
-                          : 'bg-white text-zinc-600 border-zinc-200'
+                          ? 'bg-blue-600 text-white border-blue-500'
+                          : isDark
+                          ? 'bg-[#1B1D26] text-zinc-200 border-zinc-700 hover:border-blue-500'
+                          : 'bg-white text-zinc-700 border-zinc-200'
                       }`}
                     >
                       <Globe className="w-3 h-3" />
@@ -653,15 +700,27 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
 
                   {toolMode === 'chat' && (
                     <div className="flex items-center justify-between text-[11px]">
-                      <span className="text-zinc-500 font-medium">{tr(lang, 'Reasoning Mode:', 'جوابی انداز:')}</span>
-                      <div className="inline-flex rounded-lg bg-zinc-100 p-0.5 gap-0.5">
+                      <span className={`font-semibold ${isDark ? 'text-zinc-300' : 'text-zinc-600'}`}>
+                        {tr(lang, 'Reasoning Mode:', 'جوابی انداز:')}
+                      </span>
+                      <div
+                        className={`inline-flex rounded-lg p-0.5 gap-0.5 border ${
+                          isDark ? 'bg-[#1A1C24] border-zinc-800' : 'bg-zinc-100 border-zinc-200'
+                        }`}
+                      >
                         {(['fast', 'general', 'deep'] as const).map((d) => (
                           <button
                             key={d}
                             type="button"
                             onClick={() => setDepth(d)}
-                            className={`px-2.5 py-1 rounded-md capitalize font-semibold ${
-                              depth === d ? 'bg-white text-[#0D0D10] shadow-xs' : 'text-zinc-500'
+                            className={`pr-no-recolor px-2.5 py-1 rounded-md capitalize font-bold transition-colors ${
+                              depth === d
+                                ? isDark
+                                  ? 'bg-[#D4A017] text-[#0D0D10]'
+                                  : 'bg-white text-[#0D0D10] shadow-xs'
+                                : isDark
+                                ? 'text-zinc-300 hover:text-white'
+                                : 'text-zinc-600 hover:text-[#0D0D10]'
                             }`}
                           >
                             {d === 'fast'
@@ -677,14 +736,23 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                 </div>
 
                 {/* Scrollable Messages */}
-                <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3 bg-[#F8F8FA]">
+                <div
+                  ref={scrollRef}
+                  className={`flex-1 overflow-y-auto p-4 space-y-3 ${
+                    isDark ? 'bg-[#09090C]' : 'bg-[#F8F8FA]'
+                  }`}
+                >
                   {messages.map((m) => (
                     <div key={m.id} className={`flex flex-col ${m.sender === 'user' ? 'items-end' : 'items-start'}`}>
                       <div
                         dir="auto"
                         className={`max-w-[88%] rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed whitespace-pre-wrap ${
                           m.sender === 'user'
-                            ? 'bg-[#0D0D10] text-white font-medium'
+                            ? isDark
+                              ? 'bg-[#D4A017] text-[#0D0D10] font-semibold shadow-sm'
+                              : 'bg-[#0D0D10] text-white font-medium'
+                            : isDark
+                            ? 'bg-[#161822] border border-[#D4A017]/30 text-zinc-100 shadow-xs'
                             : 'bg-white border border-zinc-200 text-[#0D0D10] shadow-xs'
                         }`}
                       >
@@ -694,7 +762,11 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                       {/* Google Maps Grounding Cards */}
                       {m.places && m.places.length > 0 && (
                         <div className="mt-2 w-[88%] space-y-1.5">
-                          <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">
+                          <p
+                            className={`text-[10px] font-bold uppercase tracking-wider ${
+                              isDark ? 'text-emerald-400' : 'text-emerald-800'
+                            }`}
+                          >
                             {tr(lang, 'Google Maps Verified Places', 'گوگل میپس تصدیق شدہ مقامات')}
                           </p>
                           {m.places.map((pl, idx) => (
@@ -703,17 +775,21 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                               href={pl.uri}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="block rounded-xl bg-white border border-emerald-200 hover:border-emerald-500 p-2.5 text-xs transition-colors"
+                              className={`block rounded-xl border p-2.5 text-xs transition-colors ${
+                                isDark
+                                  ? 'bg-[#121B17] border-emerald-700/60 hover:border-emerald-400 text-white'
+                                  : 'bg-white border-emerald-200 hover:border-emerald-500 text-[#0D0D10]'
+                              }`}
                             >
-                              <div className="flex items-center justify-between gap-2 font-bold text-[#0D0D10]">
+                              <div className="flex items-center justify-between gap-2 font-bold">
                                 <span className="inline-flex items-center gap-1.5">
-                                  <MapPin className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                                  <MapPin className={`w-3.5 h-3.5 shrink-0 ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`} />
                                   {pl.title}
                                 </span>
-                                <ExternalLink className="w-3 h-3 text-zinc-400 shrink-0" />
+                                <ExternalLink className={`w-3 h-3 shrink-0 ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`} />
                               </div>
                               {pl.reviewSnippets && pl.reviewSnippets.length > 0 && (
-                                <p className="mt-1 text-[11px] text-zinc-600 line-clamp-2">
+                                <p className={`mt-1 text-[11px] line-clamp-2 ${isDark ? 'text-zinc-300' : 'text-zinc-600'}`}>
                                   “{pl.reviewSnippets[0]}”
                                 </p>
                               )}
@@ -725,7 +801,11 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                       {/* Google Search Grounding Citations */}
                       {m.sources && m.sources.length > 0 && (
                         <div className="mt-2 w-[88%] space-y-1">
-                          <p className="text-[10px] font-bold uppercase tracking-wider text-blue-800">
+                          <p
+                            className={`text-[10px] font-bold uppercase tracking-wider ${
+                              isDark ? 'text-sky-400' : 'text-blue-800'
+                            }`}
+                          >
                             {tr(lang, 'Google Search Sources', 'گوگل سرچ ذرائع')}
                           </p>
                           <div className="flex flex-wrap gap-1.5">
@@ -735,7 +815,11 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                                 href={src.uri}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-blue-200 hover:border-blue-500 text-[11px] font-medium text-blue-900 max-w-full"
+                                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[11px] font-medium max-w-full transition-colors ${
+                                  isDark
+                                    ? 'bg-[#131A26] border-blue-700/60 hover:border-sky-400 text-sky-300'
+                                    : 'bg-white border-blue-200 hover:border-blue-500 text-blue-900'
+                                }`}
                               >
                                 <span className="truncate max-w-[190px]">{src.title}</span>
                                 <ExternalLink className="w-3 h-3 shrink-0" />
@@ -747,15 +831,19 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                     </div>
                   ))}
                   {sending && (
-                    <div className="flex items-center gap-2 text-xs text-zinc-600 font-medium px-2">
+                    <div className={`flex items-center gap-2 text-xs font-medium px-2 ${isDark ? 'text-zinc-300' : 'text-zinc-600'}`}>
                       <Loader2 className="w-3.5 h-3.5 animate-spin text-[#D4A017]" />
                       {tr(lang, 'Thinking...', 'جواب تیار کیا جا رہا ہے...')}
                     </div>
                   )}
                 </div>
 
-                {/* Quick Touch Question Prompts (Routed reliably via AI Concierge) */}
-                <div className="px-3.5 py-2.5 bg-white border-t border-zinc-200 flex gap-1.5 overflow-x-auto shrink-0">
+                {/* Quick Touch Question Prompts (Crisp in Both Light & Dark Mode) */}
+                <div
+                  className={`px-3.5 py-2.5 border-t flex gap-1.5 overflow-x-auto shrink-0 ${
+                    isDark ? 'bg-[#12141B] border-zinc-800' : 'bg-white border-zinc-200'
+                  }`}
+                >
                   <button
                     type="button"
                     disabled={sending}
@@ -771,7 +859,11 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                         'chat'
                       );
                     }}
-                    className="px-3 py-1.5 rounded-lg bg-[#0D0D10] text-[#F4C430] text-[11px] font-bold whitespace-nowrap border border-[#0D0D10] disabled:opacity-50"
+                    className={`pr-no-recolor px-3 py-1.5 rounded-lg text-[11px] font-bold whitespace-nowrap border disabled:opacity-50 transition-colors ${
+                      isDark
+                        ? 'bg-[#1D180C] text-[#F4C430] border-[#D4A017]/60 hover:bg-[#D4A017]/20'
+                        : 'bg-[#0D0D10] text-[#F4C430] border-[#0D0D10] hover:bg-zinc-900'
+                    }`}
                   >
                     {tr(lang, 'Compare Services', 'سروسز کا موازنہ')}
                   </button>
@@ -796,7 +888,11 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                         'chat'
                       );
                     }}
-                    className="px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-950 text-[11px] font-bold whitespace-nowrap border border-emerald-300 disabled:opacity-50"
+                    className={`pr-no-recolor px-3 py-1.5 rounded-lg text-[11px] font-bold whitespace-nowrap border disabled:opacity-50 transition-colors ${
+                      isDark
+                        ? 'bg-emerald-950/80 text-emerald-300 border-emerald-700/70 hover:bg-emerald-900/70'
+                        : 'bg-emerald-50 text-emerald-950 border-emerald-300 hover:bg-emerald-100'
+                    }`}
                   >
                     {persona === 'partner'
                       ? tr(lang, 'Driver Docs & Rides', 'ڈرائیور ڈاکومنٹس اور رائیڈ')
@@ -817,14 +913,24 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                         'chat'
                       );
                     }}
-                    className="px-3 py-1.5 rounded-lg bg-amber-50 text-amber-950 text-[11px] font-bold whitespace-nowrap border border-amber-300 disabled:opacity-50"
+                    className={`pr-no-recolor px-3 py-1.5 rounded-lg text-[11px] font-bold whitespace-nowrap border disabled:opacity-50 transition-colors ${
+                      isDark
+                        ? 'bg-amber-950/80 text-amber-200 border-amber-700/70 hover:bg-amber-900/70'
+                        : 'bg-amber-50 text-amber-950 border-amber-300 hover:bg-amber-100'
+                    }`}
                   >
                     {tr(lang, 'Vehicles & Support', 'گاڑیاں اور سپورٹ')}
                   </button>
                 </div>
 
                 {chatError && (
-                  <div className="px-4 py-2 bg-red-50 text-red-800 text-[11px] font-semibold border-t border-red-200 flex items-center justify-between gap-2">
+                  <div
+                    className={`px-4 py-2 text-[11px] font-semibold border-t flex items-center justify-between gap-2 ${
+                      isDark
+                        ? 'bg-red-950/80 text-red-200 border-red-800'
+                        : 'bg-red-50 text-red-800 border-red-200'
+                    }`}
+                  >
                     <span className="min-w-0">{chatError}</span>
                     {toolMode !== 'chat' && (
                       <button
@@ -833,7 +939,7 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                           setToolMode('chat');
                           setChatError(null);
                         }}
-                        className="px-2 py-1 rounded bg-[#0D0D10] text-[#F4C430] text-[10px] font-bold whitespace-nowrap shrink-0"
+                        className="pr-no-recolor px-2 py-1 rounded bg-[#0D0D10] text-[#F4C430] border border-[#D4A017]/60 text-[10px] font-bold whitespace-nowrap shrink-0"
                       >
                         {tr(lang, 'Use AI Chat', 'اے آئی چیٹ استعمال کریں')}
                       </button>
@@ -842,7 +948,12 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                 )}
 
                 {/* Chat Composer + Audio Transcribe Mic */}
-                <form onSubmit={(e) => handleSendChat(e)} className="p-3 bg-white border-t border-zinc-200 flex items-center gap-2 shrink-0">
+                <form
+                  onSubmit={(e) => handleSendChat(e)}
+                  className={`p-3 border-t flex items-center gap-2 shrink-0 ${
+                    isDark ? 'bg-[#12141B] border-zinc-800' : 'bg-white border-zinc-200'
+                  }`}
+                >
                   <VoiceTranscribeButton
                     lang={lang}
                     disabled={sending}
@@ -867,13 +978,17 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                         ? tr(lang, 'Ask live traffic/fuel via Google Search...', 'گوگل سرچ سے ٹریفک یا پیٹرول ریٹ پوچھیں...')
                         : tr(lang, 'Ask PRO RIDER AI anything...', 'پرو رائیڈر اے آئی سے کچھ بھی پوچھیں...')
                     }
-                    className="flex-1 px-3 py-2 rounded-xl border border-zinc-300 text-xs font-medium text-[#0D0D10] focus:outline-none focus:border-[#D4A017]"
+                    className={`flex-1 px-3 py-2 rounded-xl border text-xs font-medium focus:outline-none focus:border-[#D4A017] ${
+                      isDark
+                        ? 'bg-[#1B1D26] border-zinc-700 text-white placeholder:text-zinc-400'
+                        : 'bg-white border-zinc-300 text-[#0D0D10] placeholder:text-zinc-500'
+                    }`}
                   />
                   <button
                     type="submit"
                     disabled={sending || !input.trim()}
                     aria-label={tr(lang, 'Send message', 'پیغام بھیجیں')}
-                    className="p-2.5 rounded-xl bg-[#D4A017] text-[#0D0D10] hover:bg-[#EAB308] disabled:opacity-40"
+                    className="pr-no-recolor p-2.5 rounded-xl bg-[#D4A017] text-[#0D0D10] hover:bg-[#EAB308] disabled:opacity-40 shrink-0"
                   >
                     <Send className="w-4 h-4" />
                   </button>
@@ -881,29 +996,41 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
               </>
             ) : (
               /* LIVE VOICE CONVERSATION TAB (Gemini Live API) */
-              <div className="flex-1 flex flex-col justify-between p-5 bg-[#0D0D10] text-white">
+              <div
+                className={`flex-1 flex flex-col justify-between p-5 transition-colors ${
+                  isDark ? 'bg-[#09090C] text-white' : 'bg-[#F8F8FA] text-[#0D0D10]'
+                }`}
+              >
                 <div className="space-y-4">
-                  <div className="rounded-2xl bg-[#16171C] border border-zinc-800 p-6 text-center space-y-3">
+                  <div
+                    className={`rounded-2xl border p-6 text-center space-y-3 ${
+                      isDark ? 'bg-[#16171C] border-zinc-800' : 'bg-white border-zinc-200 shadow-xs'
+                    }`}
+                  >
                     <div
                       className={`w-16 h-16 rounded-2xl mx-auto flex items-center justify-center transition-all ${
                         voiceState === 'live'
                           ? 'bg-[#D4A017] text-[#0D0D10] shadow-lg shadow-[#D4A017]/30 animate-pulse'
                           : voiceState === 'connecting'
-                          ? 'bg-amber-900/60 text-[#D4A017]'
-                          : 'bg-zinc-900 text-zinc-400 border border-zinc-700'
+                          ? isDark
+                            ? 'bg-amber-900/60 text-[#D4A017]'
+                            : 'bg-amber-100 text-[#9A6E08]'
+                          : isDark
+                          ? 'bg-zinc-900 text-zinc-300 border border-zinc-700'
+                          : 'bg-zinc-100 text-zinc-700 border border-zinc-200'
                       }`}
                     >
                       <Volume2 className="w-8 h-8" />
                     </div>
                     <div>
-                      <h3 className="font-display text-lg font-bold">
+                      <h3 className={`font-display text-lg font-bold ${isDark ? 'text-white' : 'text-[#0D0D10]'}`}>
                         {voiceState === 'live'
                           ? tr(lang, 'Live Voice Connected', 'لائیو وائس کال منسلک ہے')
                           : voiceState === 'connecting'
                           ? tr(lang, 'Connecting Live Voice...', 'لائیو وائس کنیکٹ ہو رہی ہے...')
                           : tr(lang, 'Hands-Free Travel Voice Assistant', 'ہینڈز فری وائس ٹریول اسسٹنٹ')}
                       </h3>
-                      <p className="text-xs text-zinc-400 mt-1">
+                      <p className={`text-xs mt-1 leading-relaxed ${isDark ? 'text-zinc-300' : 'text-zinc-600'}`}>
                         {tr(
                           lang,
                           'Speak naturally in English or Urdu. Interrupt anytime — audio streams in real time.',
@@ -914,10 +1041,12 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                     <button
                       type="button"
                       onClick={startLiveVoice}
-                      className={`w-full py-3 rounded-xl text-xs font-bold inline-flex items-center justify-center gap-2 transition-colors ${
+                      className={`pr-no-recolor w-full py-3 rounded-xl text-xs font-extrabold inline-flex items-center justify-center gap-2 transition-colors ${
                         voiceState === 'live' || voiceState === 'connecting'
                           ? 'bg-red-600 text-white hover:bg-red-700'
-                          : 'bg-[#D4A017] text-[#0D0D10] hover:bg-[#EAB308]'
+                          : isDark
+                          ? 'bg-[#D4A017] text-[#0D0D10] hover:bg-[#EAB308]'
+                          : 'bg-[#0D0D10] text-white hover:bg-zinc-800'
                       }`}
                     >
                       {voiceState === 'live' || voiceState === 'connecting' ? (
@@ -933,17 +1062,31 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                   </div>
 
                   {voiceError && (
-                    <div className="rounded-xl bg-red-950/70 border border-red-800 px-3.5 py-2 text-xs text-red-200">
+                    <div
+                      className={`rounded-xl border px-3.5 py-2 text-xs font-semibold ${
+                        isDark
+                          ? 'bg-red-950/70 border-red-800 text-red-200'
+                          : 'bg-red-50 border-red-200 text-red-800'
+                      }`}
+                    >
                       {voiceError}
                     </div>
                   )}
 
-                  <div className="rounded-2xl bg-[#16171C] border border-zinc-800 p-4 h-64 overflow-y-auto space-y-2.5">
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">
+                  <div
+                    className={`rounded-2xl border p-4 h-64 overflow-y-auto space-y-2.5 ${
+                      isDark ? 'bg-[#16171C] border-zinc-800' : 'bg-white border-zinc-200 shadow-xs'
+                    }`}
+                  >
+                    <p
+                      className={`text-[10px] font-bold uppercase tracking-widest ${
+                        isDark ? 'text-zinc-400' : 'text-zinc-500'
+                      }`}
+                    >
                       {tr(lang, 'Live Speech Captions', 'لائیو گفتگو کی تحریر')}
                     </p>
                     {voiceCaptions.length === 0 ? (
-                      <p className="text-xs text-zinc-500 italic">
+                      <p className={`text-xs italic ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
                         {tr(
                           lang,
                           'Tap Start Live Voice Conversation and speak into your microphone.',
@@ -953,10 +1096,18 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                     ) : (
                       voiceCaptions.map((cap) => (
                         <div key={cap.id} className="text-xs leading-relaxed">
-                          <span className={cap.speaker === 'You' ? 'text-zinc-400 font-bold' : 'text-[#D4A017] font-bold'}>
+                          <span
+                            className={
+                              cap.speaker === 'You'
+                                ? isDark
+                                  ? 'text-zinc-400 font-bold'
+                                  : 'text-zinc-600 font-bold'
+                                : 'text-[#D4A017] font-bold'
+                            }
+                          >
                             {cap.speaker === 'You' ? tr(lang, 'You', 'آپ') : tr(lang, 'PRO RIDER AI', 'پرو رائیڈر اے آئی')}:{' '}
                           </span>
-                          <span className="text-zinc-200">{cap.text}</span>
+                          <span className={isDark ? 'text-zinc-100' : 'text-[#0D0D10]'}>{cap.text}</span>
                         </div>
                       ))
                     )}
@@ -977,7 +1128,11 @@ export const ProRiderAiCopilot: React.FC<ProRiderAiCopilotProps> = ({
                         })
                       );
                     }}
-                    className="w-full py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-xs font-semibold text-zinc-300 hover:text-white"
+                    className={`pr-no-recolor w-full py-2.5 rounded-xl border text-xs font-semibold transition-colors ${
+                      isDark
+                        ? 'bg-zinc-900 border-zinc-700 text-zinc-200 hover:text-white'
+                        : 'bg-white border-zinc-300 text-[#0D0D10] hover:bg-zinc-100'
+                    }`}
                   >
                     {tr(lang, 'Ask Quick Spoken Tip', 'فوری صوتی مشورہ سنیں')}
                   </button>

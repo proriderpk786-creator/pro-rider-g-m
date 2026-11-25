@@ -6,6 +6,8 @@ import {
   Clock,
   CreditCard,
   Download,
+  Eye,
+  FileText,
   HelpCircle,
   Lock,
   PhoneCall,
@@ -21,6 +23,7 @@ import {
   Wallet as WalletIcon,
   X,
 } from 'lucide-react';
+import { InvoiceViewerModal } from '../../components/InvoiceViewerModal';
 import { ShareTripStatusModal } from '../../components/ShareTripStatusModal';
 import { tr, trBookingStatus, trPaymentStatus, trService } from '../../i18n/translations';
 import { apiRequest } from '../../utils/api';
@@ -100,6 +103,7 @@ export const PassengerBookingsView: React.FC<{
   const [stars, setStars] = useState(5);
   const [comment, setComment] = useState('');
   const [shareBooking, setShareBooking] = useState<Booking | null>(null);
+  const [invoiceBooking, setInvoiceBooking] = useState<Booking | null>(null);
   const [driverPreview, setDriverPreview] = useState<{
     loading: boolean;
     error?: string;
@@ -459,6 +463,14 @@ export const PassengerBookingsView: React.FC<{
                   </button>
                   <button
                     type="button"
+                    onClick={() => setInvoiceBooking(b)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-200 bg-white text-[#0D0D10] text-xs font-bold hover:bg-zinc-50"
+                  >
+                    <FileText className="w-3.5 h-3.5 text-[#D4A017]" />
+                    {tr(lang, 'View Invoice', 'انوائس دیکھیں')}
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => downloadBookingPdf(b, 'passenger', passengerName)}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0D0D10] text-white text-xs font-semibold hover:bg-zinc-800"
                   >
@@ -562,6 +574,14 @@ export const PassengerBookingsView: React.FC<{
         booking={shareBooking}
         passengerName={passengerName}
         lang={lang}
+      />
+
+      <InvoiceViewerModal
+        booking={invoiceBooking}
+        viewerRole="passenger"
+        passengerName={passengerName}
+        lang={lang}
+        onClose={() => setInvoiceBooking(null)}
       />
 
       {driverPreview && (

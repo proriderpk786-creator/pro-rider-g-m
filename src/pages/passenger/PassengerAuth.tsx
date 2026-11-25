@@ -422,7 +422,7 @@ export const PassengerAuth: React.FC<PassengerAuthProps> = ({
             <div className="absolute inset-0 flex items-center">
               <div className="w-full border-t border-zinc-200" />
             </div>
-            <span className="relative bg-white px-3 text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
+            <span className="relative bg-[var(--pr-surface)] px-3 text-[11px] font-bold text-zinc-500 uppercase tracking-wider">
               {tr(lang, 'Or continue with Email', 'یا ای میل کے ساتھ')}
             </span>
           </div>

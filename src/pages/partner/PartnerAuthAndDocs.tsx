@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  AlertTriangle,
   ArrowLeft,
   Camera,
   CarFront,
@@ -15,6 +16,7 @@ import {
   Mail,
   Phone,
   RefreshCw,
+  Save,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
@@ -445,7 +447,7 @@ export const PartnerAuth: React.FC<{
                 <div className="absolute inset-0 flex items-center">
                   <div className="w-full border-t border-zinc-200" />
                 </div>
-                <span className="relative bg-white px-3 text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
+                <span className="relative bg-[var(--pr-surface)] px-3 text-[11px] font-bold text-zinc-500 uppercase tracking-wider">
                   {tr(lang, 'Or continue with Email', 'یا ای میل کے ساتھ')}
                 </span>
               </div>
@@ -814,65 +816,404 @@ export const PartnerAuth: React.FC<{
   );
 };
 
+const SHARED_PARTNER_SUBMISSIONS_KEY = 'pr_shared_partner_submissions';
+
+function cleanPhoneDisplay(raw?: string | null): string {
+  const val = String(raw || '').trim();
+  if (!val) return '';
+  if (/^(G-|E-|R-)/i.test(val)) return '';
+  return val;
+}
+
+function getDraftStorageKey(partnerId: string) {
+  return `pr_partner_reg_draft_${partnerId || 'guest'}`;
+}
+
+interface PartnerRegDraft {
+  step?: number;
+  fullName?: string;
+  phone?: string;
+  referencePhone?: string;
+  cnicNumber?: string;
+  cnicExpiry?: string;
+  licenceNumber?: string;
+  licenceExpiry?: string;
+  vehicleCategoryId?: string;
+  vehicleName?: string;
+  vehicleNumber?: string;
+  seatingCapacity?: number;
+  fuelType?: string;
+  operatingCity?: string;
+  services?: ServiceType[];
+  updatedAt?: string;
+}
+
+function readPartnerDraft(partnerId: string): PartnerRegDraft | null {
+  try {
+    const raw = localStorage.getItem(getDraftStorageKey(partnerId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? (parsed as PartnerRegDraft) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writePartnerDraft(partnerId: string, draft: PartnerRegDraft) {
+  try {
+    localStorage.setItem(getDraftStorageKey(partnerId), JSON.stringify(draft));
+  } catch {
+    // ignore quota errors
+  }
+}
+
+function upsertSharedPartnerSubmission(entry: {
+  user_id: string;
+  full_name: string;
+  email: string;
+  phone: string;
+  reference_phone: string;
+  cnic_number: string;
+  cnic_expiry: string;
+  licence_number: string;
+  licence_expiry: string;
+  vehicle_category_id: string;
+  vehicle_name: string;
+  vehicle_number: string;
+  seating_capacity: number;
+  fuel_type: string;
+  operating_city: string;
+  service_eligibility: ServiceType[];
+  verification_status: string;
+  admin_notes?: string;
+  documents: PartnerDocument[];
+}) {
+  try {
+    const raw = localStorage.getItem(SHARED_PARTNER_SUBMISSIONS_KEY);
+    const list: any[] = raw ? JSON.parse(raw) : [];
+    const safeList = Array.isArray(list) ? list : [];
+    const idx = safeList.findIndex((p) => p?.user_id === entry.user_id || p?.id === entry.user_id);
+    const record = {
+      id: entry.user_id,
+      ...entry,
+      wallet_balance_pkr: safeList[idx]?.wallet_balance_pkr ?? 0,
+      updated_at: new Date().toISOString(),
+    };
+    if (idx >= 0) {
+      safeList[idx] = { ...safeList[idx], ...record };
+    } else {
+      safeList.unshift(record);
+    }
+    localStorage.setItem(SHARED_PARTNER_SUBMISSIONS_KEY, JSON.stringify(safeList.slice(0, 30)));
+  } catch {
+    // ignore quota errors
+  }
+}
+
 // Screens 18, 19, 26, 27: Partner Registration, Vehicle Management & Document Verification
 export const PartnerVerificationAndVehicleView: React.FC<{
   mode: 'documents' | 'vehicle';
   lang?: Language;
+  user?: User | null;
   profile: PartnerProfile;
   documents: PartnerDocument[];
   config: PublicConfig | null;
   onRefresh: () => Promise<void>;
+  onUserUpdated?: (user: User) => void;
+  onProfileUpdated?: (profile: PartnerProfile) => void;
   onLocalDocumentSaved?: (doc: PartnerDocument) => void;
   onToggleDocVisibility?: (docType: PartnerDocument['doc_type'], isPublic: boolean) => Promise<void> | void;
 }> = ({
   mode,
   lang = 'en',
+  user,
   profile,
   documents,
   config,
   onRefresh,
+  onUserUpdated,
+  onProfileUpdated,
   onLocalDocumentSaved,
 }) => {
+  const { isDark } = useTheme();
+  const { firebaseUser, syncPartnerApplication, syncPartnerDocument } = useFirebase();
+  const partnerId = user?.id || profile.user_id || 'guest';
+
   const fleetCategories = (
     config?.fleet?.length ? config.fleet : DEFAULT_PUBLIC_CONFIG.fleet
   ).filter((f) => f.is_active === 1);
 
-  const [step, setStep] = useState<number>(1);
+  const initialDraft = readPartnerDraft(partnerId);
   const totalSteps = 6;
 
-  // Form fields
-  const [fullName, setFullName] = useState('');
-  const [phone, setPhone] = useState('');
-  const [referencePhone, setReferencePhone] = useState('');
-  const [cnicNumber, setCnicNumber] = useState(profile.cnic_number || '');
-  const [cnicExpiry, setCnicExpiry] = useState(profile.cnic_expiry || '');
-  const [licenceNumber, setLicenceNumber] = useState(profile.licence_number || '');
-  const [licenceExpiry, setLicenceExpiry] = useState(profile.licence_expiry || '');
-  const [vehicleCategoryId, setVehicleCategoryId] = useState(
-    profile.vehicle_category_id || fleetCategories[0]?.id || 'fleet-sedan'
+  const [step, setStep] = useState<number>(() => {
+    if (mode === 'vehicle') return 4;
+    if (initialDraft?.step && initialDraft.step >= 1 && initialDraft.step <= 6) {
+      return initialDraft.step;
+    }
+    return 1;
+  });
+
+  // Persistent per-ID form fields (never cleared on tab switch or refresh)
+  const [fullName, setFullName] = useState(
+    () => initialDraft?.fullName || user?.full_name || ''
   );
-  const [vehicleName, setVehicleName] = useState(profile.vehicle_name || '');
-  const [vehicleNumber, setVehicleNumber] = useState(profile.vehicle_number || '');
-  const [seatingCapacity, setSeatingCapacity] = useState(profile.seating_capacity || 4);
-  const [fuelType, setFuelType] = useState(profile.fuel_type || 'Petrol');
-  const [operatingCity, setOperatingCity] = useState(profile.operating_city || 'Islamabad');
-  const [services, setServices] = useState<ServiceType[]>(
-    profile.service_eligibility?.length ? profile.service_eligibility : ['pick_and_drop']
+  const [phone, setPhone] = useState(
+    () => initialDraft?.phone || cleanPhoneDisplay(user?.phone)
+  );
+  const [referencePhone, setReferencePhone] = useState(
+    () => initialDraft?.referencePhone || profile.reference_phone || ''
+  );
+  const [cnicNumber, setCnicNumber] = useState(
+    () => initialDraft?.cnicNumber || profile.cnic_number || ''
+  );
+  const [cnicExpiry, setCnicExpiry] = useState(
+    () => initialDraft?.cnicExpiry || profile.cnic_expiry || ''
+  );
+  const [licenceNumber, setLicenceNumber] = useState(
+    () => initialDraft?.licenceNumber || profile.licence_number || ''
+  );
+  const [licenceExpiry, setLicenceExpiry] = useState(
+    () => initialDraft?.licenceExpiry || profile.licence_expiry || ''
+  );
+  const [vehicleCategoryId, setVehicleCategoryId] = useState(
+    () =>
+      initialDraft?.vehicleCategoryId ||
+      profile.vehicle_category_id ||
+      fleetCategories[0]?.id ||
+      'fleet-sedan'
+  );
+  const [vehicleName, setVehicleName] = useState(
+    () => initialDraft?.vehicleName || profile.vehicle_name || ''
+  );
+  const [vehicleNumber, setVehicleNumber] = useState(
+    () => initialDraft?.vehicleNumber || profile.vehicle_number || ''
+  );
+  const [seatingCapacity, setSeatingCapacity] = useState(
+    () => initialDraft?.seatingCapacity || profile.seating_capacity || 4
+  );
+  const [fuelType, setFuelType] = useState(
+    () => initialDraft?.fuelType || profile.fuel_type || 'Petrol'
+  );
+  const [operatingCity, setOperatingCity] = useState(
+    () => initialDraft?.operatingCity || profile.operating_city || user?.city || 'Islamabad'
+  );
+  const [services, setServices] = useState<ServiceType[]>(() =>
+    initialDraft?.services?.length
+      ? initialDraft.services
+      : profile.service_eligibility?.length
+      ? profile.service_eligibility
+      : ['pick_and_drop']
   );
 
   const [saving, setSaving] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
   const [uploadingType, setUploadingType] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
+  const [banner, setBanner] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+
+  // If partner switches to Vehicle mode from sidebar, jump straight to vehicle step if earlier
+  useEffect(() => {
+    if (mode === 'vehicle' && step < 4) {
+      setStep(4);
+    }
+  }, [mode]);
+
+  // Reload draft cleanly if the logged-in Partner ID changes
+  const [hydratedId, setHydratedId] = useState(partnerId);
+  useEffect(() => {
+    if (partnerId === hydratedId) return;
+    const d = readPartnerDraft(partnerId);
+    setFullName(d?.fullName || user?.full_name || '');
+    setPhone(d?.phone || cleanPhoneDisplay(user?.phone));
+    setReferencePhone(d?.referencePhone || profile.reference_phone || '');
+    setCnicNumber(d?.cnicNumber || profile.cnic_number || '');
+    setCnicExpiry(d?.cnicExpiry || profile.cnic_expiry || '');
+    setLicenceNumber(d?.licenceNumber || profile.licence_number || '');
+    setLicenceExpiry(d?.licenceExpiry || profile.licence_expiry || '');
+    setVehicleCategoryId(d?.vehicleCategoryId || profile.vehicle_category_id || fleetCategories[0]?.id || 'fleet-sedan');
+    setVehicleName(d?.vehicleName || profile.vehicle_name || '');
+    setVehicleNumber(d?.vehicleNumber || profile.vehicle_number || '');
+    setSeatingCapacity(d?.seatingCapacity || profile.seating_capacity || 4);
+    setFuelType(d?.fuelType || profile.fuel_type || 'Petrol');
+    setOperatingCity(d?.operatingCity || profile.operating_city || user?.city || 'Islamabad');
+    setServices(
+      d?.services?.length
+        ? d.services
+        : profile.service_eligibility?.length
+        ? profile.service_eligibility
+        : ['pick_and_drop']
+    );
+    setHydratedId(partnerId);
+  }, [partnerId, hydratedId, user, profile, fleetCategories]);
+
+  // Fill empty fields from server/cloud profile whenever profile/user updates (without overwriting user edits)
+  useEffect(() => {
+    setFullName((prev) => prev || user?.full_name || '');
+    setPhone((prev) => prev || cleanPhoneDisplay(user?.phone));
+    setReferencePhone((prev) => prev || profile.reference_phone || '');
+    setCnicNumber((prev) => prev || profile.cnic_number || '');
+    setCnicExpiry((prev) => prev || profile.cnic_expiry || '');
+    setLicenceNumber((prev) => prev || profile.licence_number || '');
+    setLicenceExpiry((prev) => prev || profile.licence_expiry || '');
+    setVehicleName((prev) => prev || profile.vehicle_name || '');
+    setVehicleNumber((prev) => prev || profile.vehicle_number || '');
+    if (profile.vehicle_category_id) {
+      setVehicleCategoryId((prev) => prev || profile.vehicle_category_id);
+    }
+    if (profile.operating_city) {
+      setOperatingCity((prev) => prev || profile.operating_city);
+    }
+  }, [user?.full_name, user?.phone, profile]);
+
+  // Continuously persist draft per Partner ID so entered data is NEVER lost
+  useEffect(() => {
+    writePartnerDraft(partnerId, {
+      step,
+      fullName,
+      phone,
+      referencePhone,
+      cnicNumber,
+      cnicExpiry,
+      licenceNumber,
+      licenceExpiry,
+      vehicleCategoryId,
+      vehicleName,
+      vehicleNumber,
+      seatingCapacity,
+      fuelType,
+      operatingCity,
+      services,
+      updatedAt: new Date().toISOString(),
+    });
+  }, [
+    partnerId,
+    step,
+    fullName,
+    phone,
+    referencePhone,
+    cnicNumber,
+    cnicExpiry,
+    licenceNumber,
+    licenceExpiry,
+    vehicleCategoryId,
+    vehicleName,
+    vehicleNumber,
+    seatingCapacity,
+    fuelType,
+    operatingCity,
+    services,
+  ]);
 
   const getDoc = (type: PartnerDocument['doc_type']) => documents.find((d) => d.doc_type === type);
 
+  const phoneDigits = phone.replace(/\D/g, '');
+  const refDigits = referencePhone.replace(/\D/g, '');
+
+  const readinessItems = [
+    {
+      step: 1,
+      done: Boolean(getDoc('profile_photo')?.file_data_url),
+      label: tr(lang, 'Live Selfie Photo', 'لائیو سیلفی تصویر'),
+    },
+    {
+      step: 2,
+      done: Boolean(getDoc('cnic_front')?.file_data_url && cnicNumber.trim().length >= 5),
+      label: tr(lang, 'CNIC Copy & Number', 'شناختی کارڈ کاپی اور نمبر'),
+    },
+    {
+      step: 3,
+      done: Boolean(getDoc('driving_licence')?.file_data_url || licenceNumber.trim().length >= 3),
+      label: tr(lang, 'Driving Licence', 'ڈرائیونگ لائسنس'),
+    },
+    {
+      step: 4,
+      done: Boolean(getDoc('vehicle_registration')?.file_data_url || (vehicleNumber.trim() && vehicleName.trim())),
+      label: tr(lang, 'Vehicle Book & Plate', 'گاڑی کی بک اور نمبر پلیٹ'),
+    },
+    {
+      step: 5,
+      done: Boolean(getDoc('vehicle_photo')?.file_data_url),
+      label: tr(lang, 'Vehicle Exterior Photo', 'گاڑی کی بیرونی تصویر'),
+    },
+    {
+      step: 6,
+      done: Boolean(fullName.trim().length >= 2 && phoneDigits.length >= 10 && refDigits.length >= 10 && operatingCity),
+      label: tr(lang, 'Contact & Reference Info', 'رابطہ اور حوالہ نمبر'),
+    },
+  ];
+
+  const completedChecksCount = readinessItems.filter((item) => item.done).length;
+  const realCompletionPct = Math.round((completedChecksCount / readinessItems.length) * 100);
+
+  const persistSnapshotLocally = (nextStatus: PartnerProfile['verification_status'], nextDocs = documents) => {
+    const cleanName = fullName.trim() || user?.full_name || 'Pro Partner';
+    const cleanPhone = phone.trim() || cleanPhoneDisplay(user?.phone);
+    const updatedUser: User = {
+      ...(user || {
+        id: partnerId,
+        role: 'partner',
+        full_name: cleanName,
+        phone: cleanPhone,
+        whatsapp: cleanPhone,
+        email: firebaseUser?.email || '',
+        city: operatingCity,
+        phone_verified: 1,
+        created_at: new Date().toISOString(),
+      }),
+      full_name: cleanName,
+      phone: cleanPhone || user?.phone || '',
+      city: operatingCity,
+    };
+    const updatedProfile: PartnerProfile = {
+      ...profile,
+      user_id: partnerId,
+      reference_phone: referencePhone.trim(),
+      cnic_number: cnicNumber.trim(),
+      cnic_expiry: cnicExpiry,
+      licence_number: licenceNumber.trim(),
+      licence_expiry: licenceExpiry,
+      vehicle_category_id: vehicleCategoryId,
+      vehicle_name: vehicleName.trim(),
+      vehicle_number: vehicleNumber.trim().toUpperCase(),
+      seating_capacity: Number(seatingCapacity) || 4,
+      fuel_type: fuelType,
+      operating_city: operatingCity,
+      service_eligibility: services.length ? services : ['pick_and_drop'],
+      verification_status: nextStatus,
+    };
+    onUserUpdated?.(updatedUser);
+    onProfileUpdated?.(updatedProfile);
+    upsertSharedPartnerSubmission({
+      user_id: partnerId,
+      full_name: cleanName,
+      email: updatedUser.email || firebaseUser?.email || '',
+      phone: cleanPhone,
+      reference_phone: referencePhone.trim(),
+      cnic_number: cnicNumber.trim(),
+      cnic_expiry: cnicExpiry,
+      licence_number: licenceNumber.trim(),
+      licence_expiry: licenceExpiry,
+      vehicle_category_id: vehicleCategoryId,
+      vehicle_name: vehicleName.trim(),
+      vehicle_number: vehicleNumber.trim().toUpperCase(),
+      seating_capacity: Number(seatingCapacity) || 4,
+      fuel_type: fuelType,
+      operating_city: operatingCity,
+      service_eligibility: services.length ? services : ['pick_and_drop'],
+      verification_status: nextStatus,
+      admin_notes: profile.admin_notes || '',
+      documents: nextDocs,
+    });
+    return { updatedUser, updatedProfile };
+  };
+
   const handleDocumentUpload = async (docType: PartnerDocument['doc_type'], file: File) => {
     setUploadingType(docType);
-    setMsg(null);
+    setBanner(null);
     try {
       const { dataUrl, fileName } = await compressAndReadUploadFile(file, 1280, 0.82);
 
-      // Run AI OCR scan for documents
+      // Run AI OCR scan for supported documents (best-effort, non-blocking)
       let ocr: any = null;
       if (['cnic_front', 'cnic_back', 'driving_licence', 'vehicle_registration'].includes(docType)) {
         try {
@@ -893,16 +1234,22 @@ export const PartnerVerificationAndVehicleView: React.FC<{
             if (ocr.licenceExpiry && docType === 'driving_licence') {
               setLicenceExpiry(ocr.licenceExpiry);
             }
+            if (ocr.vehicleNumber && docType === 'vehicle_registration') {
+              setVehicleNumber(ocr.vehicleNumber);
+            }
+            if (ocr.vehicleName && docType === 'vehicle_registration' && !vehicleName) {
+              setVehicleName(ocr.vehicleName);
+            }
           }
-        } catch (err) {
-          console.warn('OCR scan warning:', err);
+        } catch {
+          // OCR is optional when backend is unavailable
         }
       }
 
       const existing = getDoc(docType);
       const localDoc: PartnerDocument = {
         id: existing?.id || `DOC-${Date.now()}`,
-        partner_id: profile.user_id,
+        partner_id: partnerId,
         doc_type: docType,
         file_name: fileName,
         file_data_url: dataUrl,
@@ -913,6 +1260,13 @@ export const PartnerVerificationAndVehicleView: React.FC<{
         uploaded_at: new Date().toISOString(),
       };
 
+      const nextDocs = [localDoc, ...documents.filter((d) => d.doc_type !== docType)];
+      onLocalDocumentSaved?.(localDoc);
+      const nextStatus: PartnerProfile['verification_status'] =
+        profile.verification_status === 'approved' ? 'approved' : 'under_review';
+      persistSnapshotLocally(nextStatus, nextDocs);
+
+      let syncedToServer = false;
       try {
         const apiRes = await apiRequest<{ document?: PartnerDocument }>('/api/partner/documents', {
           method: 'POST',
@@ -925,156 +1279,457 @@ export const PartnerVerificationAndVehicleView: React.FC<{
             isPublic: localDoc.is_public === 1,
           },
         });
-        onLocalDocumentSaved?.(apiRes.document || localDoc);
-        await onRefresh();
+        if (apiRes.document) {
+          onLocalDocumentSaved?.(apiRes.document);
+        }
+        syncedToServer = true;
       } catch (err: any) {
-        if (isBackendOfflineError(err)) {
-          onLocalDocumentSaved?.(localDoc);
-        } else {
+        if (!isBackendOfflineError(err)) {
           throw err;
         }
       }
 
+      // Always mirror document to Firestore when signed in with verified Firebase account
+      if (firebaseUser?.emailVerified) {
+        try {
+          await syncPartnerDocument({
+            docType,
+            fileName,
+            fileDataUrl: dataUrl,
+            expiryDate: existing?.expiry_date || '',
+            isPublic: localDoc.is_public === 1,
+            fallbackName: fullName.trim() || user?.full_name || 'Pro Partner',
+            fallbackCity: operatingCity,
+            fallbackPhone: phone.trim() || cleanPhoneDisplay(user?.phone),
+          });
+          syncedToServer = true;
+        } catch {
+          // Firestore non-fatal if local bridge succeeded
+        }
+      }
+
+      if (syncedToServer) {
+        void onRefresh();
+      }
+
       if (ocr?.imageQuality && ocr.imageQuality !== 'sharp') {
-        setMsg(
-          tr(
+        setBanner({
+          type: 'info',
+          text: tr(
             lang,
-            `⚠️ Image Quality Notice: ${ocr.qualityMessage || 'Please upload a sharper, clearer photo.'}`,
-            `⚠️ تصویر دھندلی ہے۔ براہ کرم زیادہ واضح تصویر اپ لوڈ کریں۔`
-          )
-        );
+            `Document saved, but photo appears blurry: ${ocr.qualityMessage || 'Please upload a sharper copy if needed.'}`,
+            `دستاویز محفوظ ہو گئی ہے، مگر تصویر ہلکی دھندلی ہے۔ بہتر منظوری کے لیے صاف تصویر اپ لوڈ کریں۔`
+          ),
+        });
       } else {
-        setMsg(
-          tr(
+        setBanner({
+          type: 'success',
+          text: tr(
             lang,
-            `✨ Document uploaded & scanned successfully! Review details below.`,
-            `✨ دستاویز کامیابی سے اپ لوڈ اور اسکین ہو گئی ہے۔`
-          )
-        );
+            'Document uploaded and synced directly for Super Admin review.',
+            'دستاویز کامیابی سے محفوظ ہو کر سپر ایڈمن پینل میں بھیج دی گئی ہے۔'
+          ),
+        });
       }
     } catch (err: any) {
-      setMsg(err?.message || tr(lang, 'Upload failed. Please try again.', 'اپ لوڈ ناکام ہو گیا۔'));
+      setBanner({
+        type: 'error',
+        text: err?.message || tr(lang, 'Upload failed. Please try again.', 'اپ لوڈ ناکام ہو گیا۔ براہِ کرم دوبارہ کوشش کریں۔'),
+      });
     } finally {
       setUploadingType(null);
     }
   };
 
+  const handleSaveDraft = async () => {
+    setSavingDraft(true);
+    setBanner(null);
+    try {
+      const nextStatus: PartnerProfile['verification_status'] =
+        profile.verification_status === 'approved'
+          ? 'approved'
+          : documents.length >= 1
+          ? 'documents_pending'
+          : 'incomplete';
+      persistSnapshotLocally(nextStatus, documents);
+
+      try {
+        await apiRequest('/api/partner/registration', {
+          method: 'PUT',
+          role: 'partner',
+          body: {
+            fullName: fullName.trim(),
+            phone: phone.trim(),
+            referencePhone: referencePhone.trim(),
+            cnicNumber: cnicNumber.trim(),
+            cnicExpiry,
+            licenceNumber: licenceNumber.trim(),
+            licenceExpiry,
+            vehicleCategoryId,
+            vehicleName: vehicleName.trim(),
+            vehicleNumber: vehicleNumber.trim().toUpperCase(),
+            seatingCapacity,
+            fuelType,
+            operatingCity,
+            serviceEligibility: services,
+            isDraft: true,
+          },
+        });
+      } catch (err: any) {
+        if (!isBackendOfflineError(err)) throw err;
+      }
+
+      if (firebaseUser?.emailVerified) {
+        try {
+          await syncPartnerApplication({
+            fullName: fullName.trim() || user?.full_name || 'Pro Partner',
+            email: user?.email || firebaseUser.email || '',
+            phone: phone.trim(),
+            referencePhone: referencePhone.trim(),
+            cnicNumber: cnicNumber.trim(),
+            cnicExpiry,
+            licenceNumber: licenceNumber.trim(),
+            licenceExpiry,
+            vehicleCategoryId,
+            vehicleName: vehicleName.trim(),
+            vehicleNumber: vehicleNumber.trim().toUpperCase(),
+            seatingCapacity,
+            fuelType,
+            operatingCity,
+            serviceEligibility: services,
+            docsCount: documents.length,
+            isSubmit: false,
+          });
+        } catch {
+          // non-fatal
+        }
+      }
+
+      setBanner({
+        type: 'success',
+        text: tr(
+          lang,
+          'Draft saved securely to your Partner ID. Your numbers and details will stay here.',
+          'آپ کی معلومات آپ کی آئی ڈی کے ساتھ محفوظ کر لی گئی ہیں، اب یہ دوبارہ نہیں مٹیں گی۔'
+        ),
+      });
+    } catch (err: any) {
+      setBanner({
+        type: 'error',
+        text: err?.message || tr(lang, 'Could not save draft.', 'ڈرافٹ محفوظ نہ ہو سکا۔'),
+      });
+    } finally {
+      setSavingDraft(false);
+    }
+  };
+
   const handleFinalSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSaving(true);
-    setMsg(null);
-    try {
-      await apiRequest('/api/partner/registration', {
-        method: 'PUT',
-        role: 'partner',
-        body: {
-          cnicNumber,
-          cnicExpiry,
-          licenceNumber,
-          licenceExpiry,
-          vehicleCategoryId,
-          vehicleName,
-          vehicleNumber,
-          seatingCapacity,
-          fuelType,
-          operatingCity,
-          serviceEligibility: services,
-        },
+    setBanner(null);
+
+    if (fullName.trim().length < 2) {
+      setBanner({
+        type: 'error',
+        text: tr(lang, 'Please enter your complete full name.', 'براہِ کرم اپنا مکمل نام درج کریں۔'),
       });
-      setMsg(
-        tr(
+      return;
+    }
+    if (phoneDigits.length < 10) {
+      setBanner({
+        type: 'error',
+        text: tr(
           lang,
-          '🎉 Registration submitted successfully! Pending Admin approval.',
-          '🎉 رجسٹریشن کامیابی سے جمع ہو گئی ہے! ایڈمن کی منظوری کا انتظار ہے۔'
-        )
-      );
-      await onRefresh();
+          'Please enter a complete 11-digit mobile number (e.g. 03001234567).',
+          'براہِ کرم مکمل 11 ہندسوں کا موبائل نمبر درج کریں (مثال: 03001234567)۔'
+        ),
+      });
+      return;
+    }
+    if (refDigits.length < 10) {
+      setBanner({
+        type: 'error',
+        text: tr(
+          lang,
+          'Please enter a complete 11-digit reference mobile number.',
+          'براہِ کرم مکمل 11 ہندسوں کا حوالہ موبائل نمبر درج کریں۔'
+        ),
+      });
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const targetStatus: PartnerProfile['verification_status'] =
+        profile.verification_status === 'approved'
+          ? 'approved'
+          : documents.length >= 1
+          ? 'under_review'
+          : 'documents_pending';
+
+      let expressOk = false;
+      let expressRes: { user?: User; partnerProfile?: PartnerProfile; queuedForReview?: boolean; message?: string } | null = null;
+      try {
+        expressRes = await apiRequest('/api/partner/registration', {
+          method: 'PUT',
+          role: 'partner',
+          body: {
+            fullName: fullName.trim(),
+            phone: phone.trim(),
+            referencePhone: referencePhone.trim(),
+            cnicNumber: cnicNumber.trim(),
+            cnicExpiry,
+            licenceNumber: licenceNumber.trim(),
+            licenceExpiry,
+            vehicleCategoryId,
+            vehicleName: vehicleName.trim(),
+            vehicleNumber: vehicleNumber.trim().toUpperCase(),
+            seatingCapacity,
+            fuelType,
+            operatingCity,
+            serviceEligibility: services,
+            isDraft: false,
+          },
+        });
+        expressOk = true;
+      } catch (err: any) {
+        if (!isBackendOfflineError(err)) {
+          throw err;
+        }
+      }
+
+      if (expressRes?.user) {
+        onUserUpdated?.(expressRes.user);
+      }
+      if (expressRes?.partnerProfile) {
+        onProfileUpdated?.(expressRes.partnerProfile);
+      } else {
+        persistSnapshotLocally(targetStatus, documents);
+      }
+
+      // Sync to Firestore so Admin Panel always receives submitted registration & documents
+      if (firebaseUser?.emailVerified) {
+        try {
+          await syncPartnerApplication({
+            fullName: fullName.trim(),
+            email: user?.email || firebaseUser.email || '',
+            phone: phone.trim(),
+            referencePhone: referencePhone.trim(),
+            cnicNumber: cnicNumber.trim(),
+            cnicExpiry,
+            licenceNumber: licenceNumber.trim(),
+            licenceExpiry,
+            vehicleCategoryId,
+            vehicleName: vehicleName.trim(),
+            vehicleNumber: vehicleNumber.trim().toUpperCase(),
+            seatingCapacity,
+            fuelType,
+            operatingCity,
+            serviceEligibility: services,
+            docsCount: documents.length,
+            isSubmit: true,
+          });
+          // Ensure any previously local-only documents are also pushed to Firestore
+          for (const docItem of documents) {
+            if (docItem.file_data_url) {
+              await syncPartnerDocument({
+                docType: docItem.doc_type,
+                fileName: docItem.file_name,
+                fileDataUrl: docItem.file_data_url,
+                expiryDate: docItem.expiry_date || '',
+                isPublic: docItem.is_public === 1,
+                fallbackName: fullName.trim(),
+                fallbackCity: operatingCity,
+                fallbackPhone: phone.trim(),
+              });
+            }
+          }
+        } catch {
+          // Local bridge already preserved submission
+        }
+      }
+
+      if (expressOk) {
+        void onRefresh();
+      }
+
+      setBanner({
+        type: 'success',
+        text: expressRes?.queuedForReview
+          ? tr(
+              lang,
+              'Updated vehicle details queued for Super Admin review. Your saved records remain intact.',
+              'گاڑی کی نئی تفصیلات سپر ایڈمن کی نظرثانی کے لیے بھیج دی گئی ہیں۔'
+            )
+          : tr(
+              lang,
+              'Application submitted! Your details and documents are now visible in the Super Admin Panel for approval.',
+              'درخواست کامیابی سے جمع ہو گئی ہے! آپ کی تمام تفصیلات اور دستاویزات براہِ راست ایڈمن پینل میں پہنچ چکی ہیں۔'
+            ),
+      });
     } catch (err: any) {
-      setMsg(err?.message || tr(lang, 'Submission failed.', 'جمع کرانا ناکام ہو گیا۔'));
+      setBanner({
+        type: 'error',
+        text: err?.message || tr(lang, 'Submission failed. Please verify your entries and try again.', 'درخواست جمع کرانے میں رکاوٹ پیش آئی۔ براہِ کرم معلومات چیک کر کے دوبارہ کوشش کریں۔'),
+      });
     } finally {
       setSaving(false);
     }
   };
 
   const stepTitles = [
-    { num: 1, titleEn: 'Selfie', titleUr: 'سیلفی' },
-    { num: 2, titleEn: 'CNIC', titleUr: 'شناختی کارڈ' },
-    { num: 3, titleEn: 'Licence', titleUr: 'ڈرائیونگ لائسنس' },
+    { num: 1, titleEn: 'Live Selfie', titleUr: 'لائیو سیلفی' },
+    { num: 2, titleEn: 'CNIC Scan', titleUr: 'شناختی کارڈ' },
+    { num: 3, titleEn: 'Driving Licence', titleUr: 'ڈرائیونگ لائسنس' },
     { num: 4, titleEn: 'Vehicle Book', titleUr: 'گاڑی کی بک' },
-    { num: 5, titleEn: 'Vehicle Photos', titleUr: 'گاڑی کی تصاویر' },
-    { num: 6, titleEn: 'Basic Info & Submit', titleUr: 'بنیادی معلومات اور سبمٹ' },
+    { num: 5, titleEn: 'Vehicle Photo', titleUr: 'گاڑی کی تصویر' },
+    { num: 6, titleEn: 'Review & Submit', titleUr: 'جائزہ اور سبمٹ' },
   ];
 
+  const cardSurface = isDark
+    ? 'border-zinc-800 bg-[#141519] text-zinc-100'
+    : 'border-zinc-200 bg-white text-[#0D0D10]';
+  const subSurface = isDark
+    ? 'border-zinc-800 bg-zinc-900/70'
+    : 'border-zinc-200 bg-zinc-50';
+  const inputSurface = isDark
+    ? 'border-zinc-700 bg-zinc-900 text-white placeholder:text-zinc-500'
+    : 'border-zinc-300 bg-white text-[#0D0D10] placeholder:text-zinc-400';
+  const labelTone = isDark ? 'text-zinc-300' : 'text-zinc-700';
+  const mutedTone = isDark ? 'text-zinc-400' : 'text-zinc-500';
+  const urBodyClass = lang === 'ur' ? 'leading-[2.0]' : '';
+
+  const statusTone =
+    profile.verification_status === 'approved'
+      ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+      : profile.verification_status === 'under_review'
+      ? 'bg-amber-50 border-amber-300 text-amber-950'
+      : profile.verification_status === 'rejected' || profile.verification_status === 'suspended'
+      ? 'bg-red-50 border-red-300 text-red-900'
+      : 'bg-zinc-100 border-zinc-300 text-zinc-800';
+
   return (
-    <div className="space-y-6 w-full max-w-3xl mx-auto pb-12">
+    <div className="space-y-5 w-full max-w-3xl mx-auto pb-12">
+      {/* Verification Status & Persistent ID Strip */}
+      <div className={`rounded-2xl border p-4 flex flex-wrap items-center justify-between gap-3 ${statusTone}`}>
+        <div className="flex items-start gap-3 min-w-0">
+          <ShieldCheck className="w-5 h-5 shrink-0 mt-0.5 text-[#B8860B]" />
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-extrabold uppercase tracking-wider">
+                {tr(lang, 'Account Status:', 'اکاؤنٹ اسٹیٹس:')} {trVerificationStatus(lang, profile.verification_status)}
+              </span>
+              <span className="px-2 py-0.5 rounded-full bg-white/80 border border-black/10 font-mono text-[10px] font-bold text-zinc-700">
+                ID: {user?.email || partnerId.slice(0, 14)}
+              </span>
+            </div>
+            <p className={`text-[11px] mt-1 opacity-90 ${urBodyClass}`}>
+              {profile.verification_status === 'approved'
+                ? tr(lang, 'Your Pro Partner verification is approved. You can go Online and accept rides.', 'آپ کی پرو پارٹنر تصدیق مکمل ہو چکی ہے۔ اب آپ آن لائن جا کر سواریاں قبول کر سکتے ہیں۔')
+                : profile.verification_status === 'under_review'
+                ? tr(lang, 'Submitted to Super Admin Panel. Your uploaded documents and details remain safely saved.', 'آپ کی درخواست سپر ایڈمن پینل میں موجود ہے۔ تمام دستاویزات اور نمبر آپ کی آئی ڈی میں محفوظ ہیں۔')
+                : tr(lang, 'All details & photos you add stay permanently saved to your Partner ID across sessions.', 'آپ جو بھی نمبر یا تصویر ایک بار محفوظ کریں گے وہ آپ کی آئی ڈی میں مستقل محفوظ رہے گی۔')}
+            </p>
+            {profile.admin_notes && (
+              <p className="text-[11px] font-bold mt-1.5 px-2.5 py-1 rounded-lg bg-white/70 border border-black/10">
+                {tr(lang, 'Admin Note:', 'ایڈمن نوٹ:')} {profile.admin_notes}
+              </p>
+            )}
+          </div>
+        </div>
+        <span className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-white/80 border border-black/10 text-emerald-800 shrink-0">
+          {tr(lang, 'Auto-Saved', 'خودکار محفوظ')} ✓
+        </span>
+      </div>
+
       {/* Progress Bar Header */}
-      <div className="rounded-2xl border border-zinc-200 bg-white p-5 space-y-4 shadow-sm">
+      <div className={`rounded-2xl border p-5 space-y-4 shadow-sm ${cardSurface}`}>
         <div className="flex items-center justify-between gap-3">
           <div>
             <span className="text-[11px] font-bold uppercase tracking-wider text-[#D4A017]">
               {tr(lang, `Step ${step} of ${totalSteps}`, `مرحلہ ${step} از ${totalSteps}`)}
             </span>
-            <h2 className="font-display text-lg font-bold text-[#0D0D10]">
+            <h2 className="font-display text-lg font-bold">
               {lang === 'ur' ? stepTitles[step - 1].titleUr : stepTitles[step - 1].titleEn}
             </h2>
           </div>
           <span className="px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-800 font-mono text-xs font-bold">
-            {Math.round((step / totalSteps) * 100)}% {tr(lang, 'Completed', 'مکمل')}
+            {realCompletionPct}% {tr(lang, 'Ready', 'مکمل')}
           </span>
         </div>
 
-        <div className="w-full bg-zinc-100 h-2 rounded-full overflow-hidden">
+        <div className="w-full bg-zinc-200/70 h-2 rounded-full overflow-hidden">
           <div
             className="bg-[#D4A017] h-full transition-all duration-300"
-            style={{ width: `${(step / totalSteps) * 100}%` }}
+            style={{ width: `${Math.max(8, realCompletionPct)}%` }}
           />
         </div>
 
-        <div className="hidden sm:grid grid-cols-6 gap-1 pt-1">
-          {stepTitles.map((st) => (
-            <button
-              key={st.num}
-              type="button"
-              onClick={() => setStep(st.num)}
-              className={`text-[10px] font-bold py-1 px-1 rounded-lg border text-center truncate transition-all ${
-                step === st.num
-                  ? 'border-[#D4A017] bg-[#D4A017]/15 text-[#0D0D10]'
-                  : st.num < step
-                  ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                  : 'border-zinc-200 text-zinc-400'
-              }`}
-            >
-              {st.num}. {lang === 'ur' ? st.titleUr : st.titleEn}
-            </button>
-          ))}
+        <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 pt-1">
+          {stepTitles.map((st, idx) => {
+            const done = readinessItems[idx]?.done;
+            return (
+              <button
+                key={st.num}
+                type="button"
+                onClick={() => setStep(st.num)}
+                className={`text-[10px] font-bold py-1.5 px-1.5 rounded-lg border text-center truncate transition-all ${
+                  step === st.num
+                    ? 'border-[#D4A017] bg-[#D4A017]/20 ring-1 ring-[#D4A017]'
+                    : done
+                    ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
+                    : isDark
+                    ? 'border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                    : 'border-zinc-200 text-zinc-500 hover:border-zinc-300'
+                }`}
+              >
+                {done ? '✓ ' : `${st.num}. `}
+                {lang === 'ur' ? st.titleUr : st.titleEn}
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {msg && (
-        <div className="rounded-xl bg-[#0D0D10] text-[#F4C430] px-4 py-3 text-xs font-semibold shadow-md flex items-center justify-between">
-          <span>{msg}</span>
-          <button type="button" onClick={() => setMsg(null)} className="text-zinc-400 hover:text-white">✕</button>
+      {banner && (
+        <div
+          className={`rounded-xl px-4 py-3 text-xs font-semibold shadow-md flex items-center justify-between gap-3 border ${
+            banner.type === 'error'
+              ? 'bg-red-950 border-red-700 text-red-100'
+              : banner.type === 'success'
+              ? 'bg-emerald-950 border-emerald-700 text-emerald-100'
+              : 'bg-[#0D0D10] border-[#D4A017]/60 text-[#F4C430]'
+          }`}
+        >
+          <span className={urBodyClass}>{banner.text}</span>
+          <button
+            type="button"
+            onClick={() => setBanner(null)}
+            className="text-white/70 hover:text-white shrink-0 font-bold px-1"
+            aria-label="Close"
+          >
+            ✕
+          </button>
         </div>
       )}
 
       {/* Step 1: Selfie Upload */}
       {step === 1 && (
-        <div className="rounded-2xl border border-zinc-200 bg-white p-6 space-y-5 shadow-sm">
+        <div className={`rounded-2xl border p-6 space-y-5 shadow-sm ${cardSurface}`}>
           <div className="space-y-1">
             <h3 className="font-display text-base font-bold flex items-center gap-2">
               <Camera className="w-5 h-5 text-[#D4A017]" />
               {tr(lang, '1. Pro Partner Live Selfie / Profile Photo', '1. پرو پارٹنر لائیو سیلفی یا پروفائل تصویر')}
             </h3>
-            <p className="text-xs text-zinc-500">
+            <p className={`text-xs ${mutedTone} ${urBodyClass}`}>
               {tr(
                 lang,
-                'Upload a clear, front-facing live photo of yourself. If unclear, you can retake anytime.',
-                'اپنی واضح سامنے کی تصویر اپ لوڈ کریں۔ اگر تصویر واضح نہ ہو تو دوبارہ لیں۔'
+                'Upload a clear, front-facing live photo of yourself so passengers recognize you confidently.',
+                'اپنی واضح اور سامنے کی تصویر اپ لوڈ کریں تاکہ مسافر آپ کو آسانی اور اعتماد سے پہچان سکیں۔'
               )}
             </p>
           </div>
 
-          <div className="flex flex-col items-center justify-center p-6 border-2 border-dashed border-zinc-200 rounded-2xl bg-zinc-50/50 space-y-4">
+          <div className={`flex flex-col items-center justify-center p-6 border-2 border-dashed rounded-2xl space-y-4 ${subSurface}`}>
             {getDoc('profile_photo')?.file_data_url ? (
               <div className="relative w-36 h-36 rounded-2xl overflow-hidden border-2 border-[#D4A017] shadow-md">
                 <img src={getDoc('profile_photo')?.file_data_url} alt="Selfie" className="w-full h-full object-cover" />
@@ -1086,9 +1741,9 @@ export const PartnerVerificationAndVehicleView: React.FC<{
             )}
 
             <div className="flex flex-wrap gap-2 justify-center">
-              <label className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#0D0D10] text-white text-xs font-bold hover:bg-zinc-800 cursor-pointer shadow-md">
+              <label className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#0D0D10] text-white text-xs font-bold hover:bg-zinc-800 cursor-pointer shadow-md border border-zinc-700">
                 {uploadingType === 'profile_photo' ? <Loader2 className="w-4 h-4 animate-spin text-[#D4A017]" /> : <Upload className="w-4 h-4" />}
-                <span>{getDoc('profile_photo') ? tr(lang, 'Retake / Change Selfie', 'سیلفی دوبارہ لیں') : tr(lang, 'Take / Upload Selfie', 'سیلفی اپ لوڈ کریں')}</span>
+                <span>{getDoc('profile_photo') ? tr(lang, 'Change Saved Selfie', 'محفوظ سیلفی تبدیل کریں') : tr(lang, 'Take / Upload Selfie', 'سیلفی اپ لوڈ کریں')}</span>
                 <input
                   type="file"
                   accept="image/*"
@@ -1104,7 +1759,7 @@ export const PartnerVerificationAndVehicleView: React.FC<{
             </div>
           </div>
 
-          <div className="flex justify-end pt-4 border-t border-zinc-100">
+          <div className="flex justify-end pt-4 border-t border-zinc-200/60">
             <button
               type="button"
               onClick={() => setStep(2)}
@@ -1119,37 +1774,36 @@ export const PartnerVerificationAndVehicleView: React.FC<{
 
       {/* Step 2: CNIC Front & Back with AI OCR */}
       {step === 2 && (
-        <div className="rounded-2xl border border-zinc-200 bg-white p-6 space-y-6 shadow-sm">
+        <div className={`rounded-2xl border p-6 space-y-6 shadow-sm ${cardSurface}`}>
           <div className="space-y-1">
             <h3 className="font-display text-base font-bold flex items-center gap-2">
               <FileCheck2 className="w-5 h-5 text-[#D4A017]" />
-              {tr(lang, '2. CNIC Front & Back (AI Auto-Scan)', '2. شناختی کارڈ فرنٹ اور بیک (AI خودکار اسکین)')}
+              {tr(lang, '2. CNIC Front & Back (AI Auto-Scan)', '2. شناختی کارڈ فرنٹ اور بیک (خودکار اسکین)')}
             </h3>
-            <p className="text-xs text-zinc-500">
+            <p className={`text-xs ${mutedTone} ${urBodyClass}`}>
               {tr(
                 lang,
-                'Upload CNIC Front first, then CNIC Back. AI OCR automatically extracts your Name, CNIC Number, and Date of Birth.',
-                'پہلے فرنٹ اور پھر بیک تصویر اپلوڈ کریں۔ OCR خودکار طور پر آپ کا نام اور شناختی کارڈ نمبر پڑھ لے گا۔'
+                'Upload CNIC Front & Back copies. Your CNIC number and expiry stay saved permanently to your account.',
+                'شناختی کارڈ کے فرنٹ اور بیک کی واضح تصویر اپ لوڈ کریں۔ آپ کا درج کردہ نمبر آپ کی آئی ڈی میں مستقل محفوظ رہے گا۔'
               )}
             </p>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* Front */}
-            <div className="p-4 rounded-xl border border-zinc-200 bg-zinc-50 space-y-3">
-              <div className="text-xs font-bold text-zinc-700">{tr(lang, 'CNIC Front Copy', 'شناختی کارڈ فرنٹ')}</div>
+            <div className={`p-4 rounded-xl border space-y-3 ${subSurface}`}>
+              <div className={`text-xs font-bold ${labelTone}`}>{tr(lang, 'CNIC Front Copy', 'شناختی کارڈ فرنٹ')}</div>
               {getDoc('cnic_front')?.file_data_url ? (
                 <div className="relative h-32 rounded-lg overflow-hidden border border-zinc-200 bg-white">
                   <img src={getDoc('cnic_front')?.file_data_url} alt="CNIC Front" className="w-full h-full object-cover" />
                 </div>
               ) : (
                 <div className="h-32 rounded-lg border-2 border-dashed border-zinc-300 flex items-center justify-center text-zinc-400 text-xs">
-                  {tr(lang, 'No Front Uploaded', 'فرنٹ اپلوڈ نہیں')}
+                  {tr(lang, 'No Front Uploaded', 'فرنٹ اپ لوڈ نہیں')}
                 </div>
               )}
-              <label className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#0D0D10] text-white text-xs font-bold cursor-pointer">
+              <label className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#0D0D10] text-white text-xs font-bold cursor-pointer border border-zinc-700">
                 {uploadingType === 'cnic_front' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
-                <span>{getDoc('cnic_front') ? tr(lang, 'Retake Front', 'فرنٹ دوبارہ لیں') : tr(lang, 'Upload Front', 'فرنٹ اپلوڈ کریں')}</span>
+                <span>{getDoc('cnic_front') ? tr(lang, 'Change Front Copy', 'فرنٹ تبدیل کریں') : tr(lang, 'Upload Front', 'فرنٹ اپ لوڈ کریں')}</span>
                 <input
                   type="file"
                   accept="image/*"
@@ -1163,21 +1817,20 @@ export const PartnerVerificationAndVehicleView: React.FC<{
               </label>
             </div>
 
-            {/* Back */}
-            <div className="p-4 rounded-xl border border-zinc-200 bg-zinc-50 space-y-3">
-              <div className="text-xs font-bold text-zinc-700">{tr(lang, 'CNIC Back Copy', 'شناختی کارڈ بیک')}</div>
+            <div className={`p-4 rounded-xl border space-y-3 ${subSurface}`}>
+              <div className={`text-xs font-bold ${labelTone}`}>{tr(lang, 'CNIC Back Copy', 'شناختی کارڈ بیک')}</div>
               {getDoc('cnic_back')?.file_data_url ? (
                 <div className="relative h-32 rounded-lg overflow-hidden border border-zinc-200 bg-white">
                   <img src={getDoc('cnic_back')?.file_data_url} alt="CNIC Back" className="w-full h-full object-cover" />
                 </div>
               ) : (
                 <div className="h-32 rounded-lg border-2 border-dashed border-zinc-300 flex items-center justify-center text-zinc-400 text-xs">
-                  {tr(lang, 'No Back Uploaded', 'بیک اپلوڈ نہیں')}
+                  {tr(lang, 'No Back Uploaded', 'بیک اپ لوڈ نہیں')}
                 </div>
               )}
-              <label className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#0D0D10] text-white text-xs font-bold cursor-pointer">
+              <label className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#0D0D10] text-white text-xs font-bold cursor-pointer border border-zinc-700">
                 {uploadingType === 'cnic_back' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
-                <span>{getDoc('cnic_back') ? tr(lang, 'Retake Back', 'بیک دوبارہ لیں') : tr(lang, 'Upload Back', 'بیک اپلوڈ کریں')}</span>
+                <span>{getDoc('cnic_back') ? tr(lang, 'Change Back Copy', 'بیک تبدیل کریں') : tr(lang, 'Upload Back', 'بیک اپ لوڈ کریں')}</span>
                 <input
                   type="file"
                   accept="image/*"
@@ -1192,73 +1845,83 @@ export const PartnerVerificationAndVehicleView: React.FC<{
             </div>
           </div>
 
-          {/* OCR Extracted Data Preview & Verification */}
-          <div className="p-4 rounded-xl border border-amber-200 bg-amber-50/50 space-y-3">
-            <div className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
+          <div className="p-4 rounded-xl border border-amber-300/70 bg-amber-50/70 space-y-3">
+            <div className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
               <Sparkles className="w-4 h-4 text-[#D4A017]" />
-              {tr(lang, 'AI OCR Extracted Information (Verify & Correct if needed):', 'AI OCR سے پڑھی گئی معلومات (تصدیق کریں):')}
+              {tr(lang, 'CNIC Details (Saved Automatically to Your ID):', 'شناختی کارڈ کی تفصیلات (آپ کی آئی ڈی میں محفوظ):')}
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
               <div>
-                <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'CNIC Number', 'شناختی کارڈ نمبر')}</label>
+                <label className="block font-semibold text-zinc-800 mb-1">{tr(lang, 'CNIC Number', 'شناختی کارڈ نمبر')}</label>
                 <input
                   value={cnicNumber}
                   onChange={(e) => setCnicNumber(e.target.value)}
                   placeholder="37405-XXXXXXX-X"
-                  className="w-full px-3 py-2 rounded-lg border border-zinc-300 font-mono text-xs bg-white"
+                  className="w-full px-3 py-2 rounded-lg border border-zinc-300 font-mono text-xs bg-white text-[#0D0D10]"
                 />
               </div>
               <div>
-                <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'CNIC Expiry Date', 'میعاد تاریخ')}</label>
+                <label className="block font-semibold text-zinc-800 mb-1">{tr(lang, 'CNIC Expiry Date', 'میعاد تاریخ')}</label>
                 <input
                   type="date"
                   value={cnicExpiry}
                   onChange={(e) => setCnicExpiry(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-zinc-300 text-xs bg-white"
+                  className="w-full px-3 py-2 rounded-lg border border-zinc-300 text-xs bg-white text-[#0D0D10]"
                 />
               </div>
             </div>
           </div>
 
-          <div className="flex justify-between pt-4 border-t border-zinc-100">
+          <div className="flex flex-wrap justify-between gap-2 pt-4 border-t border-zinc-200/60">
             <button
               type="button"
               onClick={() => setStep(1)}
-              className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-zinc-200 text-xs font-semibold text-zinc-700"
+              className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-zinc-300 text-xs font-semibold"
             >
               <ChevronLeft className="w-4 h-4" />
               <span>{tr(lang, 'Back', 'پچھلا')}</span>
             </button>
-            <button
-              type="button"
-              onClick={() => setStep(3)}
-              className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-[#D4A017] text-[#0D0D10] text-xs font-bold hover:bg-amber-400 shadow-sm"
-            >
-              <span>{tr(lang, 'Continue to Licence', 'لائسنس پر جائیں')}</span>
-              <ChevronRight className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={savingDraft}
+                onClick={handleSaveDraft}
+                className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-zinc-300 text-xs font-bold hover:border-[#D4A017]"
+              >
+                {savingDraft ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5 text-[#D4A017]" />}
+                <span>{tr(lang, 'Save Draft', 'محفوظ کریں')}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setStep(3)}
+                className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-[#D4A017] text-[#0D0D10] text-xs font-bold hover:bg-amber-400 shadow-sm"
+              >
+                <span>{tr(lang, 'Continue to Licence', 'لائسنس پر جائیں')}</span>
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         </div>
       )}
 
       {/* Step 3: Driving License */}
       {step === 3 && (
-        <div className="rounded-2xl border border-zinc-200 bg-white p-6 space-y-6 shadow-sm">
+        <div className={`rounded-2xl border p-6 space-y-6 shadow-sm ${cardSurface}`}>
           <div className="space-y-1">
             <h3 className="font-display text-base font-bold flex items-center gap-2">
               <FileCheck2 className="w-5 h-5 text-[#D4A017]" />
-              {tr(lang, '3. Driving Licence (AI Auto-Scan)', '3. ڈرائیونگ لائسنس (AI خودکار اسکین)')}
+              {tr(lang, '3. Driving Licence (AI Auto-Scan)', '3. ڈرائیونگ لائسنس (خودکار اسکین)')}
             </h3>
-            <p className="text-xs text-zinc-500">
+            <p className={`text-xs ${mutedTone} ${urBodyClass}`}>
               {tr(
                 lang,
-                'Upload your valid driving licence photo. OCR will automatically extract your licence number and expiry date.',
-                'اپنے کارآمد ڈرائیونگ لائسنس کی تصویر اپ لوڈ کریں۔ OCR خودکار طور پر نمبر اور تاریخ پڑھ لے گا۔'
+                'Upload your valid driving licence photo and confirm your licence number and expiry date.',
+                'اپنے کارآمد ڈرائیونگ لائسنس کی تصویر اپ لوڈ کریں اور لائسنس نمبر و میعاد کی تصدیق کریں۔'
               )}
             </p>
           </div>
 
-          <div className="flex flex-col items-center justify-center p-6 border-2 border-dashed border-zinc-200 rounded-2xl bg-zinc-50/50 space-y-4">
+          <div className={`flex flex-col items-center justify-center p-6 border-2 border-dashed rounded-2xl space-y-4 ${subSurface}`}>
             {getDoc('driving_licence')?.file_data_url ? (
               <div className="relative w-full max-w-sm h-40 rounded-xl overflow-hidden border border-zinc-200 bg-white shadow-sm">
                 <img src={getDoc('driving_licence')?.file_data_url} alt="Driving Licence" className="w-full h-full object-cover" />
@@ -1269,9 +1932,9 @@ export const PartnerVerificationAndVehicleView: React.FC<{
               </div>
             )}
 
-            <label className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#0D0D10] text-white text-xs font-bold cursor-pointer shadow-md">
+            <label className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#0D0D10] text-white text-xs font-bold cursor-pointer shadow-md border border-zinc-700">
               {uploadingType === 'driving_licence' ? <Loader2 className="w-4 h-4 animate-spin text-[#D4A017]" /> : <Upload className="w-4 h-4" />}
-              <span>{getDoc('driving_licence') ? tr(lang, 'Retake / Change Licence', 'لائسنس دوبارہ لیں') : tr(lang, 'Upload Driving Licence', 'لائسنس اپ لوڈ کریں')}</span>
+              <span>{getDoc('driving_licence') ? tr(lang, 'Change Saved Licence', 'لائسنس تبدیل کریں') : tr(lang, 'Upload Driving Licence', 'لائسنس اپ لوڈ کریں')}</span>
               <input
                 type="file"
                 accept="image/*"
@@ -1285,66 +1948,77 @@ export const PartnerVerificationAndVehicleView: React.FC<{
             </label>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4 rounded-xl border border-amber-200 bg-amber-50/50 text-xs">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4 rounded-xl border border-amber-300/70 bg-amber-50/70 text-xs">
             <div>
-              <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'Licence Number', 'لائسنس نمبر')}</label>
+              <label className="block font-semibold text-zinc-800 mb-1">{tr(lang, 'Licence Number', 'لائسنس نمبر')}</label>
               <input
                 value={licenceNumber}
                 onChange={(e) => setLicenceNumber(e.target.value)}
                 placeholder="ISB-123456"
-                className="w-full px-3 py-2 rounded-lg border border-zinc-300 font-mono text-xs bg-white"
+                className="w-full px-3 py-2 rounded-lg border border-zinc-300 font-mono text-xs bg-white text-[#0D0D10]"
               />
             </div>
             <div>
-              <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'Licence Expiry', 'لائسنس کی میعاد')}</label>
+              <label className="block font-semibold text-zinc-800 mb-1">{tr(lang, 'Licence Expiry', 'لائسنس کی میعاد')}</label>
               <input
                 type="date"
                 value={licenceExpiry}
                 onChange={(e) => setLicenceExpiry(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-zinc-300 text-xs bg-white"
+                className="w-full px-3 py-2 rounded-lg border border-zinc-300 text-xs bg-white text-[#0D0D10]"
               />
             </div>
           </div>
 
-          <div className="flex justify-between pt-4 border-t border-zinc-100">
+          <div className="flex flex-wrap justify-between gap-2 pt-4 border-t border-zinc-200/60">
             <button
               type="button"
               onClick={() => setStep(2)}
-              className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-zinc-200 text-xs font-semibold text-zinc-700"
+              className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-zinc-300 text-xs font-semibold"
             >
               <ChevronLeft className="w-4 h-4" />
               <span>{tr(lang, 'Back', 'پچھلا')}</span>
             </button>
-            <button
-              type="button"
-              onClick={() => setStep(4)}
-              className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-[#D4A017] text-[#0D0D10] text-xs font-bold hover:bg-amber-400 shadow-sm"
-            >
-              <span>{tr(lang, 'Continue to Vehicle Book', 'گاڑی کی بک پر جائیں')}</span>
-              <ChevronRight className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={savingDraft}
+                onClick={handleSaveDraft}
+                className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-zinc-300 text-xs font-bold hover:border-[#D4A017]"
+              >
+                {savingDraft ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5 text-[#D4A017]" />}
+                <span>{tr(lang, 'Save Draft', 'محفوظ کریں')}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setStep(4)}
+                className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-[#D4A017] text-[#0D0D10] text-xs font-bold hover:bg-amber-400 shadow-sm"
+              >
+                <span>{tr(lang, 'Continue to Vehicle Book', 'گاڑی کی بک پر جائیں')}</span>
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         </div>
       )}
 
       {/* Step 4: Vehicle Registration Book / Smart Card */}
       {step === 4 && (
-        <div className="rounded-2xl border border-zinc-200 bg-white p-6 space-y-6 shadow-sm">
+        <div className={`rounded-2xl border p-6 space-y-6 shadow-sm ${cardSurface}`}>
           <div className="space-y-1">
             <h3 className="font-display text-base font-bold flex items-center gap-2">
               <CarFront className="w-5 h-5 text-[#D4A017]" />
               {tr(lang, '4. Vehicle Registration Book / Smart Card', '4. گاڑی کی رجسٹریشن بک / اسمارٹ کارڈ')}
             </h3>
-            <p className="text-xs text-zinc-500">
+            <p className={`text-xs ${mutedTone} ${urBodyClass}`}>
               {tr(
                 lang,
-                'Upload the vehicle registration book or smart card. AI OCR extracts your vehicle registration number and make.',
-                'گاڑی کی رجسٹریشن بک یا اسمارٹ کارڈ اپ لوڈ کریں۔ AI OCR نمبر اور گاڑی کی تفصیلات خودکار پڑھ لے گا۔'
+                'Upload your vehicle registration book or smart card and confirm your vehicle number plate & model.',
+                'گاڑی کی رجسٹریشن بک یا اسمارٹ کارڈ اپ لوڈ کریں اور گاڑی کی نمبر پلیٹ اور ماڈل کی تصدیق کریں۔'
               )}
             </p>
           </div>
 
-          <div className="flex flex-col items-center justify-center p-6 border-2 border-dashed border-zinc-200 rounded-2xl bg-zinc-50/50 space-y-4">
+          <div className={`flex flex-col items-center justify-center p-6 border-2 border-dashed rounded-2xl space-y-4 ${subSurface}`}>
             {getDoc('vehicle_registration')?.file_data_url ? (
               <div className="relative w-full max-w-sm h-40 rounded-xl overflow-hidden border border-zinc-200 bg-white shadow-sm">
                 <img src={getDoc('vehicle_registration')?.file_data_url} alt="Vehicle Book" className="w-full h-full object-cover" />
@@ -1355,9 +2029,9 @@ export const PartnerVerificationAndVehicleView: React.FC<{
               </div>
             )}
 
-            <label className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#0D0D10] text-white text-xs font-bold cursor-pointer shadow-md">
+            <label className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#0D0D10] text-white text-xs font-bold cursor-pointer shadow-md border border-zinc-700">
               {uploadingType === 'vehicle_registration' ? <Loader2 className="w-4 h-4 animate-spin text-[#D4A017]" /> : <Upload className="w-4 h-4" />}
-              <span>{getDoc('vehicle_registration') ? tr(lang, 'Retake / Change Book', 'بک دوبارہ لیں') : tr(lang, 'Upload Vehicle Book', 'رجسٹریشن بک اپ لوڈ کریں')}</span>
+              <span>{getDoc('vehicle_registration') ? tr(lang, 'Change Saved Book', 'بک تبدیل کریں') : tr(lang, 'Upload Vehicle Book', 'رجسٹریشن بک اپ لوڈ کریں')}</span>
               <input
                 type="file"
                 accept="image/*"
@@ -1371,66 +2045,91 @@ export const PartnerVerificationAndVehicleView: React.FC<{
             </label>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4 rounded-xl border border-zinc-200 bg-zinc-50 text-xs">
+          <div className={`grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 rounded-xl border text-xs ${subSurface}`}>
             <div>
-              <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'Vehicle Plate Number', 'نمبر پلیٹ')}</label>
+              <label className={`block font-semibold mb-1 ${labelTone}`}>{tr(lang, 'Vehicle Plate Number', 'نمبر پلیٹ')}</label>
               <input
                 value={vehicleNumber}
-                onChange={(e) => setVehicleNumber(e.target.value)}
+                onChange={(e) => setVehicleNumber(e.target.value.toUpperCase())}
                 placeholder="LEA-4512"
-                className="w-full px-3 py-2 rounded-lg border border-zinc-300 font-mono uppercase text-xs bg-white"
+                className={`w-full px-3 py-2 rounded-lg border font-mono uppercase text-xs ${inputSurface}`}
               />
             </div>
             <div>
-              <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'Vehicle Make & Model', 'گاڑی کا ماڈل')}</label>
+              <label className={`block font-semibold mb-1 ${labelTone}`}>{tr(lang, 'Vehicle Make & Model', 'گاڑی کا ماڈل')}</label>
               <input
                 value={vehicleName}
                 onChange={(e) => setVehicleName(e.target.value)}
                 placeholder="Suzuki Every / Corolla GLi"
-                className="w-full px-3 py-2 rounded-lg border border-zinc-300 text-xs bg-white"
+                className={`w-full px-3 py-2 rounded-lg border text-xs ${inputSurface}`}
               />
+            </div>
+            <div>
+              <label className={`block font-semibold mb-1 ${labelTone}`}>{tr(lang, 'Fuel Type', 'ایندھن کی قسم')}</label>
+              <select
+                value={fuelType}
+                onChange={(e) => setFuelType(e.target.value)}
+                className={`w-full px-3 py-2 rounded-lg border text-xs ${inputSurface}`}
+              >
+                <option value="Petrol">Petrol</option>
+                <option value="Hybrid">Hybrid</option>
+                <option value="CNG">CNG</option>
+                <option value="Diesel">Diesel</option>
+                <option value="Electric">Electric</option>
+              </select>
             </div>
           </div>
 
-          <div className="flex justify-between pt-4 border-t border-zinc-100">
+          <div className="flex flex-wrap justify-between gap-2 pt-4 border-t border-zinc-200/60">
             <button
               type="button"
               onClick={() => setStep(3)}
-              className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-zinc-200 text-xs font-semibold text-zinc-700"
+              className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-zinc-300 text-xs font-semibold"
             >
               <ChevronLeft className="w-4 h-4" />
               <span>{tr(lang, 'Back', 'پچھلا')}</span>
             </button>
-            <button
-              type="button"
-              onClick={() => setStep(5)}
-              className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-[#D4A017] text-[#0D0D10] text-xs font-bold hover:bg-amber-400 shadow-sm"
-            >
-              <span>{tr(lang, 'Continue to Vehicle Photos', 'گاڑی کی تصاویر پر جائیں')}</span>
-              <ChevronRight className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={savingDraft}
+                onClick={handleSaveDraft}
+                className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-zinc-300 text-xs font-bold hover:border-[#D4A017]"
+              >
+                {savingDraft ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5 text-[#D4A017]" />}
+                <span>{tr(lang, 'Save Draft', 'محفوظ کریں')}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setStep(5)}
+                className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-[#D4A017] text-[#0D0D10] text-xs font-bold hover:bg-amber-400 shadow-sm"
+              >
+                <span>{tr(lang, 'Continue to Vehicle Photos', 'گاڑی کی تصاویر پر جائیں')}</span>
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         </div>
       )}
 
       {/* Step 5: Vehicle Exterior Photos */}
       {step === 5 && (
-        <div className="rounded-2xl border border-zinc-200 bg-white p-6 space-y-6 shadow-sm">
+        <div className={`rounded-2xl border p-6 space-y-6 shadow-sm ${cardSurface}`}>
           <div className="space-y-1">
             <h3 className="font-display text-base font-bold flex items-center gap-2">
               <CarFront className="w-5 h-5 text-[#D4A017]" />
               {tr(lang, '5. Vehicle Exterior Photo (with Number Plate)', '5. گاڑی کی بیرونی تصویر (نمبر پلیٹ سمیت)')}
             </h3>
-            <p className="text-xs text-zinc-500">
+            <p className={`text-xs ${mutedTone} ${urBodyClass}`}>
               {tr(
                 lang,
-                'Upload a clear exterior photo of your vehicle showing the front/rear number plate clearly.',
+                'Upload a clear exterior photo of your vehicle showing the front or rear number plate clearly.',
                 'گاڑی کی ایسی واضح تصویر اپ لوڈ کریں جس میں نمبر پلیٹ صاف دکھائی دے رہی ہو۔'
               )}
             </p>
           </div>
 
-          <div className="flex flex-col items-center justify-center p-6 border-2 border-dashed border-zinc-200 rounded-2xl bg-zinc-50/50 space-y-4">
+          <div className={`flex flex-col items-center justify-center p-6 border-2 border-dashed rounded-2xl space-y-4 ${subSurface}`}>
             {getDoc('vehicle_photo')?.file_data_url ? (
               <div className="relative w-full max-w-sm h-40 rounded-xl overflow-hidden border border-zinc-200 bg-white shadow-sm">
                 <img src={getDoc('vehicle_photo')?.file_data_url} alt="Vehicle Photo" className="w-full h-full object-cover" />
@@ -1441,9 +2140,9 @@ export const PartnerVerificationAndVehicleView: React.FC<{
               </div>
             )}
 
-            <label className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#0D0D10] text-white text-xs font-bold cursor-pointer shadow-md">
+            <label className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#0D0D10] text-white text-xs font-bold cursor-pointer shadow-md border border-zinc-700">
               {uploadingType === 'vehicle_photo' ? <Loader2 className="w-4 h-4 animate-spin text-[#D4A017]" /> : <Upload className="w-4 h-4" />}
-              <span>{getDoc('vehicle_photo') ? tr(lang, 'Retake / Change Photo', 'تصویر دوبارہ لیں') : tr(lang, 'Upload Vehicle Photo', 'گاڑی کی تصویر اپ لوڈ کریں')}</span>
+              <span>{getDoc('vehicle_photo') ? tr(lang, 'Change Vehicle Photo', 'تصویر تبدیل کریں') : tr(lang, 'Upload Vehicle Photo', 'گاڑی کی تصویر اپ لوڈ کریں')}</span>
               <input
                 type="file"
                 accept="image/*"
@@ -1457,11 +2156,11 @@ export const PartnerVerificationAndVehicleView: React.FC<{
             </label>
           </div>
 
-          <div className="flex justify-between pt-4 border-t border-zinc-100">
+          <div className="flex justify-between pt-4 border-t border-zinc-200/60">
             <button
               type="button"
               onClick={() => setStep(4)}
-              className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-zinc-200 text-xs font-semibold text-zinc-700"
+              className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-zinc-300 text-xs font-semibold"
             >
               <ChevronLeft className="w-4 h-4" />
               <span>{tr(lang, 'Back', 'پچھلا')}</span>
@@ -1471,64 +2170,82 @@ export const PartnerVerificationAndVehicleView: React.FC<{
               onClick={() => setStep(6)}
               className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-[#D4A017] text-[#0D0D10] text-xs font-bold hover:bg-amber-400 shadow-sm"
             >
-              <span>{tr(lang, 'Continue to Final Info', 'آخری معلومات پر جائیں')}</span>
+              <span>{tr(lang, 'Continue to Review & Submit', 'جائزہ اور حتمی سبمٹ پر جائیں')}</span>
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>
         </div>
       )}
 
-      {/* Step 6: Basic Information (Only Manual Input) & Final Submit */}
+      {/* Step 6: Basic Information, Readiness Checklist & Final Submit */}
       {step === 6 && (
-        <form onSubmit={handleFinalSubmit} className="rounded-2xl border border-zinc-200 bg-white p-6 space-y-6 shadow-sm">
+        <form onSubmit={handleFinalSubmit} className={`rounded-2xl border p-6 space-y-6 shadow-sm ${cardSurface}`}>
           <div className="space-y-1">
             <h3 className="font-display text-base font-bold flex items-center gap-2">
               <CheckCircle2 className="w-5 h-5 text-[#D4A017]" />
               {tr(lang, '6. Basic Information & Final Submission', '6. بنیادی معلومات اور حتمی سبمشن')}
             </h3>
-            <p className="text-xs text-zinc-500">
+            <p className={`text-xs ${mutedTone} ${urBodyClass}`}>
               {tr(
                 lang,
-                'Please enter your manual contact details, select your vehicle category, and submit your registration for Admin approval.',
-                'براہ کرم اپنی رابطہ کی معلومات درج کریں اور ایڈمن کی منظوری کے لیے رجسٹریشن جمع کروائیں۔'
+                'Confirm your saved contact numbers, vehicle category, and send your complete application directly to Super Admin.',
+                'اپنا محفوظ شدہ رابطہ نمبر، گاڑی کی کیٹگری اور دستاویزات چیک کر کے براہِ راست سپر ایڈمن کو منظوری کے لیے بھیجیں۔'
               )}
             </p>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
             <div>
-              <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'Full Name (Manual)', 'پورا نام')}</label>
+              <label className={`block font-semibold mb-1 ${labelTone}`}>{tr(lang, 'Full Name (Manual)', 'پورا نام')}</label>
               <input
                 required
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
                 placeholder="Muhammad Ali"
-                className="w-full px-3 py-2 rounded-xl border border-zinc-300 bg-white"
+                className={`w-full px-3 py-2.5 rounded-xl border ${inputSurface}`}
               />
             </div>
             <div>
-              <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'Mobile Number', 'موبائل نمبر')}</label>
+              <label className={`block font-semibold mb-1 ${labelTone}`}>{tr(lang, 'Mobile Number (11 digits)', 'موبائل نمبر (11 ہندسے)')}</label>
               <input
                 required
+                type="tel"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
-                placeholder="03125007782"
-                className="w-full px-3 py-2 rounded-xl border border-zinc-300 font-mono bg-white"
+                placeholder="03001234567"
+                className={`w-full px-3 py-2.5 rounded-xl border font-mono ${inputSurface}`}
               />
+              {phone && phoneDigits.length < 10 && (
+                <p className="text-[11px] text-amber-600 font-semibold mt-1 flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3 shrink-0" />
+                  {tr(lang, 'Enter full 11-digit mobile number (e.g. 03001234567)', 'مکمل 11 ہندسوں کا نمبر درج کریں (مثال: 03001234567)')}
+                </p>
+              )}
             </div>
             <div>
-              <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'Reference Mobile Number', 'حوالہ / ایمرجنسی موبائل نمبر')}</label>
+              <label className={`block font-semibold mb-1 ${labelTone}`}>{tr(lang, 'Reference Mobile Number', 'حوالہ / ایمرجنسی موبائل نمبر')}</label>
               <input
                 required
+                type="tel"
                 value={referencePhone}
                 onChange={(e) => setReferencePhone(e.target.value)}
-                placeholder="03001234567"
-                className="w-full px-3 py-2 rounded-xl border border-zinc-300 font-mono bg-white"
+                placeholder="03141512921"
+                className={`w-full px-3 py-2.5 rounded-xl border font-mono ${inputSurface}`}
               />
+              {referencePhone && refDigits.length < 10 && (
+                <p className="text-[11px] text-amber-600 font-semibold mt-1 flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3 shrink-0" />
+                  {tr(lang, 'Enter complete 11-digit reference number', 'مکمل 11 ہندسوں کا حوالہ نمبر درج کریں')}
+                </p>
+              )}
             </div>
             <div>
-              <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'Operating City', 'آپریٹنگ سٹی')}</label>
-              <select value={operatingCity} onChange={(e) => setOperatingCity(e.target.value)} className="w-full px-3 py-2 rounded-xl border border-zinc-300 bg-white">
+              <label className={`block font-semibold mb-1 ${labelTone}`}>{tr(lang, 'Operating City', 'آپریٹنگ سٹی')}</label>
+              <select
+                value={operatingCity}
+                onChange={(e) => setOperatingCity(e.target.value)}
+                className={`w-full px-3 py-2.5 rounded-xl border ${inputSurface}`}
+              >
                 <option value="Islamabad">Islamabad</option>
                 <option value="Rawalpindi">Rawalpindi</option>
                 <option value="Lahore">Lahore</option>
@@ -1538,7 +2255,7 @@ export const PartnerVerificationAndVehicleView: React.FC<{
           </div>
 
           <div className="space-y-3">
-            <label className="block text-xs font-semibold text-zinc-700">
+            <label className={`block text-xs font-semibold ${labelTone}`}>
               {tr(lang, 'Select Vehicle Category (including Van · 7-seater)', 'گاڑی کی کیٹگری منتخب کریں')}
             </label>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
@@ -1553,13 +2270,17 @@ export const PartnerVerificationAndVehicleView: React.FC<{
                       if (f.seating_capacity) setSeatingCapacity(f.seating_capacity);
                     }}
                     className={`p-2.5 rounded-xl border text-start transition-all flex items-center gap-2 ${
-                      active ? 'border-[#D4A017] bg-[#D4A017]/15 ring-1 ring-[#D4A017]' : 'border-zinc-200 bg-white'
+                      active
+                        ? 'border-[#D4A017] bg-[#D4A017]/15 ring-1 ring-[#D4A017]'
+                        : isDark
+                        ? 'border-zinc-800 bg-zinc-900'
+                        : 'border-zinc-200 bg-white'
                     }`}
                   >
                     <VehicleImage src={f.image_url} alt={f.name} categorySlug={f.slug} className="w-12 h-9 rounded-lg border shrink-0" />
                     <div className="min-w-0 flex-1">
                       <div className="text-[11px] font-bold truncate">{formatVehicleLabel(f.name, lang)}</div>
-                      <div className="text-[10px] text-zinc-500 font-mono">{f.seating_capacity} seats</div>
+                      <div className={`text-[10px] font-mono ${mutedTone}`}>{f.seating_capacity} seats</div>
                     </div>
                   </button>
                 );
@@ -1568,14 +2289,19 @@ export const PartnerVerificationAndVehicleView: React.FC<{
           </div>
 
           <div className="space-y-2">
-            <label className="block text-xs font-semibold text-zinc-700">
+            <label className={`block text-xs font-semibold ${labelTone}`}>
               {tr(lang, 'Service Eligibility Preferences', 'سروس کی اقسام')}
             </label>
             <div className="flex flex-wrap gap-3 text-xs">
               {(['pick_and_drop', 'ride_sharing', 'fuel_sharing'] as const).map((id) => {
                 const checked = services.includes(id);
                 return (
-                  <label key={id} className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-zinc-200 cursor-pointer">
+                  <label
+                    key={id}
+                    className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl border cursor-pointer ${
+                      checked ? 'border-[#D4A017] bg-[#D4A017]/10' : 'border-zinc-300/80'
+                    }`}
+                  >
                     <input
                       type="checkbox"
                       checked={checked}
@@ -1591,23 +2317,63 @@ export const PartnerVerificationAndVehicleView: React.FC<{
             </div>
           </div>
 
-          <div className="flex justify-between pt-4 border-t border-zinc-100">
+          {/* Interactive Readiness Summary (tap any item to jump to that step) */}
+          <div className={`p-4 rounded-xl border space-y-2.5 ${subSurface}`}>
+            <div className="flex items-center justify-between">
+              <span className={`text-xs font-bold ${labelTone}`}>
+                {tr(lang, 'Application Readiness Summary', 'درخواست کی تیاری کا جائزہ')}
+              </span>
+              <span className="text-[11px] font-mono font-bold text-[#B8860B]">
+                {completedChecksCount}/{readinessItems.length} {tr(lang, 'Ready', 'مکمل')}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {readinessItems.map((item) => (
+                <button
+                  key={item.step}
+                  type="button"
+                  onClick={() => setStep(item.step)}
+                  className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border text-left text-[11px] font-semibold transition-colors ${
+                    item.done
+                      ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
+                      : 'border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100'
+                  }`}
+                >
+                  <span className="shrink-0">{item.done ? '✓' : '•'}</span>
+                  <span className="truncate">{item.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap justify-between gap-2 pt-4 border-t border-zinc-200/60">
             <button
               type="button"
               onClick={() => setStep(5)}
-              className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-zinc-200 text-xs font-semibold text-zinc-700"
+              className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-zinc-300 text-xs font-semibold"
             >
               <ChevronLeft className="w-4 h-4" />
               <span>{tr(lang, 'Back', 'پچھلا')}</span>
             </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="inline-flex items-center gap-2 px-8 py-3 rounded-xl bg-emerald-700 text-white text-xs font-bold hover:bg-emerald-800 shadow-md"
-            >
-              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-              <span>{tr(lang, 'Submit Registration for Admin Approval', 'ایڈمن منظوری کے لیے رجسٹریشن جمع کروائیں')}</span>
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={savingDraft}
+                onClick={handleSaveDraft}
+                className="inline-flex items-center gap-1.5 px-4 py-3 rounded-xl border border-zinc-300 text-xs font-bold hover:border-[#D4A017]"
+              >
+                {savingDraft ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4 text-[#D4A017]" />}
+                <span>{tr(lang, 'Save Changes', 'محفوظ کریں')}</span>
+              </button>
+              <button
+                type="submit"
+                disabled={saving}
+                className="inline-flex items-center gap-2 px-7 py-3 rounded-xl bg-emerald-700 text-white text-xs font-bold hover:bg-emerald-800 shadow-md disabled:opacity-60"
+              >
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                <span>{tr(lang, 'Submit Registration for Admin Approval', 'ایڈمن منظوری کے لیے رجسٹریشن جمع کروائیں')}</span>
+              </button>
+            </div>
           </div>
         </form>
       )}

@@ -8,8 +8,10 @@ import { DEFAULT_PUBLIC_CONFIG } from './config/defaultConfig';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { tr } from './i18n/translations';
 import { AdminPortal } from './pages/admin/AdminPortal';
+import { AboutPage } from './pages/AboutPage';
 import { PartnerApp } from './pages/partner/PartnerApp';
 import { PassengerApp } from './pages/passenger/PassengerApp';
+import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage';
 import { PublicTripTrackingPage } from './pages/PublicTripTrackingPage';
 import { PublicWebsitePage } from './pages/PublicWebsitePage';
 import { WelcomePage } from './pages/WelcomePage';
@@ -23,6 +25,8 @@ function normalizePath(pathname: string): string {
   if (pathname === '/admin/login') return '/admin/login';
   if (pathname.startsWith('/admin')) return '/admin';
   if (pathname.startsWith('/website')) return '/website';
+  if (pathname.startsWith('/about')) return '/about';
+  if (pathname.startsWith('/privacy')) return '/privacy';
   return '/';
 }
 
@@ -170,6 +174,12 @@ const FirebaseProviderOrChildren: React.FC<{
       )}
       {path === '/website' && (
         <PublicWebsitePage config={config} lang={lang} onChangeLang={onChangeLang} onNavigate={onNavigate} />
+      )}
+      {path === '/about' && (
+        <AboutPage lang={lang} onChangeLang={onChangeLang} onNavigate={onNavigate} />
+      )}
+      {path === '/privacy' && (
+        <PrivacyPolicyPage lang={lang} onChangeLang={onChangeLang} onNavigate={onNavigate} />
       )}
       {path === '/passenger' && (
         <PassengerApp config={config} lang={lang} onChangeLang={onChangeLang} onNavigate={onNavigate} />

@@ -52,7 +52,7 @@ export const ThemeQuickToggle: React.FC<{
 
       {open && (
         <div
-          className={`pr-preserve-light absolute ${
+          className={`${!themeMeta.isDark ? 'pr-preserve-light' : ''} absolute ${
             lang === 'ur' ? 'left-0' : 'right-0'
           } mt-2 w-72 sm:w-80 rounded-2xl border shadow-2xl p-3.5 z-50 space-y-3 ${
             themeMeta.isDark

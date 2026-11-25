@@ -25,6 +25,7 @@ import {
   Wallet as WalletIcon,
   X,
 } from 'lucide-react';
+import { InvoiceViewerModal } from '../../components/InvoiceViewerModal';
 import { StreetMap, type MapFocusTarget } from '../../components/StreetMap';
 import { ProfileThemeRowButton } from '../../components/ThemeSwitcher';
 import { formatVehicleLabel, tr, trBookingStatus, trPaymentStatus, trService } from '../../i18n/translations';
@@ -69,26 +70,6 @@ function getPassengerAvatar(seed?: string): string {
   const idx = Math.abs(h) % PASSENGER_AVATARS.length;
   return PASSENGER_AVATARS[idx];
 }
-
-const CarOutlineGraphic: React.FC<{ className?: string }> = ({ className = 'w-24 h-11' }) => (
-  <div className="flex items-center justify-center px-3 py-1.5 rounded-2xl border border-amber-300/60 bg-[#FAF7EE] shadow-2xs">
-    <svg
-      viewBox="0 0 160 70"
-      className={`${className} stroke-[#9E730B] fill-none`}
-      strokeWidth="2.4"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M 12 45 C 18 45, 24 45, 30 45 C 32 37, 40 31, 49 31 C 58 31, 66 37, 68 45 L 98 45 C 100 37, 108 31, 117 31 C 126 31, 134 37, 136 45 L 148 45 C 153 45, 156 42, 154 37 C 150 29, 140 26, 126 25 C 114 24, 100 13, 84 11 C 66 9, 44 11, 34 22 L 20 28 C 14 30, 10 35, 10 40 Z" />
-      <circle cx="49" cy="45" r="9.5" className="stroke-[#9E730B]" strokeWidth="2.2" />
-      <circle cx="49" cy="45" r="3.5" className="fill-[#9E730B]" />
-      <circle cx="117" cy="45" r="9.5" className="stroke-[#9E730B]" strokeWidth="2.2" />
-      <circle cx="117" cy="45" r="3.5" className="fill-[#9E730B]" />
-      <path d="M 52 23 L 80 23 C 83 23, 86 24, 87 27 L 89 31 L 43 31 C 45 27, 48 24, 52 23 Z" />
-      <path d="M 93 23 L 112 24 C 117 25, 122 28, 124 31 L 93 31 Z" />
-    </svg>
-  </div>
-);
 
 type CategoryFilterKey = 'all' | 'instant' | 'pick_and_drop' | 'ride_sharing' | 'fuel_sharing';
 
@@ -421,8 +402,8 @@ export const PartnerRequestsView: React.FC<{
         </div>
       </div>
 
-      {/* 2. Compact Action Pills Row (~35% shorter): Docs Pending | Dark/Light | EN اردو | Logout */}
-      <div className="grid grid-cols-4 gap-1.5 w-full">
+      {/* 2. Compact Action Pills Row (Mobile Only; desktop already shows Sidebar & Header) */}
+      <div className="grid grid-cols-4 gap-1.5 w-full md:hidden">
         <button
           type="button"
           onClick={onGoToDocs}
@@ -623,141 +604,105 @@ export const PartnerRequestsView: React.FC<{
             const isInstant = ride.booking_mode === 'go_now';
             const isMonthly = !isInstant;
             const alreadyApplied = isMonthly && ride.my_application?.status === 'pending';
-            const commPct = ride.commission_pct ?? instantCommissionPct;
-            const commPkr = ride.commission_pkr ?? Math.round((Number(ride.proposed_fare_pkr || 0) * commPct) / 100);
-            const avatarUrl = getPassengerAvatar(ride.passenger_id || ride.passenger_name || ride.id);
-            const ratingDisplay = (ride as any).passenger_rating ? String((ride as any).passenger_rating) : '4.80';
             const etaMinutes = ride.duration_min || 6;
+            const timingText = isInstant
+              ? tr(lang, `Immediate · ~${etaMinutes} min`, `فوری روانگی · ~${etaMinutes} منٹ`)
+              : `${ride.pickup_date || tr(lang, 'Scheduled', 'طے شدہ')} · ${ride.pickup_time || tr(lang, 'Flexible', 'مقررہ وقت')}`;
 
             const categoryTagLabel = isInstant
-              ? '✦ INSTANT'
+              ? tr(lang, 'INSTANT BOOKING', 'انسٹنٹ بکنگ')
               : ride.service_type === 'pick_and_drop'
-              ? '✦ PICK & DROP'
+              ? tr(lang, 'PICK & DROP', 'پک اینڈ ڈراپ')
               : ride.service_type === 'ride_sharing'
-              ? '✦ RIDE SHARING'
-              : '✦ FUEL SHARING';
+              ? tr(lang, 'RIDE SHARING', 'رائیڈ شیئرنگ')
+              : tr(lang, 'FUEL SHARING', 'فیول شیئرنگ');
 
             return (
               <div
                 key={ride.id}
-                className="rounded-3xl border-2 border-amber-300/80 bg-white p-4 sm:p-5 shadow-[0_8px_24px_rgba(212,160,23,0.12)] space-y-3.5 transition-all"
+                className="rounded-2xl border-2 border-amber-300/80 bg-white p-4 sm:p-5 shadow-[0_6px_18px_rgba(212,160,23,0.1)] space-y-3 transition-all"
               >
-                {/* Top Row: Category Amber-Brown Pill + Bold Price & Distance */}
-                <div className="flex items-center justify-between gap-2">
-                  <span className="px-3 py-1 rounded-full bg-[#E9C378]/30 border border-[#D4A017] text-[#7A5306] text-xs font-black tracking-wide uppercase">
+                {/* Top Row: Category Label + Proposed Fare */}
+                <div className="flex items-center justify-between gap-2 pb-2 border-b border-zinc-100">
+                  <span className="text-[11px] font-extrabold tracking-wider uppercase text-[#8C6200]">
                     {categoryTagLabel}
                   </span>
 
                   <div className="font-display text-lg sm:text-xl font-black text-[#0D0D10] tracking-tight tabular-nums">
-                    Rs. {Number(ride.proposed_fare_pkr).toLocaleString()} • {ride.distance_km || '4.2'} km
+                    Rs. {Number(ride.proposed_fare_pkr).toLocaleString()}
                   </div>
                 </div>
 
-                {/* Middle Row: Passenger Avatar with Double Gold Ring + Route Details + Car Outline Silhouette */}
-                <div className="flex items-start justify-between gap-3 pt-1">
-                  {/* Left: Avatar + Details */}
-                  <div className="flex items-start gap-3 min-w-0 flex-1">
-                    <div className="relative shrink-0">
-                      <div className="w-13 h-13 sm:w-14 sm:h-14 rounded-full ring-2 ring-[#D4A017] ring-offset-2 ring-offset-white overflow-hidden bg-zinc-100 shadow-sm">
-                        <img
-                          src={avatarUrl}
-                          alt={ride.passenger_display || 'Passenger'}
-                          className="w-full h-full object-cover"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="min-w-0 flex-1 space-y-1.5">
-                      <div className="flex items-center gap-2">
-                        <h4 className="font-bold text-sm sm:text-base text-[#0D0D10] truncate">
-                          {ride.passenger_display || ride.passenger_name || 'Ahmed Khan'}
-                        </h4>
-                        <div className="flex items-center gap-0.5 text-xs font-extrabold text-[#0D0D10] shrink-0">
-                          <Star className="w-3.5 h-3.5 fill-[#D4A017] text-[#D4A017]" />
-                          <span>{ratingDisplay}</span>
-                        </div>
-                      </div>
-
-                      {/* Pickup */}
-                      <div className="flex items-start gap-2 text-xs">
-                        <div className="w-2.5 h-2.5 rounded-full bg-emerald-600 mt-1 shrink-0" />
-                        <div className="min-w-0">
-                          <span className="font-bold text-emerald-800 text-[11px] block leading-none">
-                            {tr(lang, 'Pickup', 'پِک اپ')}
-                          </span>
-                          <p dir="auto" className="text-xs font-bold text-[#0D0D10] leading-tight truncate">
-                            {ride.pickup_address}
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* Drop-off */}
-                      <div className="flex items-start gap-2 text-xs">
-                        <div className="w-2.5 h-2.5 rounded-full bg-red-600 mt-1 shrink-0" />
-                        <div className="min-w-0">
-                          <span className="font-bold text-red-700 text-[11px] block leading-none">
-                            {tr(lang, 'Drop-off', 'منزل')}
-                          </span>
-                          <p dir="auto" className="text-xs font-bold text-[#0D0D10] leading-tight truncate">
-                            {ride.dropoff_address}
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* ETA Badge */}
-                      <div className="inline-flex items-center gap-1 text-[11px] font-bold text-zinc-700 pt-0.5">
-                        <span>⏱</span>
-                        <span>{etaMinutes} min</span>
-                      </div>
+                {/* Essentials Only: Pickup, Drop-off & Timing */}
+                <div className="space-y-2.5 text-xs">
+                  <div className="flex items-start gap-2.5">
+                    <div className="w-2.5 h-2.5 rounded-full bg-emerald-600 mt-1 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <span className="font-extrabold text-emerald-800 text-[11px] block leading-none mb-0.5">
+                        {tr(lang, 'Pickup Point', 'پِک اپ مقام')}
+                      </span>
+                      <p dir="auto" className="text-xs sm:text-sm font-bold text-[#0D0D10] leading-snug line-clamp-1">
+                        {ride.pickup_address}
+                      </p>
                     </div>
                   </div>
 
-                  {/* Right: Vehicle Line Art Graphic in Pill */}
-                  <div className="hidden xs:flex flex-col items-end shrink-0 pt-2">
-                    <CarOutlineGraphic className="w-22 h-10" />
+                  <div className="flex items-start gap-2.5">
+                    <div className="w-2.5 h-2.5 rounded-full bg-red-600 mt-1 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <span className="font-extrabold text-red-700 text-[11px] block leading-none mb-0.5">
+                        {tr(lang, 'Drop-off Point', 'ڈراپ آف مقام')}
+                      </span>
+                      <p dir="auto" className="text-xs sm:text-sm font-bold text-[#0D0D10] leading-snug line-clamp-1">
+                        {ride.dropoff_address}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 pt-1 text-xs font-bold text-zinc-700">
+                    <span>
+                      {tr(lang, 'Timing:', 'وقت:')} <strong className="text-[#0D0D10]">{timingText}</strong>
+                    </span>
                   </div>
                 </div>
 
-                {/* Bottom Row: 3 Pill Buttons (Decline | Details | Accept) */}
-                <div className="grid grid-cols-3 gap-2.5 pt-1">
-                  {/* 1. Decline Button */}
+                {/* Bottom Row: Decline | View Details | Accept */}
+                <div className="grid grid-cols-3 gap-2 pt-1">
                   <button
                     type="button"
                     disabled={busyId === ride.id}
                     onClick={() => handleCancelDecline(ride.id)}
-                    className="min-h-[44px] py-2 px-3 rounded-full border border-amber-300 bg-white hover:bg-red-50 text-[#0D0D10] text-xs font-extrabold flex items-center justify-center gap-1.5 shadow-2xs disabled:opacity-60 transition-all whitespace-nowrap"
+                    className="min-h-[42px] py-2 px-2.5 rounded-xl border border-zinc-300 bg-white hover:bg-red-50 text-[#0D0D10] text-xs font-extrabold flex items-center justify-center gap-1 disabled:opacity-60 transition-all whitespace-nowrap"
                   >
-                    <X className="w-4 h-4 text-red-600 shrink-0" />
+                    <X className="w-3.5 h-3.5 text-red-600 shrink-0" />
                     <span>{lang === 'ur' ? 'رد کریں' : 'Decline'}</span>
                   </button>
 
-                  {/* 2. Details Button */}
                   <button
                     type="button"
                     onClick={() => setDetailsRequest(ride)}
-                    className="min-h-[44px] py-2 px-3 rounded-full border border-amber-300 bg-white hover:bg-amber-50 text-[#0D0D10] text-xs font-extrabold flex items-center justify-center gap-1.5 shadow-2xs transition-all whitespace-nowrap"
+                    className="min-h-[42px] py-2 px-2.5 rounded-xl border border-[#D4A017] bg-amber-50/50 hover:bg-amber-50 text-[#0D0D10] text-xs font-extrabold flex items-center justify-center gap-1 transition-all whitespace-nowrap"
                   >
-                    <FileText className="w-4 h-4 text-[#9E730B] shrink-0" />
-                    <span>{lang === 'ur' ? 'تفصیل' : 'Details'}</span>
+                    <FileText className="w-3.5 h-3.5 text-[#8C6200] shrink-0" />
+                    <span>{lang === 'ur' ? 'مکمل تفصیل' : 'View Details'}</span>
                   </button>
 
-                  {/* 3. Accept Button */}
                   {alreadyApplied ? (
                     <button
                       type="button"
                       disabled
-                      className="min-h-[44px] py-2 px-3 rounded-full bg-amber-100 text-amber-900 border border-amber-300 text-xs font-extrabold flex items-center justify-center gap-1.5 shadow-2xs whitespace-nowrap"
+                      className="min-h-[42px] py-2 px-2.5 rounded-xl bg-amber-100 text-amber-900 border border-amber-300 text-xs font-extrabold flex items-center justify-center gap-1 whitespace-nowrap"
                     >
-                      <Check className="w-4 h-4 shrink-0" />
+                      <Check className="w-3.5 h-3.5 shrink-0" />
                       <span>{lang === 'ur' ? 'درخواست جمع' : 'Applied'}</span>
                     </button>
                   ) : !walletEligibleForInstant && isInstant && onGoToWallet ? (
                     <button
                       type="button"
                       onClick={onGoToWallet}
-                      className="min-h-[44px] py-2 px-3 rounded-full bg-amber-500 text-[#0D0D10] text-xs font-extrabold flex items-center justify-center gap-1.5 shadow-2xs whitespace-nowrap"
+                      className="min-h-[42px] py-2 px-2.5 rounded-xl bg-amber-500 text-[#0D0D10] text-xs font-extrabold flex items-center justify-center gap-1 whitespace-nowrap"
                     >
-                      <WalletIcon className="w-4 h-4 shrink-0" />
+                      <WalletIcon className="w-3.5 h-3.5 shrink-0" />
                       <span>{lang === 'ur' ? 'والیٹ بھریں' : 'Top Up'}</span>
                     </button>
                   ) : (
@@ -765,9 +710,9 @@ export const PartnerRequestsView: React.FC<{
                       type="button"
                       disabled={busyId === ride.id}
                       onClick={() => handleAccept(ride.id)}
-                      className="min-h-[44px] py-2 px-3 rounded-full bg-gradient-to-r from-[#0D0D10] to-[#201A09] text-[#F4C430] border border-[#D4A017] hover:brightness-110 active:scale-98 text-xs font-extrabold flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-60 transition-all whitespace-nowrap"
+                      className="min-h-[42px] py-2 px-2.5 rounded-xl bg-[#0D0D10] text-[#F4C430] border border-[#D4A017] hover:brightness-110 active:scale-98 text-xs font-extrabold flex items-center justify-center gap-1 shadow-xs disabled:opacity-60 transition-all whitespace-nowrap"
                     >
-                      <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                       <span>{lang === 'ur' ? 'قبول کریں' : 'Accept'}</span>
                     </button>
                   )}
@@ -878,26 +823,55 @@ export const PartnerRequestsView: React.FC<{
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-zinc-200 p-3.5 space-y-2 text-xs">
-                <div className="flex items-center justify-between gap-2 text-zinc-600">
-                  <span>
-                    {tr(lang, 'Passenger:', 'مسافر:')} <strong className="text-[#0D0D10]">{detailsRequest.passenger_display}</strong>
-                  </span>
-                  <span className="font-mono">
-                    {detailsRequest.pickup_date} · {detailsRequest.pickup_time}
-                  </span>
+              <div className="rounded-2xl border border-zinc-200 p-3.5 space-y-2.5 text-xs">
+                <div className="flex items-center justify-between gap-2 pb-2 border-b border-zinc-100">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <img
+                      src={getPassengerAvatar(detailsRequest.passenger_id || detailsRequest.passenger_name || detailsRequest.id)}
+                      alt={detailsRequest.passenger_display || 'Passenger'}
+                      className="w-9 h-9 rounded-full object-cover ring-2 ring-[#D4A017] shrink-0"
+                    />
+                    <div className="min-w-0">
+                      <strong className="text-sm font-extrabold text-[#0D0D10] block truncate">
+                        {detailsRequest.passenger_display || detailsRequest.passenger_name}
+                      </strong>
+                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-zinc-600">
+                        <Star className="w-3 h-3 fill-[#D4A017] text-[#D4A017]" />
+                        {(detailsRequest as any).passenger_rating || '4.80'} · {trService(lang, detailsRequest.service_type)}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <span className="font-mono font-bold text-[#0D0D10] block">
+                      {detailsRequest.pickup_date || tr(lang, 'Immediate', 'فوری')} · {detailsRequest.pickup_time || tr(lang, 'Now', 'ابھی')}
+                    </span>
+                    <span className="text-[10px] font-bold text-zinc-500">
+                      {detailsRequest.booking_mode === 'go_now'
+                        ? tr(lang, 'Instant Dispatch', 'فوری روانگی')
+                        : detailsRequest.return_journey
+                        ? tr(lang, 'Two-Way Commute', 'آنا جانا')
+                        : tr(lang, 'One-Way Commute', 'یک طرفہ')}
+                    </span>
+                  </div>
                 </div>
-                <div className="flex items-start gap-2 pt-1 border-t border-zinc-100">
+
+                <div className="flex items-start gap-2">
                   <MapPin className="w-3.5 h-3.5 text-emerald-700 mt-0.5 shrink-0" />
-                  <span>{detailsRequest.pickup_address}</span>
+                  <div>
+                    <span className="text-[10px] font-bold text-emerald-800 block">{tr(lang, 'Pickup', 'پِک اپ')}</span>
+                    <span className="font-semibold text-[#0D0D10]">{detailsRequest.pickup_address}</span>
+                  </div>
                 </div>
                 <div className="flex items-start gap-2">
                   <Navigation className="w-3.5 h-3.5 text-red-600 mt-0.5 shrink-0" />
-                  <span>{detailsRequest.dropoff_address}</span>
+                  <div>
+                    <span className="text-[10px] font-bold text-red-700 block">{tr(lang, 'Drop-off', 'منزل')}</span>
+                    <span className="font-semibold text-[#0D0D10]">{detailsRequest.dropoff_address}</span>
+                  </div>
                 </div>
                 {detailsRequest.notes && (
-                  <p className="text-[11px] text-zinc-500 pt-1 border-t border-zinc-100">
-                    {tr(lang, 'Note:', 'ہدایت:')} {detailsRequest.notes}
+                  <p className="text-[11px] font-semibold text-zinc-600 pt-1.5 border-t border-zinc-100">
+                    {tr(lang, 'Passenger Note:', 'مسافر کی ہدایت:')} {detailsRequest.notes}
                   </p>
                 )}
               </div>
@@ -1062,6 +1036,7 @@ export const PartnerTripsView: React.FC<{
   const [tab, setTab] = useState<'active' | 'upcoming' | 'completed' | 'cancelled'>('active');
   const [busyId, setBusyId] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [invoiceBooking, setInvoiceBooking] = useState<Booking | null>(null);
 
   const filtered = trips.filter((tItem) => {
     if (tab === 'upcoming') return tItem.booking_mode === 'schedule' && tItem.status === 'confirmed';
@@ -1252,6 +1227,14 @@ export const PartnerTripsView: React.FC<{
                   )}
                   <button
                     type="button"
+                    onClick={() => setInvoiceBooking(trip)}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-zinc-200 bg-white text-[#0D0D10] text-xs font-bold hover:bg-zinc-50"
+                  >
+                    <FileText className="w-3.5 h-3.5 text-[#D4A017]" />
+                    {tr(lang, 'View Invoice', 'انوائس دیکھیں')}
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => downloadBookingPdf(trip, 'partner', trip.passenger_name)}
                     className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#0D0D10] text-white text-xs font-semibold"
                   >
@@ -1264,6 +1247,14 @@ export const PartnerTripsView: React.FC<{
           })}
         </div>
       )}
+
+      <InvoiceViewerModal
+        booking={invoiceBooking}
+        viewerRole="partner"
+        passengerName={invoiceBooking?.passenger_name}
+        lang={lang}
+        onClose={() => setInvoiceBooking(null)}
+      />
     </div>
   );
 };

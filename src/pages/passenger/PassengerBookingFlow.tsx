@@ -4,16 +4,19 @@ import {
   ArrowLeft,
   Calendar,
   Check,
+  CheckCircle2,
   ChevronDown,
   Clock,
   Download,
   Edit2,
+  FileText,
   Loader2,
   MapPin,
   Minus,
   Phone,
   Plus,
   Share2,
+  ShieldCheck,
   Users,
   Fuel,
   CarFront,
@@ -22,6 +25,7 @@ import {
 } from 'lucide-react';
 import { AnalogClockPicker } from '../../components/AnalogClockPicker';
 import { VehicleImage } from '../../components/BrandMark';
+import { InvoiceViewerModal } from '../../components/InvoiceViewerModal';
 import { LocationAutocomplete, reverseGeocodePakistan } from '../../components/LocationAutocomplete';
 import { ShareTripStatusModal } from '../../components/ShareTripStatusModal';
 import { StreetMap } from '../../components/StreetMap';
@@ -126,7 +130,7 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
   });
 
   // 0 = Service Selector Home Screen (Instant Booking, Pick & Drop, Ride Sharing, Fuel Sharing)
-  // If user came from a specific button on welcome page, jump straight to Step 1!
+  // If user came from a specific button on welcome/website page, jump straight to Step 1!
   const [currentStep, setCurrentStep] = useState<BookingStep>(() => {
     try {
       const saved = sessionStorage.getItem('pr_initial_service');
@@ -153,37 +157,73 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
   const [route, setRoute] = useState<RouteResult | null>(null);
   const [routeLoading, setRouteLoading] = useState(false);
 
-  // Step 3: Time Selection
-  const [pickupTime, setPickupTime] = useState('9:15 AM');
-  const [dropoffTime, setDropoffTime] = useState('6:00 PM');
+  // Step 3: Time Selection (must be explicitly confirmed via clock before advancing)
+  const [pickupTime, setPickupTime] = useState('');
+  const [dropoffTime, setDropoffTime] = useState('');
   const [activeClockTarget, setActiveClockTarget] = useState<'pickup' | 'dropoff' | null>(null);
 
-  // Step 4: Date, Package & Travel Days
-  const [startDate, setStartDate] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 1);
-    return d.toISOString().slice(0, 10);
+  // Step 4: Date, Package, Travel Days & Passengers (date & passengers must be explicitly selected)
+  const [startDate, setStartDate] = useState('');
+  const [selectedPackageDays, setSelectedPackageDays] = useState<number>(() => {
+    try {
+      const pkgDays = Number(sessionStorage.getItem('pr_initial_package_days') || '');
+      sessionStorage.removeItem('pr_initial_package_days');
+      return pkgDays === 26 ? 26 : 22;
+    } catch {
+      return 22;
+    }
   });
-  const [selectedPackageDays, setSelectedPackageDays] = useState<number>(22);
-  const [travelDays, setTravelDays] = useState<string[]>(['Mon', 'Tue', 'Wed', 'Thu', 'Fri']);
-  const [passengersCount, setPassengersCount] = useState<number>(1);
+  const [travelDays, setTravelDays] = useState<string[]>(() =>
+    selectedPackageDays === 26
+      ? ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+      : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
+  );
+  const [passengersCount, setPassengersCount] = useState<number>(() =>
+    bookingMode === 'go_now' ? 1 : 0
+  );
   const [returnJourney, setReturnJourney] = useState<boolean>(true);
 
   // Step 5: Fleet Vehicle Selection
-  const [selectedVehicleId, setSelectedVehicleId] = useState<string>('fleet-economy');
+  const [selectedVehicleId, setSelectedVehicleId] = useState<string>(() => {
+    try {
+      const savedVeh = sessionStorage.getItem('pr_initial_vehicle');
+      sessionStorage.removeItem('pr_initial_vehicle');
+      return savedVeh || 'fleet-economy';
+    } catch {
+      return 'fleet-economy';
+    }
+  });
 
-  // Step 6: Billing & Confirmation
+  // Step 6: Billing & Confirmation + Final Review Modal
   const [offeredFare, setOfferedFare] = useState<number>(20240);
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'wallet' | 'jazzcash_easypaisa'>('cash');
   const [notes, setNotes] = useState('');
+  const [showReviewModal, setShowReviewModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   // Step 7: Confirmed Receipt
   const [confirmedBooking, setConfirmedBooking] = useState<Booking | null>(null);
 
+  const resetWizardInputs = (mode: 'go_now' | 'schedule', pkgDays = 22) => {
+    setDropoff(null);
+    setRoute(null);
+    setPickupTime('');
+    setDropoffTime('');
+    setActiveClockTarget(null);
+    setStartDate('');
+    setSelectedPackageDays(pkgDays);
+    setTravelDays(pkgDays === 26 ? ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']);
+    setPassengersCount(mode === 'go_now' ? 1 : 0);
+    setReturnJourney(true);
+    setNotes('');
+    setShowReviewModal(false);
+    setSubmitError(null);
+  };
+
   // Secondary Active Trip Drawer State
   const [shareModalBooking, setShareModalBooking] = useState<Booking | null>(null);
+  const [invoiceModalBooking, setInvoiceModalBooking] = useState<Booking | null>(null);
   const [viewActiveTripTab, setViewActiveTripTab] = useState(false);
 
   // Real-time drag-to-pin geocode state
@@ -239,10 +279,10 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
     const seq = ++geocodeSeqRef.current[target];
     if (target === 'pickup') {
       userTouchedPickupRef.current = true;
-      setPickup((curr) => ({ label: curr?.label && !isRawCoordsLabel(curr.label) ? curr.label : '', lat, lng }));
+      setPickup({ label: '', lat, lng });
     } else {
       userTouchedDropoffRef.current = true;
-      setDropoff((curr) => ({ label: curr?.label && !isRawCoordsLabel(curr.label) ? curr.label : '', lat, lng }));
+      setDropoff({ label: '', lat, lng });
     }
     setResolvingAddress(target);
     if (geocodeTimerRef.current) {
@@ -313,6 +353,21 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
       setRoute(null);
       return;
     }
+    // Immediate Haversine estimate so distance never stays blank while live road routing resolves
+    const straightInit = haversineKm(pickup.lat, pickup.lng, dropoff.lat, dropoff.lng);
+    const roadEstKm = Math.max(1, Math.round(straightInit * 1.25 * 10) / 10);
+    setRoute((prev) => ({
+      distanceKm: roadEstKm,
+      durationMin: Math.max(4, Math.round(roadEstKm * 1.8)),
+      coordinates:
+        prev?.coordinates && prev.coordinates.length >= 2
+          ? prev.coordinates
+          : [
+              [pickup.lat, pickup.lng],
+              [dropoff.lat, dropoff.lng],
+            ],
+    }));
+
     let cancelled = false;
     (async () => {
       setRouteLoading(true);
@@ -434,8 +489,10 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
       ratePerKm = 40;
     } else if (v.slug === 'comfort') {
       ratePerKm = 30;
-    } else if (v.slug.includes('sedan') || v.slug.includes('suv')) {
+    } else if (v.slug.includes('sedan')) {
       ratePerKm = 60;
+    } else if (v.slug.includes('suv')) {
+      ratePerKm = 70;
     } else if (v.slug.includes('premium')) {
       ratePerKm = 75;
     } else if (v.slug.includes('luxury')) {
@@ -454,7 +511,10 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
       ratePerKm = 16;
     }
 
-    const calculatedTotal = Math.round(totalKm * ratePerKm * Math.max(1, passengersCount));
+    // Pick & Drop hires the entire vehicle (do NOT multiply by passenger count);
+    // Ride Sharing & Fuel Sharing are per-seat services.
+    const billableSeats = serviceType === 'pick_and_drop' ? 1 : Math.max(1, passengersCount);
+    const calculatedTotal = Math.round(totalKm * ratePerKm * billableSeats);
     return {
       ratePerKm,
       totalKm,
@@ -464,8 +524,22 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
 
   const vehiclesList = useMemo<FleetCategory[]>(() => {
     const sourceFleet = config?.fleet?.length ? config.fleet : DEFAULT_PUBLIC_CONFIG.fleet;
-    return sourceFleet.filter((f) => f.is_active === 1);
-  }, [config?.fleet]);
+    const minSeats = bookingMode === 'go_now' ? 1 : Math.max(1, passengersCount);
+    return sourceFleet.filter((f) => {
+      if (f.is_active !== 1) return false;
+      if (Array.isArray(f.services_eligible) && f.services_eligible.length > 0) {
+        if (!f.services_eligible.includes(serviceType)) return false;
+      }
+      if (Number(f.seating_capacity || 1) < minSeats) return false;
+      return true;
+    });
+  }, [config?.fleet, serviceType, bookingMode, passengersCount]);
+
+  useEffect(() => {
+    if (vehiclesList.length > 0 && !vehiclesList.some((v) => v.id === selectedVehicleId)) {
+      setSelectedVehicleId(vehiclesList[0].id);
+    }
+  }, [vehiclesList, selectedVehicleId]);
 
   const selectedVehicle = useMemo(() => {
     return vehiclesList.find((v) => v.id === selectedVehicleId) || vehiclesList[0] || null;
@@ -516,11 +590,11 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
           distanceKm: route?.distanceKm || calc.totalKm || 10,
           durationMin: route?.durationMin || 20,
           vehicleCategoryId: selectedVehicle.id,
-          seatsRequested: passengersCount,
-          pickupDate: startDate,
-          pickupTime,
-          expectedDropoffDate: startDate,
-          expectedDropoffTime: dropoffTime,
+          seatsRequested: Math.max(1, passengersCount),
+          pickupDate: startDate || new Date().toISOString().slice(0, 10),
+          pickupTime: pickupTime || '9:15 AM',
+          expectedDropoffDate: startDate || new Date().toISOString().slice(0, 10),
+          expectedDropoffTime: dropoffTime || '6:00 PM',
           returnJourney,
           packageId: bookingMode === 'schedule' ? (selectedPackageDays === 22 ? 'pkg-22-days' : 'pkg-26-days') : undefined,
           packageDays: bookingMode === 'schedule' ? selectedPackageDays : undefined,
@@ -537,6 +611,7 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
           schedule_days: Array.isArray(res.booking.schedule_days) ? res.booking.schedule_days : travelDays,
         };
         setConfirmedBooking(createdBooking);
+        setShowReviewModal(false);
         setCurrentStep(7);
         onBookingCreated?.(createdBooking);
         if (firebaseUser?.emailVerified) {
@@ -576,11 +651,11 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
           duration_min: route?.durationMin || 20,
           vehicle_category_id: selectedVehicle.id,
           vehicle_category_name: selectedVehicle.name,
-          seats_requested: passengersCount,
-          pickup_date: startDate,
-          pickup_time: pickupTime,
-          expected_dropoff_date: startDate,
-          expected_dropoff_time: dropoffTime,
+          seats_requested: Math.max(1, passengersCount),
+          pickup_date: startDate || new Date().toISOString().slice(0, 10),
+          pickup_time: pickupTime || '9:15 AM',
+          expected_dropoff_date: startDate || new Date().toISOString().slice(0, 10),
+          expected_dropoff_time: dropoffTime || '6:00 PM',
           actual_dropoff_time: null,
           return_journey: returnJourney ? 1 : 0,
           package_id: bookingMode === 'schedule' ? (selectedPackageDays === 22 ? 'pkg-22-days' : 'pkg-26-days') : null,
@@ -626,6 +701,7 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
           }).catch(() => {});
         }
         setConfirmedBooking(localBooking);
+        setShowReviewModal(false);
         setCurrentStep(7);
         await onRefreshBookings();
         return;
@@ -795,15 +871,25 @@ PRO RIDER AI — Travel with Trust`;
                 <span className="font-semibold text-[#0D0D10]">{activeBooking.dropoff_address}</span>
               </div>
             </div>
-            <div className="flex items-center justify-between pt-2">
-              <button
-                type="button"
-                onClick={() => downloadBookingPdf(activeBooking, 'passenger', passengerName)}
-                className="px-4 py-2.5 rounded-xl bg-[#0D0D10] text-white text-xs font-semibold inline-flex items-center gap-1.5"
-              >
-                <Download className="w-3.5 h-3.5 text-[#D4A017]" />
-                {tr(lang, 'Download PDF Bill', 'پی ڈی ایف بل ڈاؤن لوڈ')}
-              </button>
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setInvoiceModalBooking(activeBooking)}
+                  className="px-4 py-2.5 rounded-xl border border-zinc-300 bg-white text-[#0D0D10] text-xs font-bold inline-flex items-center gap-1.5 hover:bg-zinc-50"
+                >
+                  <FileText className="w-3.5 h-3.5 text-[#D4A017]" />
+                  {tr(lang, 'View Invoice', 'انوائس دیکھیں')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => downloadBookingPdf(activeBooking, 'passenger', passengerName)}
+                  className="px-4 py-2.5 rounded-xl bg-[#0D0D10] text-white text-xs font-semibold inline-flex items-center gap-1.5"
+                >
+                  <Download className="w-3.5 h-3.5 text-[#D4A017]" />
+                  {tr(lang, 'Download PDF Bill', 'پی ڈی ایف بل ڈاؤن لوڈ')}
+                </button>
+              </div>
               <button
                 type="button"
                 onClick={() => setViewActiveTripTab(false)}
@@ -818,261 +904,237 @@ PRO RIDER AI — Travel with Trust`;
 
       {/* STEP 0: SERVICE SELECTOR HOME SCREEN (Instant Booking, Pick & Drop, Ride Sharing, Fuel Sharing) */}
       {!viewActiveTripTab && currentStep === 0 && (
-        <div className="max-w-4xl w-full mx-auto p-4 sm:p-8 space-y-5">
-          <div className="text-center space-y-2">
-            <p className="text-xs font-bold uppercase tracking-widest text-[#B8860B]">
-              {tr(lang, `Welcome, ${passengerName}`, `خوش آمدید، ${passengerName}`)}
-            </p>
-            <h1 className="font-display text-3xl sm:text-4xl font-extrabold tracking-tight text-[#0D0D10] leading-tight">
-              {tr(lang, 'Select Your Service', 'اپنی سفری سروس منتخب کریں')}
-            </h1>
-            <p className="text-sm text-zinc-600 max-w-xl mx-auto leading-relaxed">
-              {tr(
-                lang,
-                'Choose Instant Booking for immediate dispatch, or Pick & Drop, Ride Sharing & Fuel Sharing for monthly commute.',
-                'فوری ون ٹائم سفر کے لیے انسٹنٹ بکنگ منتخب کریں، یا روزمرہ سفر کے لیے پک اینڈ ڈراپ، رائیڈ شیئرنگ اور فیول شیئرنگ چنیں۔'
-              )}
-            </p>
-          </div>
+        <div className="flex-1 flex flex-col w-full">
+          {/* Slim Single-Line Sub-Navigation Bar directly under Top Header */}
+          <nav
+            aria-label={tr(lang, 'Pending bookings by category', 'بُکنگز کی کیٹگریز')}
+            className="w-full border-b border-zinc-200 bg-white/95 px-3 sm:px-6 h-10 flex items-center"
+          >
+            <div className="max-w-5xl mx-auto w-full flex items-center justify-start sm:justify-center gap-2 overflow-x-auto no-scrollbar whitespace-nowrap">
+              {[
+                {
+                  key: 'instant',
+                  label: tr(lang, 'Instant', 'انسٹنٹ'),
+                  count: categoryPendingCounts.instant,
+                },
+                {
+                  key: 'pick_and_drop',
+                  label: tr(lang, 'Pick & Drop', 'پک اینڈ ڈراپ'),
+                  count: categoryPendingCounts.pick_and_drop,
+                },
+                {
+                  key: 'ride_sharing',
+                  label: tr(lang, 'Ride Sharing', 'رائیڈ شیئرنگ'),
+                  count: categoryPendingCounts.ride_sharing,
+                },
+                {
+                  key: 'fuel_sharing',
+                  label: tr(lang, 'Fuel Sharing', 'فیول شیئرنگ'),
+                  count: categoryPendingCounts.fuel_sharing,
+                },
+              ].map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => onGoToBookings('pending')}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-zinc-200 bg-zinc-50 hover:border-[#D4A017] hover:bg-amber-50/40 text-[11px] font-extrabold text-[#0D0D10] transition-colors shrink-0 whitespace-nowrap"
+                >
+                  <span>{item.label}</span>
+                  <span className="font-mono text-[10px] font-extrabold text-[#9A6E08] tabular-nums">
+                    ({item.count})
+                  </span>
+                </button>
+              ))}
+            </div>
+          </nav>
 
-          {/* Live Category Counters Summary Strip */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            <button
-              type="button"
-              onClick={() => onGoToBookings('pending')}
-              className="flex items-center justify-between px-3 py-2 rounded-xl bg-[#0D0D10] text-white border border-[#D4A017]/60 text-[11px] font-bold hover:border-[#F4C430] transition-colors"
-            >
-              <span className="truncate">{tr(lang, 'INSTANT BOOKING', 'انسٹنٹ بکنگ')}</span>
-              <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-[#F4C430] text-[#0D0D10] font-mono text-[10px] tabular-nums shrink-0">
-                {categoryPendingCounts.instant}
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => onGoToBookings('pending')}
-              className="flex items-center justify-between px-3 py-2 rounded-xl bg-white text-[#0D0D10] border border-zinc-200 text-[11px] font-bold hover:border-[#D4A017] transition-colors"
-            >
-              <span className="truncate">{tr(lang, 'PICK & DROP', 'پک اینڈ ڈراپ')}</span>
-              <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-900 font-mono text-[10px] tabular-nums shrink-0">
-                {categoryPendingCounts.pick_and_drop}
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => onGoToBookings('pending')}
-              className="flex items-center justify-between px-3 py-2 rounded-xl bg-white text-[#0D0D10] border border-zinc-200 text-[11px] font-bold hover:border-[#D4A017] transition-colors"
-            >
-              <span className="truncate">{tr(lang, 'RIDE SHARING', 'رائیڈ شیئرنگ')}</span>
-              <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-900 font-mono text-[10px] tabular-nums shrink-0">
-                {categoryPendingCounts.ride_sharing}
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => onGoToBookings('pending')}
-              className="flex items-center justify-between px-3 py-2 rounded-xl bg-white text-[#0D0D10] border border-zinc-200 text-[11px] font-bold hover:border-[#D4A017] transition-colors"
-            >
-              <span className="truncate">{tr(lang, 'FUEL SHARING', 'فیول شیئرنگ')}</span>
-              <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-900 font-mono text-[10px] tabular-nums shrink-0">
-                {categoryPendingCounts.fuel_sharing}
-              </span>
-            </button>
-          </div>
+          <div className="max-w-4xl w-full mx-auto p-4 sm:p-8 space-y-6">
+            <div className="text-center space-y-2">
+              <p className="text-xs font-extrabold uppercase tracking-widest text-[#9A6E08]">
+                {tr(lang, `Welcome, ${passengerName}`, `خوش آمدید، ${passengerName}`)}
+              </p>
+              <h1
+                className={`font-display text-2xl sm:text-4xl font-extrabold tracking-tight text-[#0D0D10] ${
+                  lang === 'ur' ? 'leading-[1.6]' : 'leading-tight'
+                }`}
+              >
+                {tr(lang, 'Select Your Service', 'اپنی سفری سروس منتخب کریں')}
+              </h1>
+              <p className="text-sm font-semibold text-zinc-700 max-w-xl mx-auto leading-relaxed">
+                {tr(
+                  lang,
+                  'Choose Instant Booking for immediate dispatch, or Pick & Drop, Ride Sharing & Fuel Sharing for scheduled daily and monthly commutes.',
+                  'فوری روانگی کے لیے انسٹنٹ بکنگ منتخب کریں، یا روزانہ و ماہانہ سفر کے لیے پک اینڈ ڈراپ، رائیڈ شیئرنگ اور فیول شیئرنگ چُنیں۔'
+                )}
+              </p>
+            </div>
 
-          {/* 4 Main Booking Category Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-3.5">
-            {/* 1. Instant Booking (Highlighted Sovereign Gold Style) */}
-            <button
-              type="button"
-              onClick={() => {
-                setBookingMode('go_now');
-                setServiceType('pick_and_drop');
-                setDropoff(null);
-                setRoute(null);
-                setSubmitError(null);
-                setCurrentStep(1);
-              }}
-              className="group relative rounded-2xl border-2 border-[#D4A017] bg-gradient-to-br from-[#16161B] via-[#0D0D10] to-[#261E0A] text-white p-3.5 sm:p-4 text-start shadow-md hover:shadow-lg hover:border-[#F4C430] active:scale-[0.99] transition-all flex flex-col justify-between gap-2 min-h-[88px]"
-            >
-              <div className="flex items-center justify-between">
-                <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#F4C430] to-[#B8860B] text-[#0D0D10] flex items-center justify-center font-bold shadow-xs group-hover:scale-105 transition-transform">
-                  <Zap className="w-3.5 h-3.5 fill-[#0D0D10]" />
-                </div>
-                <div className="flex items-center gap-1.5">
-                  {categoryPendingCounts.instant > 0 && (
-                    <span className="px-2 py-0.5 rounded-full bg-red-600 text-white font-mono font-bold text-[10px] tabular-nums">
-                      ({categoryPendingCounts.instant})
-                    </span>
-                  )}
-                  <span className="px-2 py-0.5 rounded-full bg-[#F4C430] text-[#0D0D10] font-bold text-[8px] uppercase tracking-widest shadow-xs">
+            {/* 4 Clean Primary Booking Category Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 sm:gap-4">
+              {/* 1. Instant Booking */}
+              <button
+                type="button"
+                onClick={() => {
+                  setBookingMode('go_now');
+                  setServiceType('pick_and_drop');
+                  resetWizardInputs('go_now');
+                  setCurrentStep(1);
+                }}
+                className="group relative rounded-2xl border-2 border-[#D4A017] bg-gradient-to-br from-[#16161B] via-[#0D0D10] to-[#261E0A] text-white p-4 sm:p-5 text-start shadow-md hover:shadow-lg hover:border-[#F4C430] active:scale-[0.99] transition-all flex flex-col justify-between gap-3 min-h-[104px]"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#F4C430] to-[#B8860B] text-[#0D0D10] flex items-center justify-center font-bold shadow-xs group-hover:scale-105 transition-transform">
+                    <Zap className="w-4 h-4 fill-[#0D0D10]" />
+                  </div>
+                  <span className="text-[10px] font-extrabold uppercase tracking-widest text-[#F4C430]">
                     {tr(lang, 'Fast Dispatch', 'فوری روانگی')}
                   </span>
                 </div>
-              </div>
 
-              <div className="space-y-0.5">
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <h2 className="font-display text-base font-extrabold text-[#F4C430]">
+                      {tr(lang, 'INSTANT BOOKING', 'انسٹنٹ بکنگ')}
+                    </h2>
+                    <ArrowRight
+                      className={`w-4 h-4 text-[#F4C430] transition-transform ${
+                        lang === 'ur' ? 'rotate-180 group-hover:-translate-x-1' : 'group-hover:translate-x-1'
+                      }`}
+                    />
+                  </div>
+                  <p className="text-xs font-medium text-zinc-200 leading-snug">
+                    {tr(
+                      lang,
+                      'Private vehicle dispatched immediately to your pickup pin.',
+                      'پوری گاڑی آپ کے لیے، قریبی ڈرائیور کے ساتھ فوری روانگی۔'
+                    )}
+                  </p>
+                </div>
+              </button>
+
+              {/* 2. Pick & Drop */}
+              <button
+                type="button"
+                onClick={() => {
+                  setBookingMode('schedule');
+                  setServiceType('pick_and_drop');
+                  resetWizardInputs('schedule', 22);
+                  setCurrentStep(1);
+                }}
+                className="group relative rounded-2xl border-2 border-zinc-200 bg-white text-[#0D0D10] p-4 sm:p-5 text-start shadow-xs hover:border-[#D4A017] hover:shadow-md active:scale-[0.99] transition-all flex flex-col justify-between gap-3 min-h-[104px]"
+              >
                 <div className="flex items-center justify-between">
-                  <h2 className="font-display text-sm font-bold text-[#F4C430]">
-                    {tr(lang, 'INSTANT BOOKING', 'انسٹنٹ بکنگ')}
-                  </h2>
-                  <ArrowRight className={`w-3.5 h-3.5 text-[#F4C430] transition-transform ${lang === 'ur' ? 'rotate-180 group-hover:-translate-x-1' : 'group-hover:translate-x-1'}`} />
-                </div>
-                <p className="text-[11px] text-zinc-300 leading-tight line-clamp-1">
-                  {tr(
-                    lang,
-                    'Entire vehicle for you with live nearest-driver dispatch.',
-                    'پوری گاڑی آپ کے لیے، قریبی ڈرائیور کے ساتھ فوری روانگی۔'
-                  )}
-                </p>
-              </div>
-            </button>
-
-            {/* 2. Pick & Drop */}
-            <button
-              type="button"
-              onClick={() => {
-                setBookingMode('schedule');
-                setServiceType('pick_and_drop');
-                setDropoff(null);
-                setRoute(null);
-                setSelectedPackageDays(22);
-                setTravelDays(['Mon', 'Tue', 'Wed', 'Thu', 'Fri']);
-                setReturnJourney(true);
-                setSubmitError(null);
-                setCurrentStep(1);
-              }}
-              className="group relative rounded-2xl border-2 border-zinc-200 bg-white text-[#0D0D10] p-3.5 sm:p-4 text-start shadow-xs hover:border-[#D4A017] hover:shadow-md active:scale-[0.99] transition-all flex flex-col justify-between gap-2 min-h-[88px]"
-            >
-              <div className="flex items-center justify-between">
-                <div className="w-7 h-7 rounded-lg bg-zinc-100 border border-zinc-200 text-[#0D0D10] flex items-center justify-center font-bold group-hover:bg-[#D4A017] group-hover:text-[#0D0D10] transition-all shadow-xs">
-                  <MapPin className="w-3.5 h-3.5" />
-                </div>
-                <div className="flex items-center gap-1.5">
-                  {categoryPendingCounts.pick_and_drop > 0 && (
-                    <span className="px-2 py-0.5 rounded-full bg-amber-500 text-[#0D0D10] font-mono font-bold text-[10px] tabular-nums">
-                      ({categoryPendingCounts.pick_and_drop})
-                    </span>
-                  )}
-                  <span className="px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-800 font-bold text-[8px] uppercase tracking-widest border border-zinc-200">
-                    {tr(lang, 'Monthly', 'ماہانہ')}
+                  <div className="w-8 h-8 rounded-lg bg-zinc-100 border border-zinc-200 text-[#0D0D10] flex items-center justify-center font-bold group-hover:bg-[#D4A017] transition-all shadow-xs">
+                    <MapPin className="w-4 h-4" />
+                  </div>
+                  <span className="text-[10px] font-extrabold uppercase tracking-widest text-[#9A6E08]">
+                    {tr(lang, 'Monthly Plan', 'ماہانہ پلان')}
                   </span>
                 </div>
-              </div>
 
-              <div className="space-y-0.5">
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <h2 className="font-display text-base font-extrabold text-[#0D0D10]">
+                      {tr(lang, 'PICK & DROP', 'پک اینڈ ڈراپ')}
+                    </h2>
+                    <ArrowRight
+                      className={`w-4 h-4 text-[#D4A017] transition-transform ${
+                        lang === 'ur' ? 'rotate-180 group-hover:-translate-x-1' : 'group-hover:translate-x-1'
+                      }`}
+                    />
+                  </div>
+                  <p className="text-xs font-semibold text-zinc-700 leading-snug">
+                    {tr(
+                      lang,
+                      'Scheduled door-to-door office, school & university commute.',
+                      'دفاتر، اسکول اور یونیورسٹی کے لیے باقاعدہ ماہانہ پیکیج۔'
+                    )}
+                  </p>
+                </div>
+              </button>
+
+              {/* 3. Ride Sharing */}
+              <button
+                type="button"
+                onClick={() => {
+                  setBookingMode('schedule');
+                  setServiceType('ride_sharing');
+                  resetWizardInputs('schedule', 22);
+                  setCurrentStep(1);
+                }}
+                className="group relative rounded-2xl border-2 border-zinc-200 bg-white text-[#0D0D10] p-4 sm:p-5 text-start shadow-xs hover:border-[#D4A017] hover:shadow-md active:scale-[0.99] transition-all flex flex-col justify-between gap-3 min-h-[104px]"
+              >
                 <div className="flex items-center justify-between">
-                  <h2 className="font-display text-sm font-bold text-[#0D0D10]">
-                    {tr(lang, 'PICK & DROP', 'پک اینڈ ڈراپ')}
-                  </h2>
-                  <ArrowRight className={`w-3.5 h-3.5 text-[#D4A017] transition-transform ${lang === 'ur' ? 'rotate-180 group-hover:-translate-x-1' : 'group-hover:translate-x-1'}`} />
-                </div>
-                <p className="text-[11px] text-zinc-600 leading-tight line-clamp-1">
-                  {tr(
-                    lang,
-                    'Fixed schedule door-to-door office & university commute.',
-                    'دفاتر اور کالج کے لیے باقاعدہ ماہانہ پیکیج۔'
-                  )}
-                </p>
-              </div>
-            </button>
-
-            {/* 3. Ride Sharing */}
-            <button
-              type="button"
-              onClick={() => {
-                setBookingMode('schedule');
-                setServiceType('ride_sharing');
-                setDropoff(null);
-                setRoute(null);
-                setSelectedPackageDays(22);
-                setTravelDays(['Mon', 'Tue', 'Wed', 'Thu', 'Fri']);
-                setReturnJourney(true);
-                setSubmitError(null);
-                setCurrentStep(1);
-              }}
-              className="group relative rounded-2xl border-2 border-zinc-200 bg-white text-[#0D0D10] p-3.5 sm:p-4 text-start shadow-xs hover:border-[#D4A017] hover:shadow-md active:scale-[0.99] transition-all flex flex-col justify-between gap-2 min-h-[88px]"
-            >
-              <div className="flex items-center justify-between">
-                <div className="w-7 h-7 rounded-lg bg-zinc-100 border border-zinc-200 text-[#0D0D10] flex items-center justify-center font-bold group-hover:bg-[#D4A017] group-hover:text-[#0D0D10] transition-all shadow-xs">
-                  <Users className="w-3.5 h-3.5" />
-                </div>
-                <div className="flex items-center gap-1.5">
-                  {categoryPendingCounts.ride_sharing > 0 && (
-                    <span className="px-2 py-0.5 rounded-full bg-amber-500 text-[#0D0D10] font-mono font-bold text-[10px] tabular-nums">
-                      ({categoryPendingCounts.ride_sharing})
-                    </span>
-                  )}
-                  <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-900 font-bold text-[8px] uppercase tracking-widest border border-amber-200">
+                  <div className="w-8 h-8 rounded-lg bg-zinc-100 border border-zinc-200 text-[#0D0D10] flex items-center justify-center font-bold group-hover:bg-[#D4A017] transition-all shadow-xs">
+                    <Users className="w-4 h-4" />
+                  </div>
+                  <span className="text-[10px] font-extrabold uppercase tracking-widest text-[#9A6E08]">
                     {tr(lang, 'Monthly Carpool', 'ماہانہ مشترکہ')}
                   </span>
                 </div>
-              </div>
 
-              <div className="space-y-0.5">
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <h2 className="font-display text-base font-extrabold text-[#0D0D10]">
+                      {tr(lang, 'RIDE SHARING', 'رائیڈ شیئرنگ')}
+                    </h2>
+                    <ArrowRight
+                      className={`w-4 h-4 text-[#D4A017] transition-transform ${
+                        lang === 'ur' ? 'rotate-180 group-hover:-translate-x-1' : 'group-hover:translate-x-1'
+                      }`}
+                    />
+                  </div>
+                  <p className="text-xs font-semibold text-zinc-700 leading-snug">
+                    {tr(
+                      lang,
+                      'Share daily routes with verified co-riders and split fares.',
+                      'تصدیق شدہ مسافروں کے ساتھ سفر اور کرایہ شیئر کریں۔'
+                    )}
+                  </p>
+                </div>
+              </button>
+
+              {/* 4. Fuel Sharing */}
+              <button
+                type="button"
+                onClick={() => {
+                  setBookingMode('schedule');
+                  setServiceType('fuel_sharing');
+                  resetWizardInputs('schedule', 22);
+                  setCurrentStep(1);
+                }}
+                className="group relative rounded-2xl border-2 border-zinc-200 bg-white text-[#0D0D10] p-4 sm:p-5 text-start shadow-xs hover:border-[#D4A017] hover:shadow-md active:scale-[0.99] transition-all flex flex-col justify-between gap-3 min-h-[104px]"
+              >
                 <div className="flex items-center justify-between">
-                  <h2 className="font-display text-sm font-bold text-[#0D0D10]">
-                    {tr(lang, 'RIDE SHARING', 'رائیڈ شیئرنگ')}
-                  </h2>
-                  <ArrowRight className={`w-3.5 h-3.5 text-[#D4A017] transition-transform ${lang === 'ur' ? 'rotate-180 group-hover:-translate-x-1' : 'group-hover:translate-x-1'}`} />
-                </div>
-                <p className="text-[11px] text-zinc-600 leading-tight line-clamp-1">
-                  {tr(
-                    lang,
-                    'Share commute with verified co-passengers and split fares.',
-                    'مسافروں کے ساتھ سفر اور کرایہ شیئر کریں۔'
-                  )}
-                </p>
-              </div>
-            </button>
-
-            {/* 4. Fuel Sharing */}
-            <button
-              type="button"
-              onClick={() => {
-                setBookingMode('schedule');
-                setServiceType('fuel_sharing');
-                setDropoff(null);
-                setRoute(null);
-                setSelectedPackageDays(22);
-                setTravelDays(['Mon', 'Tue', 'Wed', 'Thu', 'Fri']);
-                setReturnJourney(true);
-                setSubmitError(null);
-                setCurrentStep(1);
-              }}
-              className="group relative rounded-2xl border-2 border-zinc-200 bg-white text-[#0D0D10] p-3.5 sm:p-4 text-start shadow-xs hover:border-[#D4A017] hover:shadow-md active:scale-[0.99] transition-all flex flex-col justify-between gap-2 min-h-[88px]"
-            >
-              <div className="flex items-center justify-between">
-                <div className="w-7 h-7 rounded-lg bg-zinc-100 border border-zinc-200 text-[#0D0D10] flex items-center justify-center font-bold group-hover:bg-[#D4A017] group-hover:text-[#0D0D10] transition-all shadow-xs">
-                  <Fuel className="w-3.5 h-3.5" />
-                </div>
-                <div className="flex items-center gap-1.5">
-                  {categoryPendingCounts.fuel_sharing > 0 && (
-                    <span className="px-2 py-0.5 rounded-full bg-emerald-600 text-white font-mono font-bold text-[10px] tabular-nums">
-                      ({categoryPendingCounts.fuel_sharing})
-                    </span>
-                  )}
-                  <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-900 font-bold text-[8px] uppercase tracking-widest border border-emerald-200">
-                    {tr(lang, 'Monthly Fuel Split', 'ماہانہ فیول شیئر')}
+                  <div className="w-8 h-8 rounded-lg bg-zinc-100 border border-zinc-200 text-[#0D0D10] flex items-center justify-center font-bold group-hover:bg-[#D4A017] transition-all shadow-xs">
+                    <Fuel className="w-4 h-4" />
+                  </div>
+                  <span className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-800">
+                    {tr(lang, 'Fuel Split', 'فیول شیئر')}
                   </span>
                 </div>
-              </div>
 
-              <div className="space-y-0.5">
-                <div className="flex items-center justify-between">
-                  <h2 className="font-display text-sm font-bold text-[#0D0D10]">
-                    {tr(lang, 'FUEL SHARING', 'فیول شیئرنگ')}
-                  </h2>
-                  <ArrowRight className={`w-3.5 h-3.5 text-[#D4A017] transition-transform ${lang === 'ur' ? 'rotate-180 group-hover:-translate-x-1' : 'group-hover:translate-x-1'}`} />
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <h2 className="font-display text-base font-extrabold text-[#0D0D10]">
+                      {tr(lang, 'FUEL SHARING', 'فیول شیئرنگ')}
+                    </h2>
+                    <ArrowRight
+                      className={`w-4 h-4 text-[#D4A017] transition-transform ${
+                        lang === 'ur' ? 'rotate-180 group-hover:-translate-x-1' : 'group-hover:translate-x-1'
+                      }`}
+                    />
+                  </div>
+                  <p className="text-xs font-semibold text-zinc-700 leading-snug">
+                    {tr(
+                      lang,
+                      'Transparent per-km fuel cost splitting for city corridors.',
+                      'روزانہ اور ماہانہ سفر کے لیے اصل سڑک کے حساب سے فیول تقسیم۔'
+                    )}
+                  </p>
                 </div>
-                <p className="text-[11px] text-zinc-600 leading-tight line-clamp-1">
-                  {tr(
-                    lang,
-                    'Transparent per-km fuel cost splitting for monthly commute.',
-                    'روزانہ اور ماہانہ سفر کے لیے پیٹرول لاگت کی تقسیم۔'
-                  )}
-                </p>
-              </div>
-            </button>
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1453,40 +1515,83 @@ PRO RIDER AI — Travel with Trust`;
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div
+              <button
+                type="button"
                 onClick={() => setActiveClockTarget('pickup')}
-                className="p-4 sm:p-5 rounded-2xl border-2 border-[#F4C430] bg-white cursor-pointer hover:bg-amber-50/20 transition-all"
+                className={`p-4 sm:p-5 rounded-2xl border-2 text-start transition-all ${
+                  pickupTime
+                    ? 'border-emerald-500/70 bg-white hover:bg-emerald-50/10'
+                    : 'border-[#F4C430] bg-amber-50/20 hover:bg-amber-50/40'
+                }`}
               >
                 <div className="flex items-center justify-between text-xs font-bold text-zinc-800 mb-2">
                   <span className="flex items-center gap-2">
                     <Clock className="w-4 h-4 text-[#D4A017]" /> {tr(lang, 'Pickup time', 'پِک اپ کا وقت')}
                   </span>
-                  <ChevronDown className="w-4 h-4 text-zinc-400" />
+                  <span className={`text-[11px] font-bold ${pickupTime ? 'text-emerald-600' : 'text-amber-600'}`}>
+                    {pickupTime ? tr(lang, 'Selected', 'منتخب شدہ') : tr(lang, 'Required', 'لازمی')}
+                  </span>
                 </div>
-                <div className="h-11 px-4 rounded-xl bg-zinc-100 flex items-center font-display text-lg font-bold text-[#0D0D10] tabular-nums">
-                  {pickupTime}
+                <div className="h-11 px-4 rounded-xl bg-zinc-100 flex items-center justify-between font-display text-base sm:text-lg font-bold tabular-nums">
+                  <span className={pickupTime ? 'text-[#0D0D10]' : 'text-zinc-400 text-sm font-sans font-semibold'}>
+                    {pickupTime || tr(lang, 'Tap to select pickup time', 'پِک اپ کا وقت منتخب کریں')}
+                  </span>
+                  <ChevronDown className="w-4 h-4 text-zinc-400 shrink-0" />
                 </div>
-              </div>
+              </button>
 
-              <div
+              <button
+                type="button"
                 onClick={() => setActiveClockTarget('dropoff')}
-                className="p-4 sm:p-5 rounded-2xl border-2 border-zinc-200 bg-white cursor-pointer hover:bg-zinc-50 transition-all"
+                className={`p-4 sm:p-5 rounded-2xl border-2 text-start transition-all ${
+                  dropoffTime
+                    ? 'border-emerald-500/70 bg-white hover:bg-emerald-50/10'
+                    : 'border-[#F4C430] bg-amber-50/20 hover:bg-amber-50/40'
+                }`}
               >
                 <div className="flex items-center justify-between text-xs font-bold text-zinc-800 mb-2">
                   <span className="flex items-center gap-2">
                     <Clock className="w-4 h-4 text-[#D4A017]" /> {tr(lang, 'Drop-off time', 'ڈراپ آف کا وقت')}
                   </span>
-                  <ChevronDown className="w-4 h-4 text-zinc-400" />
+                  <span className={`text-[11px] font-bold ${dropoffTime ? 'text-emerald-600' : 'text-amber-600'}`}>
+                    {dropoffTime ? tr(lang, 'Selected', 'منتخب شدہ') : tr(lang, 'Required', 'لازمی')}
+                  </span>
                 </div>
-                <div className="h-11 px-4 rounded-xl bg-zinc-100 flex items-center font-display text-lg font-bold text-[#0D0D10] tabular-nums">
-                  {dropoffTime}
+                <div className="h-11 px-4 rounded-xl bg-zinc-100 flex items-center justify-between font-display text-base sm:text-lg font-bold tabular-nums">
+                  <span className={dropoffTime ? 'text-[#0D0D10]' : 'text-zinc-400 text-sm font-sans font-semibold'}>
+                    {dropoffTime || tr(lang, 'Tap to select drop-off time', 'ڈراپ آف کا وقت منتخب کریں')}
+                  </span>
+                  <ChevronDown className="w-4 h-4 text-zinc-400 shrink-0" />
                 </div>
-              </div>
+              </button>
             </div>
+
+            {(!pickupTime || !dropoffTime) && (
+              <div className="px-3.5 py-2.5 rounded-xl bg-amber-50 border border-amber-200 text-xs font-semibold text-amber-900 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>
+                  {tr(
+                    lang,
+                    'Please select both Pickup time and Drop-off time from the clock before continuing.',
+                    'آگے بڑھنے کے لیے براہ کرم گھڑی سے پِک اپ اور ڈراپ آف دونوں اوقات منتخب کریں۔'
+                  )}
+                </span>
+              </div>
+            )}
 
             {activeClockTarget && (
               <AnalogClockPicker
-                value={activeClockTarget === 'pickup' ? pickupTime : dropoffTime}
+                lang={lang}
+                title={
+                  activeClockTarget === 'pickup'
+                    ? tr(lang, 'Select Pickup Time', 'پِک اپ کا وقت منتخب کریں')
+                    : tr(lang, 'Select Drop-off Time', 'ڈراپ آف کا وقت منتخب کریں')
+                }
+                value={
+                  activeClockTarget === 'pickup'
+                    ? pickupTime || '9:15 AM'
+                    : dropoffTime || '6:00 PM'
+                }
                 onChange={(newTime) => {
                   if (activeClockTarget === 'pickup') setPickupTime(newTime);
                   else setDropoffTime(newTime);
@@ -1505,8 +1610,9 @@ PRO RIDER AI — Travel with Trust`;
               </button>
               <button
                 type="button"
+                disabled={!pickupTime || !dropoffTime}
                 onClick={() => setCurrentStep(4)}
-                className="py-3.5 px-4 rounded-2xl bg-[#F4C430] text-[#0D0D10] font-bold text-sm hover:bg-[#E5B520] shadow-sm"
+                className="py-3.5 px-4 rounded-2xl bg-[#F4C430] text-[#0D0D10] font-bold text-sm hover:bg-[#E5B520] shadow-sm disabled:opacity-45 disabled:cursor-not-allowed transition-opacity"
               >
                 {tr(lang, 'Confirm Time & Next', 'وقت کنفرم کریں اور آگے بڑھیں')}
               </button>
@@ -1532,15 +1638,23 @@ PRO RIDER AI — Travel with Trust`;
               {/* Left: Start date + Package */}
               <div className="space-y-4">
                 <div>
-                  <label className="block text-xs font-bold text-zinc-800 mb-2">
-                    {tr(lang, 'Start date', 'سفر شروع کرنے کی تاریخ')}
-                  </label>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-xs font-bold text-zinc-800">
+                      {tr(lang, 'Start date', 'سفر شروع کرنے کی تاریخ')}
+                    </label>
+                    <span className={`text-[11px] font-bold ${startDate ? 'text-emerald-600' : 'text-amber-600'}`}>
+                      {startDate ? tr(lang, 'Selected', 'منتخب شدہ') : tr(lang, 'Required', 'لازمی')}
+                    </span>
+                  </div>
                   <div className="relative">
                     <input
                       type="date"
+                      min={new Date().toISOString().slice(0, 10)}
                       value={startDate}
                       onChange={(e) => setStartDate(e.target.value)}
-                      className="w-full px-4 py-3 rounded-2xl border border-zinc-200 font-semibold text-sm focus:outline-none focus:ring-2 focus:ring-[#F4C430]"
+                      className={`w-full px-4 py-3 rounded-2xl border-2 font-semibold text-sm focus:outline-none focus:ring-2 focus:ring-[#F4C430] ${
+                        startDate ? 'border-emerald-500/60' : 'border-[#F4C430]'
+                      }`}
                     />
                     <Calendar className="w-5 h-5 text-zinc-400 absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none" />
                   </div>
@@ -1626,12 +1740,12 @@ PRO RIDER AI — Travel with Trust`;
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between gap-4 pt-1">
+                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 pt-1">
                   <div>
                     <label className="block text-xs font-bold text-zinc-800">
                       {tr(lang, 'Trip direction', 'سفر کی نوعیت')}
                     </label>
-                    <div className="flex items-center gap-1 p-1 bg-zinc-100 rounded-xl mt-1.5">
+                    <div className="flex items-center gap-1 p-1 bg-zinc-100 rounded-xl mt-1.5 w-fit">
                       <button
                         type="button"
                         onClick={() => setReturnJourney(true)}
@@ -1653,33 +1767,67 @@ PRO RIDER AI — Travel with Trust`;
                     </div>
                   </div>
 
-                  <div>
-                    <label className="block text-xs font-bold text-zinc-800">
-                      {tr(lang, 'Passengers', 'مسافروں کی تعداد')}
-                    </label>
-                    <div className="flex items-center gap-3 mt-1.5">
-                      <button
-                        type="button"
-                        onClick={() => setPassengersCount((c) => Math.max(1, c - 1))}
-                        className="w-10 h-10 rounded-full border border-zinc-300 flex items-center justify-center text-zinc-700 hover:bg-zinc-100"
-                      >
-                        <Minus className="w-4 h-4" />
-                      </button>
-                      <span className="font-display text-xl font-bold text-[#0D0D10] w-6 text-center tabular-nums">
-                        {passengersCount}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="block text-xs font-bold text-zinc-800">
+                        {tr(lang, 'Passengers / Seats', 'مسافروں کی تعداد / سیٹیں')}
+                      </label>
+                      <span className={`text-[11px] font-bold ${passengersCount >= 1 ? 'text-emerald-600' : 'text-amber-600'}`}>
+                        {passengersCount >= 1 ? tr(lang, 'Selected', 'منتخب شدہ') : tr(lang, 'Required', 'لازمی')}
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => setPassengersCount((c) => Math.min(28, c + 1))}
-                        className="w-10 h-10 rounded-full border border-zinc-300 flex items-center justify-center text-zinc-700 hover:bg-zinc-100"
-                      >
-                        <Plus className="w-4 h-4" />
-                      </button>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {[1, 2, 3, 4].map((num) => (
+                        <button
+                          key={num}
+                          type="button"
+                          onClick={() => setPassengersCount(num)}
+                          className={`w-9 h-9 rounded-xl font-mono font-bold text-xs border transition-all ${
+                            passengersCount === num
+                              ? 'bg-[#F4C430] border-[#B8860B] text-[#0D0D10] shadow-xs'
+                              : 'bg-white border-zinc-300 text-zinc-800 hover:bg-zinc-50'
+                          }`}
+                        >
+                          {num}
+                        </button>
+                      ))}
+                      <div className="flex items-center gap-1.5 ml-1">
+                        <button
+                          type="button"
+                          onClick={() => setPassengersCount((c) => Math.max(1, c - 1))}
+                          className="w-9 h-9 rounded-full border border-zinc-300 flex items-center justify-center text-zinc-700 hover:bg-zinc-100"
+                        >
+                          <Minus className="w-3.5 h-3.5" />
+                        </button>
+                        <span className="font-display text-lg font-bold text-[#0D0D10] w-6 text-center tabular-nums">
+                          {passengersCount >= 1 ? passengersCount : '—'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setPassengersCount((c) => Math.min(28, Math.max(0, c) + 1))}
+                          className="w-9 h-9 rounded-full border border-zinc-300 flex items-center justify-center text-zinc-700 hover:bg-zinc-100"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
             </div>
+
+            {(!startDate || passengersCount < 1 || travelDays.length === 0) && (
+              <div className="px-3.5 py-2.5 rounded-xl bg-amber-50 border border-amber-200 text-xs font-semibold text-amber-900 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>
+                  {tr(
+                    lang,
+                    `Please select: ${[!startDate && 'Start Date', passengersCount < 1 && 'Passengers / Seats', travelDays.length === 0 && 'Travel Days'].filter(Boolean).join(', ')}`,
+                    `آگے بڑھنے کے لیے منتخب کریں: ${[!startDate && 'آغاز کی تاریخ', passengersCount < 1 && 'مسافروں کی تعداد / سیٹیں', travelDays.length === 0 && 'سفر کے دن'].filter(Boolean).join('، ')}`
+                  )}
+                </span>
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-3 pt-2">
               <button
@@ -1691,8 +1839,9 @@ PRO RIDER AI — Travel with Trust`;
               </button>
               <button
                 type="button"
+                disabled={!startDate || passengersCount < 1 || travelDays.length === 0}
                 onClick={() => setCurrentStep(5)}
-                className="py-3.5 px-4 rounded-2xl bg-[#F4C430] text-[#0D0D10] font-bold text-sm hover:bg-[#E5B520] shadow-sm"
+                className="py-3.5 px-4 rounded-2xl bg-[#F4C430] text-[#0D0D10] font-bold text-sm hover:bg-[#E5B520] shadow-sm disabled:opacity-45 disabled:cursor-not-allowed transition-opacity"
               >
                 {tr(lang, 'Choose Fleet Vehicle', 'گاڑی منتخب کریں')}
               </button>
@@ -1726,7 +1875,8 @@ PRO RIDER AI — Travel with Trust`;
                     ) : (
                       <>
                         {route?.distanceKm || 18.4} km · {selectedPackageDays} {tr(lang, 'days', 'دن')} ·{' '}
-                        {returnJourney ? tr(lang, 'Return trip', 'دو طرفہ سفر') : tr(lang, 'One-way', 'یک طرفہ')}
+                        {returnJourney ? tr(lang, 'Return trip', 'دو طرفہ سفر') : tr(lang, 'One-way', 'یک طرفہ')} ·{' '}
+                        {Math.max(1, passengersCount)} {tr(lang, 'pax', 'مسافر')}
                       </>
                     )}
                   </p>
@@ -1770,7 +1920,9 @@ PRO RIDER AI — Travel with Trust`;
                       <p className="text-[10px] text-zinc-500 font-mono font-semibold">
                         {bookingMode === 'go_now'
                           ? `Rs ${pricing.ratePerKm}/km · ${pricing.totalKm} km`
-                          : `Rs ${pricing.ratePerKm}/km`}
+                          : serviceType === 'pick_and_drop'
+                          ? `Rs ${pricing.ratePerKm}/km · ${tr(lang, 'Full vehicle', 'مکمل گاڑی')}`
+                          : `Rs ${pricing.ratePerKm}/km × ${Math.max(1, passengersCount)}`}
                       </p>
                     </div>
                   </div>
@@ -1866,67 +2018,86 @@ PRO RIDER AI — Travel with Trust`;
                   <div className="py-2.5 flex justify-between">
                     <span className="text-zinc-500">{tr(lang, 'Fleet', 'گاڑی')}</span>
                     <span className="font-semibold">
-                      {selectedVehicle?.name || 'Economy'} ({passengersCount} {tr(lang, 'pax', 'مسافر')})
+                      {selectedVehicle?.name || 'Economy'} ({Math.max(1, passengersCount)} {tr(lang, 'pax', 'مسافر')})
                     </span>
                   </div>
                 </div>
 
                 {/* Obsidian Fare Breakdown */}
-                <div className="rounded-2xl bg-[#0D0D10] text-white p-5 space-y-2.5">
+                <div
+                  className="pr-preserve-light rounded-2xl p-5 space-y-2.5 border border-[#D4A017]/30"
+                  style={{ backgroundColor: '#0D0D10', color: '#FFFFFF' }}
+                >
                   <div className="flex items-center justify-between">
-                    <p className="text-xs font-bold text-[#F4C430] uppercase tracking-wider">
+                    <p className="text-xs font-bold uppercase tracking-wider" style={{ color: '#F4C430' }}>
                       {bookingMode === 'go_now'
                         ? tr(lang, 'Instant Trip Fare Breakdown', 'انسٹنٹ سفر کرایہ کی تفصیل')
                         : tr(lang, 'Fare breakdown', 'کرایہ کی تفصیل')}
                     </p>
-                    {bookingMode === 'go_now' && (
-                      <span className="px-2 py-0.5 rounded-full bg-[#F4C430] text-[#0D0D10] font-bold text-[10px]">
-                        {tr(lang, 'Entire Vehicle', 'پوری گاڑی')}
+                    {(bookingMode === 'go_now' || serviceType === 'pick_and_drop') && (
+                      <span
+                        className="px-2 py-0.5 rounded-full font-bold text-[10px]"
+                        style={{ backgroundColor: '#F4C430', color: '#0D0D10' }}
+                      >
+                        {tr(lang, 'Entire Vehicle', 'مکمل گاڑی')}
                       </span>
                     )}
                   </div>
 
                   {bookingMode === 'go_now' ? (
                     <>
-                      <div className="flex justify-between text-xs text-zinc-300 font-mono tabular-nums">
+                      <div className="flex justify-between gap-2 text-xs font-mono tabular-nums" style={{ color: '#D4D4D8' }}>
                         <span>{tr(lang, 'Trip distance', 'سفر کا فاصلہ')}</span>
-                        <span>{route?.distanceKm || 18.4} km</span>
+                        <span className="font-bold" style={{ color: '#FFFFFF' }}>{route?.distanceKm || 18.4} km</span>
                       </div>
-                      <div className="flex justify-between text-xs text-zinc-300 font-mono tabular-nums">
+                      <div className="flex justify-between gap-2 text-xs font-mono tabular-nums" style={{ color: '#D4D4D8' }}>
                         <span>{tr(lang, 'Vehicle rate per km', 'گاڑی ریٹ فی کلومیٹر')}</span>
-                        <span>Rs {selectedVehicle ? calculateVehiclePrice(selectedVehicle).ratePerKm : 55}/km</span>
+                        <span className="font-bold" style={{ color: '#FFFFFF' }}>
+                          Rs {selectedVehicle ? calculateVehiclePrice(selectedVehicle).ratePerKm : 55}/km
+                        </span>
                       </div>
-                      <div className="flex justify-between text-xs text-zinc-300 font-mono tabular-nums">
+                      <div className="flex justify-between gap-2 text-xs font-mono tabular-nums" style={{ color: '#D4D4D8' }}>
                         <span>{tr(lang, 'Automatic calculation', 'خودکار حساب کتاب')}</span>
-                        <span>
+                        <span className="text-right">
                           {route?.distanceKm || 18.4} km × Rs {selectedVehicle ? calculateVehiclePrice(selectedVehicle).ratePerKm : 55} = Rs {referenceFare.toLocaleString()}
                         </span>
                       </div>
                     </>
                   ) : (
                     <>
-                      <div className="flex justify-between text-xs text-zinc-300 font-mono tabular-nums">
-                        <span>{tr(lang, 'Monthly distance', 'ماہانہ فاصلہ')}</span>
-                        <span>
+                      <div className="flex justify-between items-center gap-2 text-xs font-mono tabular-nums" style={{ color: '#D4D4D8' }}>
+                        <span className="shrink-0">{tr(lang, 'Monthly distance', 'ماہانہ فاصلہ')}</span>
+                        <span className="text-right">
                           {route?.distanceKm || 18.4} km × {returnJourney ? 2 : 1} × {selectedPackageDays}{tr(lang, 'd', 'دن')} ={' '}
-                          {Math.round((route?.distanceKm || 18.4) * (returnJourney ? 2 : 1) * selectedPackageDays * 10) / 10}{' '}
-                          km
+                          <strong style={{ color: '#FFFFFF' }}>
+                            {Math.round((route?.distanceKm || 18.4) * (returnJourney ? 2 : 1) * selectedPackageDays * 10) / 10} km
+                          </strong>
                         </span>
                       </div>
-                      <div className="flex justify-between text-xs text-zinc-300 font-mono tabular-nums">
+                      <div className="flex justify-between items-center gap-2 text-xs font-mono tabular-nums" style={{ color: '#D4D4D8' }}>
                         <span>{tr(lang, 'Rate', 'ریٹ')}</span>
-                        <span>Rs {selectedVehicle ? calculateVehiclePrice(selectedVehicle).ratePerKm : 25}/km</span>
+                        <span className="font-bold" style={{ color: '#FFFFFF' }}>
+                          Rs {selectedVehicle ? calculateVehiclePrice(selectedVehicle).ratePerKm : 25}/km
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center gap-2 text-xs font-mono tabular-nums" style={{ color: '#D4D4D8' }}>
+                        <span>{tr(lang, 'Passengers / Billing', 'مسافر / بلنگ')}</span>
+                        <span className="font-bold" style={{ color: '#F4C430' }}>
+                          {serviceType === 'pick_and_drop'
+                            ? tr(lang, `${Math.max(1, passengersCount)} pax (Full vehicle)`, `${Math.max(1, passengersCount)} مسافر (مکمل گاڑی)`)
+                            : tr(lang, `× ${Math.max(1, passengersCount)} seats`, `× ${Math.max(1, passengersCount)} سیٹیں`)}
+                        </span>
                       </div>
                     </>
                   )}
 
                   <div className="border-t border-zinc-800 pt-3 flex items-baseline justify-between">
-                    <span className="text-sm font-semibold">
+                    <span className="text-sm font-semibold" style={{ color: '#FFFFFF' }}>
                       {bookingMode === 'go_now'
                         ? tr(lang, 'Total Trip Fare', 'کل سفر کا کرایہ')
                         : tr(lang, 'Reference monthly fare', 'مقررہ ماہانہ کرایہ')}
                     </span>
-                    <span className="font-display text-2xl font-bold text-[#F4C430] tabular-nums">
+                    <span className="font-display text-2xl font-bold tabular-nums" style={{ color: '#F4C430' }}>
                       Rs {referenceFare.toLocaleString()}
                     </span>
                   </div>
@@ -2038,20 +2209,180 @@ PRO RIDER AI — Travel with Trust`;
               <button
                 type="button"
                 disabled={submitting}
-                onClick={handleConfirmBooking}
+                onClick={() => {
+                  setSubmitError(null);
+                  setShowReviewModal(true);
+                }}
                 className="py-3.5 px-4 rounded-2xl bg-[#F4C430] text-[#0D0D10] font-bold text-sm hover:bg-[#E5B520] shadow-md flex items-center justify-center gap-2"
               >
-                {submitting ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    {tr(lang, 'Confirming...', 'تصدیق ہو رہی ہے...')}
-                  </>
-                ) : (
-                  tr(lang, 'Confirm Booking', 'بُکنگ کنفرم کریں')
-                )}
+                <ShieldCheck className="w-4 h-4" />
+                {tr(lang, 'Review & Confirm', 'تفصیلات چیک کریں')}
               </button>
             </div>
           </div>
+
+          {/* Final Pre-Submission Review Modal */}
+          {showReviewModal && (
+            <div
+              className="fixed inset-0 z-[9995] bg-black/75 backdrop-blur-xs flex items-center justify-center p-4"
+              onClick={() => !submitting && setShowReviewModal(false)}
+            >
+              <div
+                className="pr-preserve-light w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden border-2 border-[#D4A017]"
+                style={{ backgroundColor: '#FFFFFF', color: '#0D0D10' }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="p-5 flex items-start justify-between gap-3" style={{ backgroundColor: '#0D0D10', color: '#FFFFFF' }}>
+                  <div className="flex items-start gap-3">
+                    <div
+                      className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+                      style={{ backgroundColor: '#F4C430', color: '#0D0D10' }}
+                    >
+                      <ShieldCheck className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="font-display text-base sm:text-lg font-bold" style={{ color: '#F4C430' }}>
+                        {tr(lang, 'Final Booking Review', 'بُکنگ کی حتمی جانچ پڑتال')}
+                      </h3>
+                      <p className="text-xs mt-0.5" style={{ color: '#D4D4D8' }}>
+                        {tr(
+                          lang,
+                          'Please review every detail carefully before submitting your booking.',
+                          'بُکنگ جمع کرانے سے پہلے براہ کرم تمام تفصیلات ایک بار تسلی سے چیک کر لیں۔'
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-5 space-y-3 max-h-[65vh] overflow-y-auto text-xs">
+                  <div className="divide-y divide-zinc-200 rounded-2xl border border-zinc-200 px-3.5" style={{ backgroundColor: '#FAFAFA' }}>
+                    <div className="py-2.5 flex justify-between gap-3">
+                      <span style={{ color: '#52525B' }}>{tr(lang, 'Service', 'سروس')}</span>
+                      <span className="font-bold text-right" style={{ color: '#0D0D10' }}>
+                        {bookingMode === 'go_now'
+                          ? tr(lang, 'Instant Booking (Entire Vehicle)', 'انسٹنٹ بُکنگ (پوری گاڑی)')
+                          : trService(lang, serviceType)}
+                      </span>
+                    </div>
+                    <div className="py-2.5 flex justify-between gap-3">
+                      <span className="shrink-0" style={{ color: '#52525B' }}>{tr(lang, 'Pickup (A)', 'پِک اپ (A)')}</span>
+                      <span className="font-semibold text-right" style={{ color: '#0D0D10' }}>{pickup?.label}</span>
+                    </div>
+                    <div className="py-2.5 flex justify-between gap-3">
+                      <span className="shrink-0" style={{ color: '#52525B' }}>{tr(lang, 'Drop-off (B)', 'ڈراپ آف (B)')}</span>
+                      <span className="font-semibold text-right" style={{ color: '#0D0D10' }}>{dropoff?.label}</span>
+                    </div>
+                    <div className="py-2.5 flex justify-between gap-3">
+                      <span style={{ color: '#52525B' }}>{tr(lang, 'Distance', 'فاصلہ')}</span>
+                      <span className="font-mono font-bold" style={{ color: '#0D0D10' }}>
+                        {route?.distanceKm || 18.4} km · ~{route?.durationMin || 21} {tr(lang, 'min', 'منٹ')}
+                      </span>
+                    </div>
+                    {bookingMode === 'schedule' && (
+                      <>
+                        <div className="py-2.5 flex justify-between gap-3">
+                          <span style={{ color: '#52525B' }}>{tr(lang, 'Timing', 'اوقات')}</span>
+                          <span className="font-mono font-bold" style={{ color: '#0D0D10' }}>
+                            {pickupTime} → {dropoffTime}
+                          </span>
+                        </div>
+                        <div className="py-2.5 flex justify-between gap-3">
+                          <span style={{ color: '#52525B' }}>{tr(lang, 'Start Date & Package', 'تاریخ اور پیکیج')}</span>
+                          <span className="font-bold text-right" style={{ color: '#0D0D10' }}>
+                            {startDate} · {selectedPackageDays} {tr(lang, 'days', 'دن')} ({returnJourney ? tr(lang, 'Return 2-Way', 'دو طرفہ') : tr(lang, 'One-Way', 'یک طرفہ')})
+                          </span>
+                        </div>
+                        <div className="py-2.5 flex justify-between gap-3">
+                          <span style={{ color: '#52525B' }}>{tr(lang, 'Travel Days', 'سفر کے دن')}</span>
+                          <span className="font-semibold text-right" style={{ color: '#0D0D10' }}>
+                            {travelDays.map((d) => trDay(lang, d)).join(', ')}
+                          </span>
+                        </div>
+                      </>
+                    )}
+                    <div className="py-2.5 flex justify-between gap-3">
+                      <span style={{ color: '#52525B' }}>{tr(lang, 'Vehicle & Passengers', 'گاڑی اور مسافر')}</span>
+                      <span className="font-bold text-right" style={{ color: '#0D0D10' }}>
+                        {selectedVehicle?.name} · {Math.max(1, passengersCount)} {tr(lang, 'pax', 'مسافر')}
+                      </span>
+                    </div>
+                    <div className="py-2.5 flex justify-between gap-3">
+                      <span style={{ color: '#52525B' }}>{tr(lang, 'Payment Method', 'ادائیگی')}</span>
+                      <span className="font-semibold" style={{ color: '#0D0D10' }}>
+                        {paymentMethod === 'cash'
+                          ? tr(lang, 'Cash Settlement', 'نقد ادائیگی')
+                          : paymentMethod === 'wallet'
+                          ? tr(lang, 'PRO RIDER Wallet', 'پرو رائیڈر والٹ')
+                          : 'JazzCash / EasyPaisa / Bank'}
+                      </span>
+                    </div>
+                    {notes.trim() && (
+                      <div className="py-2.5 flex justify-between gap-3">
+                        <span style={{ color: '#52525B' }}>{tr(lang, 'Notes', 'ہدایات')}</span>
+                        <span className="font-medium text-right" style={{ color: '#0D0D10' }}>{notes}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div
+                    className="rounded-2xl p-4 flex items-center justify-between"
+                    style={{ backgroundColor: '#0D0D10', color: '#FFFFFF' }}
+                  >
+                    <div>
+                      <span className="text-[11px] uppercase tracking-wider font-bold block" style={{ color: '#A1A1AA' }}>
+                        {tr(lang, 'Final Offered Fare', 'حتمی آفر کرایہ')}
+                      </span>
+                      <span className="text-[11px]" style={{ color: '#D4D4D8' }}>
+                        Rs {selectedVehicle ? calculateVehiclePrice(selectedVehicle).ratePerKm : 25}/km
+                      </span>
+                    </div>
+                    <span className="font-display text-2xl font-extrabold tabular-nums" style={{ color: '#F4C430' }}>
+                      Rs {offeredFare.toLocaleString()}
+                    </span>
+                  </div>
+
+                  {submitError && (
+                    <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700 flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 shrink-0" />
+                      <span>{submitError}</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-4 border-t border-zinc-200 grid grid-cols-2 gap-3" style={{ backgroundColor: '#FAFAFA' }}>
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={() => setShowReviewModal(false)}
+                    className="py-3 px-4 rounded-2xl border border-zinc-300 font-bold text-xs sm:text-sm"
+                    style={{ backgroundColor: '#FFFFFF', color: '#0D0D10' }}
+                  >
+                    {tr(lang, 'Go Back & Edit', 'واپس جا کر تبدیل کریں')}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={handleConfirmBooking}
+                    className="py-3 px-4 rounded-2xl font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-md"
+                    style={{ backgroundColor: '#F4C430', color: '#0D0D10' }}
+                  >
+                    {submitting ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        {tr(lang, 'Submitting...', 'بُک ہو رہا ہے...')}
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-4 h-4" />
+                        {tr(lang, 'Yes, Confirm Booking', 'جی ہاں، بُکنگ کنفرم کریں')}
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -2100,19 +2431,30 @@ PRO RIDER AI — Travel with Trust`;
             </button>
 
             {confirmedBooking && (
-              <button
-                type="button"
-                onClick={() => downloadBookingPdf(confirmedBooking, 'passenger', passengerName)}
-                className="w-full py-3.5 rounded-2xl border border-zinc-200 text-zinc-800 font-semibold text-xs hover:bg-zinc-50 flex items-center justify-center gap-2"
-              >
-                <Download className="w-4 h-4 text-[#D4A017]" />
-                {tr(lang, 'Download Official Digital Bill (PDF)', 'آفیشل ڈیجیٹل بل (PDF) ڈاؤن لوڈ کریں')}
-              </button>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setInvoiceModalBooking(confirmedBooking)}
+                  className="w-full py-3.5 rounded-2xl border border-zinc-200 bg-white text-[#0D0D10] font-bold text-xs hover:bg-zinc-50 flex items-center justify-center gap-2"
+                >
+                  <FileText className="w-4 h-4 text-[#D4A017]" />
+                  {tr(lang, 'View & Print Invoice', 'انوائس دیکھیں / پرنٹ')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => downloadBookingPdf(confirmedBooking, 'passenger', passengerName)}
+                  className="w-full py-3.5 rounded-2xl border border-zinc-200 text-zinc-800 font-semibold text-xs hover:bg-zinc-50 flex items-center justify-center gap-2"
+                >
+                  <Download className="w-4 h-4 text-[#D4A017]" />
+                  {tr(lang, 'Download PDF Bill', 'پی ڈی ایف بل ڈاؤن لوڈ')}
+                </button>
+              </div>
             )}
 
             <button
               type="button"
               onClick={() => {
+                resetWizardInputs(bookingMode);
                 setCurrentStep(0);
               }}
               className="w-full py-3 rounded-2xl border border-zinc-200 text-zinc-700 font-semibold text-xs hover:bg-zinc-50"
@@ -2132,6 +2474,14 @@ PRO RIDER AI — Travel with Trust`;
           onClose={() => setShareModalBooking(null)}
         />
       )}
+
+      <InvoiceViewerModal
+        booking={invoiceModalBooking}
+        viewerRole="passenger"
+        passengerName={passengerName}
+        lang={lang}
+        onClose={() => setInvoiceModalBooking(null)}
+      />
     </div>
   );
 };

@@ -17,15 +17,17 @@ export const BrandLogo: React.FC<{ dark?: boolean; compact?: boolean; lang?: Lan
   const { isDark } = useTheme();
   const effectiveDark = dark ?? isDark;
   return (
-    <div className="inline-flex items-center gap-2.5 select-none shrink-0">
+    <div className={`inline-flex items-center ${compact ? 'gap-1.5 sm:gap-2.5' : 'gap-2.5'} select-none shrink-0`}>
       <img
         src="/assets/aistudio/pmg_3_88102afb.png"
         alt="PRO RIDER AI"
-        className={`${compact ? 'w-8 h-8' : 'w-10 h-10'} rounded-full object-contain shrink-0 shadow-md border border-[#D4A017]/50 bg-black`}
+        className={`${compact ? 'w-7 h-7 sm:w-8 sm:h-8' : 'w-10 h-10'} rounded-full object-contain shrink-0 shadow-md border border-[#D4A017]/50 bg-black`}
       />
       <div className="flex flex-col leading-none">
         <span
-          className={`font-display font-bold tracking-tight text-base whitespace-nowrap pr-on-accent ${
+          className={`font-display font-extrabold tracking-tight ${
+            compact ? 'text-[13px] sm:text-base' : 'text-base'
+          } whitespace-nowrap pr-on-accent ${
             effectiveDark ? '!text-white' : '!text-[#0D0D10]'
           }`}
         >
@@ -33,8 +35,8 @@ export const BrandLogo: React.FC<{ dark?: boolean; compact?: boolean; lang?: Lan
         </span>
         {!compact && (
           <span
-            className={`text-[11px] font-medium tracking-wide mt-0.5 whitespace-nowrap ${
-              effectiveDark ? '!text-zinc-300' : '!text-zinc-500'
+            className={`text-[11px] font-semibold tracking-wide mt-0.5 whitespace-nowrap ${
+              effectiveDark ? '!text-zinc-300' : '!text-zinc-600'
             }`}
           >
             {tr(lang, 'Travel with Trust', 'اعتماد کے ساتھ سفر کریں')}
@@ -66,14 +68,14 @@ export const ThemeModeToggle: React.FC<{
       onClick={toggleTheme}
       title={isDark ? tr(lang, 'Switch to Light Ivory Gold mode', 'لائٹ گولڈ موڈ آن کریں') : tr(lang, 'Switch to Dark Gold mode', 'ڈارک گولڈ موڈ آن کریں')}
       aria-label={isDark ? tr(lang, 'Switch to Light Ivory Gold mode', 'لائٹ گولڈ موڈ آن کریں') : tr(lang, 'Switch to Dark Gold mode', 'ڈارک گولڈ موڈ آن کریں')}
-      className={`pr-preserve-light inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-semibold shrink-0 transition-all ${
+      className={`pr-preserve-light inline-flex items-center justify-center gap-1.5 px-2 sm:px-2.5 py-1.5 sm:py-1 rounded-lg border text-xs font-bold shrink-0 transition-all min-h-[32px] ${
         effectiveDark
           ? 'bg-zinc-900 border-zinc-700 text-[#F4C430] hover:bg-zinc-800'
-          : 'bg-zinc-100 border-zinc-200 text-[#0D0D10] hover:bg-zinc-200'
+          : 'bg-zinc-100 border-zinc-300 text-[#0D0D10] hover:bg-zinc-200'
       }`}
     >
-      {isDark ? <Sun className="w-3.5 h-3.5 text-[#F4C430]" /> : <Moon className="w-3.5 h-3.5 text-zinc-700" />}
-      <span className="text-[11px] font-bold">
+      {isDark ? <Sun className="w-3.5 h-3.5 text-[#F4C430]" /> : <Moon className="w-3.5 h-3.5 text-[#0D0D10]" />}
+      <span className="hidden sm:inline text-[11px] font-bold whitespace-nowrap">
         {isDark ? tr(lang, 'Light', 'لائٹ') : tr(lang, 'Dark', 'ڈارک')}
       </span>
     </button>
@@ -89,16 +91,16 @@ export const LanguageToggle: React.FC<{
   const effectiveDark = dark ?? isDark;
   return (
     <div
-      className={`pr-preserve-light inline-flex items-center rounded-lg p-0.5 border text-xs font-medium shrink-0 ${
-        effectiveDark ? 'bg-zinc-900 border-zinc-700 text-zinc-200' : 'bg-zinc-100 border-zinc-200 text-zinc-700'
+      className={`pr-preserve-light inline-flex items-center rounded-lg p-0.5 border text-[11px] sm:text-xs font-semibold shrink-0 ${
+        effectiveDark ? 'bg-zinc-900 border-zinc-700 text-zinc-200' : 'bg-zinc-100 border-zinc-300 text-[#0D0D10]'
       }`}
     >
-      <Globe className="w-3.5 h-3.5 mx-1.5 text-[#D4A017]" />
+      <Globe className="hidden sm:block w-3.5 h-3.5 mx-1.5 text-[#D4A017]" />
       <button
         type="button"
         onClick={() => onChange('en')}
-        className={`px-2 py-1 rounded-md transition-colors whitespace-nowrap ${
-          lang === 'en' ? 'bg-[#0D0D10] text-white font-semibold' : 'hover:text-[#D4A017]'
+        className={`px-1.5 sm:px-2 py-1 rounded-md transition-colors whitespace-nowrap ${
+          lang === 'en' ? 'bg-[#0D0D10] text-white font-bold' : 'hover:text-[#D4A017]'
         }`}
       >
         EN
@@ -106,8 +108,8 @@ export const LanguageToggle: React.FC<{
       <button
         type="button"
         onClick={() => onChange('ur')}
-        className={`px-2 py-1 rounded-md transition-colors whitespace-nowrap ${
-          lang === 'ur' ? 'bg-[#D4A017] text-[#0D0D10] font-semibold' : 'hover:text-[#D4A017]'
+        className={`px-1.5 sm:px-2 py-1 rounded-md transition-colors whitespace-nowrap ${
+          lang === 'ur' ? 'bg-[#D4A017] text-[#0D0D10] font-bold' : 'hover:text-[#D4A017]'
         }`}
       >
         اردو
@@ -279,6 +281,7 @@ export const VehicleImage: React.FC<{ src?: string; alt: string; className?: str
   className = 'w-20 h-14',
   categorySlug,
 }) => {
+  const { isDark } = useTheme();
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     setFailed(false);
@@ -291,7 +294,11 @@ export const VehicleImage: React.FC<{ src?: string; alt: string; className?: str
   if (!effectiveSrc) {
     return (
       <div
-        className={`${className} rounded-lg bg-gradient-to-br from-zinc-100 to-zinc-200 border border-zinc-200 flex items-center justify-center text-zinc-500 shrink-0`}
+        className={`${className} rounded-lg border flex items-center justify-center shrink-0 ${
+          isDark
+            ? 'bg-gradient-to-br from-[#1B1D24] to-[#111218] border-zinc-800 text-zinc-400'
+            : 'bg-gradient-to-br from-zinc-100 to-zinc-200 border-zinc-200 text-zinc-500'
+        }`}
       >
         <Car className="w-6 h-6 text-[#D4A017]" />
       </div>
@@ -305,7 +312,7 @@ export const VehicleImage: React.FC<{ src?: string; alt: string; className?: str
       onError={() => {
         if (!failed) setFailed(true);
       }}
-      className={`${className} object-cover rounded-lg bg-white shrink-0`}
+      className={`${className} object-cover rounded-lg shrink-0 ${isDark ? 'bg-[#16171F]' : 'bg-zinc-100'}`}
     />
   );
 };

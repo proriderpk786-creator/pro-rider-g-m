@@ -127,6 +127,7 @@ export function initDatabase() {
       profile_published INTEGER NOT NULL DEFAULT 0,
       profile_template TEXT DEFAULT 'clean_light',
       showcase_gallery TEXT NOT NULL DEFAULT '[]',
+      reference_phone TEXT DEFAULT '',
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -367,6 +368,7 @@ export function initDatabase() {
     ['profile_published', `ALTER TABLE partner_profiles ADD COLUMN profile_published INTEGER NOT NULL DEFAULT 0`],
     ['profile_template', `ALTER TABLE partner_profiles ADD COLUMN profile_template TEXT DEFAULT 'clean_light'`],
     ['showcase_gallery', `ALTER TABLE partner_profiles ADD COLUMN showcase_gallery TEXT NOT NULL DEFAULT '[]'`],
+    ['reference_phone', `ALTER TABLE partner_profiles ADD COLUMN reference_phone TEXT DEFAULT ''`],
   ];
   for (const [col, sql] of profileMigrations) {
     if (!profileCols.has(col)) db.exec(sql);

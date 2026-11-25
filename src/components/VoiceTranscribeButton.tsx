@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { Loader2, Mic, Square } from 'lucide-react';
+import { useTheme } from '../contexts/ThemeContext';
 import type { Language } from '../types';
 import { apiRequest } from '../utils/api';
 
@@ -20,6 +21,7 @@ export const VoiceTranscribeButton: React.FC<VoiceTranscribeButtonProps> = ({
   onError,
   title = 'Speak to transcribe audio',
 }) => {
+  const { isDark } = useTheme();
   const [recording, setRecording] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -113,13 +115,15 @@ export const VoiceTranscribeButton: React.FC<VoiceTranscribeButtonProps> = ({
       title={recording ? 'Stop recording & transcribe' : title}
       aria-label={recording ? 'Stop voice recording' : 'Voice audio transcription'}
       className={`inline-flex items-center justify-center rounded-lg transition-colors shrink-0 ${
-        compact ? 'p-1.5' : 'px-3 py-2 gap-1.5 text-xs font-semibold'
+        compact ? 'p-2' : 'px-3 py-2 gap-1.5 text-xs font-semibold'
       } ${
         recording
           ? 'bg-red-600 text-white animate-pulse'
           : transcribing
           ? 'bg-amber-100 text-[#B8860B]'
-          : 'text-zinc-500 hover:text-[#0D0D10] hover:bg-zinc-100'
+          : isDark
+          ? 'text-zinc-200 hover:text-[#F4C430] hover:bg-zinc-800 border border-zinc-700'
+          : 'text-zinc-700 hover:text-[#0D0D10] hover:bg-zinc-100 border border-zinc-200'
       } disabled:opacity-40`}
     >
       {transcribing ? (

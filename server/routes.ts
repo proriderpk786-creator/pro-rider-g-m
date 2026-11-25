@@ -1397,7 +1397,15 @@ export function registerAppRoutes(app: Express) {
       return;
     }
 
-    const seats = Math.max(1, Math.min(fleet.seating_capacity, Number(seatsRequested || 1)));
+    const requestedSeats = Math.max(1, Number(seatsRequested || 1));
+    if (bookingMode === 'schedule' && requestedSeats > fleet.seating_capacity) {
+      res.status(400).json({
+        error: `Selected vehicle (${fleet.name}) only supports up to ${fleet.seating_capacity} seats.`,
+      });
+      return;
+    }
+
+    const seats = Math.max(1, Math.min(fleet.seating_capacity, requestedSeats));
     const dist = Number(distanceKm);
     const dur = Math.max(1, Math.round(Number(durationMin || dist * 2)));
 
@@ -1436,8 +1444,10 @@ export function registerAppRoutes(app: Express) {
         ratePerKm = 40;
       } else if (fleet.slug === 'comfort') {
         ratePerKm = 30;
-      } else if (fleet.slug.includes('sedan') || fleet.slug.includes('suv')) {
+      } else if (fleet.slug.includes('sedan')) {
         ratePerKm = 60;
+      } else if (fleet.slug.includes('suv')) {
+        ratePerKm = 70;
       } else if (fleet.slug.includes('premium')) {
         ratePerKm = 75;
       } else if (fleet.slug.includes('luxury')) {
@@ -1456,7 +1466,8 @@ export function registerAppRoutes(app: Express) {
         ratePerKm = 16;
       }
       const totalKm = Math.round(dist * dailyTrips * inferredPkgDays * 10) / 10;
-      estimatedFare = Math.max(100, Math.round(totalKm * ratePerKm * seats));
+      const billableMultiplier = serviceType === 'pick_and_drop' ? 1 : seats;
+      estimatedFare = Math.max(100, Math.round(totalKm * ratePerKm * billableMultiplier));
     }
 
     if (packageId && !['pkg-22-days', 'pkg-26-days', 'pkg-custom'].includes(String(packageId))) {
@@ -2002,8 +2013,11 @@ export function registerAppRoutes(app: Express) {
     });
   });
 
-  app.put('/api/partner/registration', requireRole('partner'), (req: AuthedRequest, res: Response) => {
+  const handlePartnerRegistrationSave = (req: AuthedRequest, res: Response) => {
     const {
+      fullName,
+      phone,
+      referencePhone,
       cnicNumber,
       cnicExpiry,
       licenceNumber,
@@ -2015,12 +2029,49 @@ export function registerAppRoutes(app: Express) {
       fuelType,
       operatingCity,
       serviceEligibility,
+      isDraft,
     } = req.body || {};
 
-    const current = db.prepare('SELECT * FROM partner_profiles WHERE user_id = ?').get(req.auth!.sub) as any;
-    if (!current) {
-      res.status(404).json({ error: 'Partner profile missing' });
+    const userRow = db
+      .prepare('SELECT id, role, full_name, phone, whatsapp, email, city, operating_area, phone_verified, created_at FROM users WHERE id = ?')
+      .get(req.auth!.sub) as any;
+
+    if (!userRow) {
+      res.status(404).json({ error: 'Partner account not found.' });
       return;
+    }
+
+    const cleanFullName = typeof fullName === 'string' ? fullName.trim().slice(0, 120) : '';
+    const cleanPhone = typeof phone === 'string' ? phone.trim().slice(0, 32) : '';
+    const cleanRefPhone = typeof referencePhone === 'string' ? referencePhone.trim().slice(0, 32) : '';
+    const cleanCity = typeof operatingCity === 'string' ? operatingCity.trim().slice(0, 80) : '';
+
+    if (cleanPhone && cleanPhone !== userRow.phone) {
+      const phoneConflict = db
+        .prepare(`SELECT id FROM users WHERE phone = ? AND role = 'partner' AND id != ?`)
+        .get(cleanPhone, req.auth!.sub);
+      if (phoneConflict) {
+        res.status(409).json({ error: 'This mobile number is already registered with another Pro Partner account.' });
+        return;
+      }
+    }
+
+    db.prepare(`INSERT OR IGNORE INTO partner_profiles (user_id, operating_city) VALUES (?, ?)`).run(
+      req.auth!.sub,
+      cleanCity || userRow.city || 'Islamabad'
+    );
+
+    const current = db.prepare('SELECT * FROM partner_profiles WHERE user_id = ?').get(req.auth!.sub) as any;
+
+    if (cleanFullName || cleanPhone || cleanCity) {
+      db.prepare(`
+        UPDATE users
+        SET full_name = COALESCE(NULLIF(?, ''), full_name),
+            phone = COALESCE(NULLIF(?, ''), phone),
+            whatsapp = CASE WHEN COALESCE(whatsapp, '') = '' AND ? != '' THEN ? ELSE whatsapp END,
+            city = COALESCE(NULLIF(?, ''), city)
+        WHERE id = ?
+      `).run(cleanFullName, cleanPhone, cleanPhone, cleanPhone, cleanCity, req.auth!.sub);
     }
 
     // If already approved and changing sensitive vehicle info, queue for Admin review!
@@ -2031,14 +2082,21 @@ export function registerAppRoutes(app: Express) {
     ) {
       db.prepare(`
         UPDATE partner_profiles
-        SET pending_vehicle_review = ?, updated_at = datetime('now')
+        SET reference_phone = COALESCE(NULLIF(?, ''), reference_phone),
+            pending_vehicle_review = ?,
+            updated_at = datetime('now')
         WHERE user_id = ?
       `).run(
+        cleanRefPhone,
         JSON.stringify({ vehicleCategoryId, vehicleName, vehicleNumber, seatingCapacity, fuelType, serviceEligibility }),
         req.auth!.sub
       );
+      const updatedUser = db
+        .prepare('SELECT id, role, full_name, phone, whatsapp, email, city, operating_area, phone_verified, created_at FROM users WHERE id = ?')
+        .get(req.auth!.sub);
       res.json({
         queuedForReview: true,
+        user: updatedUser,
         message: 'Sensitive vehicle changes saved for Super Admin review before activation.',
       });
       return;
@@ -2048,14 +2106,19 @@ export function registerAppRoutes(app: Express) {
       db.prepare('SELECT COUNT(*) as c FROM partner_documents WHERE partner_id = ?').get(req.auth!.sub) as { c: number }
     ).c;
 
-    let nextStatus = current.verification_status;
-    if (['not_registered', 'incomplete', 'rejected'].includes(current.verification_status)) {
-      nextStatus = docsCount >= 3 ? 'under_review' : 'documents_pending';
+    let nextStatus = current.verification_status || 'incomplete';
+    if (!isDraft) {
+      if (['not_registered', 'incomplete', 'rejected', 'documents_pending', 'under_review'].includes(nextStatus)) {
+        nextStatus = docsCount >= 1 ? 'under_review' : 'documents_pending';
+      }
+    } else if (['not_registered', 'incomplete'].includes(nextStatus)) {
+      nextStatus = docsCount >= 1 ? 'documents_pending' : 'incomplete';
     }
 
     db.prepare(`
       UPDATE partner_profiles
-      SET cnic_number = COALESCE(?, cnic_number),
+      SET reference_phone = COALESCE(NULLIF(?, ''), reference_phone),
+          cnic_number = COALESCE(?, cnic_number),
           cnic_expiry = COALESCE(?, cnic_expiry),
           licence_number = COALESCE(?, licence_number),
           licence_expiry = COALESCE(?, licence_expiry),
@@ -2064,12 +2127,13 @@ export function registerAppRoutes(app: Express) {
           vehicle_number = COALESCE(?, vehicle_number),
           seating_capacity = COALESCE(?, seating_capacity),
           fuel_type = COALESCE(?, fuel_type),
-          operating_city = COALESCE(?, operating_city),
+          operating_city = COALESCE(NULLIF(?, ''), operating_city),
           service_eligibility = COALESCE(?, service_eligibility),
           verification_status = ?,
           updated_at = datetime('now')
       WHERE user_id = ?
     `).run(
+      cleanRefPhone,
       cnicNumber ?? null,
       cnicExpiry ?? null,
       licenceNumber ?? null,
@@ -2079,15 +2143,44 @@ export function registerAppRoutes(app: Express) {
       vehicleNumber ?? null,
       seatingCapacity ? Number(seatingCapacity) : null,
       fuelType ?? null,
-      operatingCity ?? null,
+      cleanCity,
       Array.isArray(serviceEligibility) ? JSON.stringify(serviceEligibility) : null,
       nextStatus,
       req.auth!.sub
     );
 
-    const updated = db.prepare('SELECT * FROM partner_profiles WHERE user_id = ?').get(req.auth!.sub);
-    res.json({ partnerProfile: updated });
-  });
+    const updatedUser = db
+      .prepare('SELECT id, role, full_name, phone, whatsapp, email, city, operating_area, phone_verified, created_at FROM users WHERE id = ?')
+      .get(req.auth!.sub) as any;
+    const updatedRow = db.prepare('SELECT * FROM partner_profiles WHERE user_id = ?').get(req.auth!.sub) as any;
+    let showcaseGallery: any[] = [];
+    try {
+      showcaseGallery = JSON.parse(updatedRow?.showcase_gallery || '[]');
+    } catch {
+      showcaseGallery = [];
+    }
+    const partnerProfile = updatedRow
+      ? {
+          ...updatedRow,
+          service_eligibility: JSON.parse(updatedRow.service_eligibility || '[]'),
+          showcase_gallery: Array.isArray(showcaseGallery) ? showcaseGallery : [],
+        }
+      : null;
+
+    if (!isDraft) {
+      notifyAdmins(
+        'Partner Registration',
+        `Partner Application Submitted (${updatedUser?.full_name || req.auth!.sub})`,
+        `${updatedUser?.full_name || 'Pro Partner'} (${updatedUser?.phone || ''}) submitted registration details and ${docsCount} document(s) for Admin review.`
+      );
+      emitToRole('admin', 'partner:document_uploaded', { partnerId: req.auth!.sub, submitted: true });
+    }
+
+    res.json({ user: updatedUser, partnerProfile, submitted: !isDraft });
+  };
+
+  app.put('/api/partner/registration', requireRole('partner'), handlePartnerRegistrationSave);
+  app.post('/api/partner/registration', requireRole('partner'), handlePartnerRegistrationSave);
 
   app.post('/api/partner/documents', requireRole('partner'), (req: AuthedRequest, res: Response) => {
     const { docType, fileName, fileDataUrl, expiryDate, isPublic } = req.body || {};
@@ -2100,6 +2193,12 @@ export function registerAppRoutes(app: Express) {
       res.status(413).json({ error: 'Uploaded file exceeds size limit after compression.' });
       return;
     }
+
+    const userRow = db.prepare('SELECT full_name, city FROM users WHERE id = ?').get(req.auth!.sub) as any;
+    db.prepare(`INSERT OR IGNORE INTO partner_profiles (user_id, operating_city) VALUES (?, ?)`).run(
+      req.auth!.sub,
+      userRow?.city || 'Islamabad'
+    );
 
     const defaultPublic = docType === 'profile_photo' || docType === 'vehicle_photo' ? 1 : 0;
     const resolvedPublic = typeof isPublic === 'boolean' ? (isPublic ? 1 : 0) : defaultPublic;
@@ -2145,6 +2244,11 @@ export function registerAppRoutes(app: Express) {
       .prepare('SELECT * FROM partner_documents WHERE partner_id = ? AND doc_type = ?')
       .get(req.auth!.sub, docType);
 
+    notifyAdmins(
+      'Partner Document',
+      `Partner Document Uploaded (${userRow?.full_name || req.auth!.sub})`,
+      `${userRow?.full_name || 'Pro Partner'} uploaded ${String(docType).replaceAll('_', ' ')} for Admin review.`
+    );
     emitToRole('admin', 'partner:document_uploaded', { partnerId: req.auth!.sub, docType });
     res.status(201).json({ uploaded: true, document: savedDoc, verificationStatus: nextStatus });
   });
@@ -3098,10 +3202,26 @@ If a field is not present in this specific image, return empty string "" for tha
 
       const token = signAuthToken({ sub: existing.id, role: targetRole, email: cleanEmail });
       const { password_hash: _ph, ...safeUser } = existing;
-      const partnerProfile =
-        targetRole === 'partner'
-          ? db.prepare('SELECT * FROM partner_profiles WHERE user_id = ?').get(existing.id)
-          : undefined;
+      let partnerProfile: any = undefined;
+      if (targetRole === 'partner') {
+        db.prepare(`INSERT OR IGNORE INTO partner_profiles (user_id, operating_city) VALUES (?, ?)`).run(
+          existing.id,
+          existing.city || 'Islamabad'
+        );
+        const rawPp = db.prepare('SELECT * FROM partner_profiles WHERE user_id = ?').get(existing.id) as any;
+        if (rawPp) {
+          let svc: any[] = ['pick_and_drop'];
+          try {
+            svc = JSON.parse(rawPp.service_eligibility || '[]');
+          } catch {
+            svc = ['pick_and_drop'];
+          }
+          partnerProfile = {
+            ...rawPp,
+            service_eligibility: Array.isArray(svc) && svc.length ? svc : ['pick_and_drop'],
+          };
+        }
+      }
       res.json({ token, user: safeUser, partnerProfile });
     } catch {
       res.status(503).json({ error: 'Unable to verify Google Sign-In session right now.' });

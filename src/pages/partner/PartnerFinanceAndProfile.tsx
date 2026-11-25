@@ -152,7 +152,7 @@ export const PartnerFinanceView: React.FC<{
 
       {/* Summary KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="rounded-2xl bg-[#0D0D10] text-white p-5">
+        <div className="rounded-2xl bg-[#0D0D10] text-white p-5 border border-[#D4A017]/35">
           <span className="text-xs text-zinc-400">
             {tr(lang, 'Available Wallet Balance', 'دستیاب والیٹ بیلنس')}
           </span>
@@ -1032,7 +1032,7 @@ export const PartnerProfileView: React.FC<{
             <h3 className="font-display font-bold text-base text-[#0D0D10]">
               {tr(lang, 'Edit Profile & Showcase Info', 'ذاتی اور ڈسپلے معلومات ایڈٹ کریں')}
             </h3>
-            <button type="button" onClick={() => setEditingOpen(false)} className="text-zinc-500 hover:text-black">
+            <button type="button" onClick={() => setEditingOpen(false)} className="text-zinc-500 hover:text-[#0D0D10]">
               <X className="w-4 h-4" />
             </button>
           </div>

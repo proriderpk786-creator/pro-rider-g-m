@@ -269,6 +269,149 @@
         }
       },
       "required": ["uid", "email", "grantedAt"]
+    },
+    "PartnerApplication": {
+      "title": "PartnerApplication",
+      "description": "Pro Partner registration profile and verification status submitted for Admin review.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "fullName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 180
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "referencePhone": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "cnicNumber": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "cnicExpiry": {
+          "type": "string",
+          "maxLength": 24
+        },
+        "licenceNumber": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "licenceExpiry": {
+          "type": "string",
+          "maxLength": 24
+        },
+        "vehicleCategoryId": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "vehicleName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "vehicleNumber": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "seatingCapacity": {
+          "type": "number"
+        },
+        "fuelType": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "operatingCity": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "serviceEligibility": {
+          "type": "array"
+        },
+        "verificationStatus": {
+          "type": "string",
+          "enum": ["incomplete", "documents_pending", "under_review", "approved", "rejected", "suspended"]
+        },
+        "adminNotes": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "docsCount": {
+          "type": "number"
+        },
+        "submittedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "fullName", "operatingCity", "verificationStatus", "createdAt", "updatedAt"]
+    },
+    "PartnerApplicationDoc": {
+      "title": "PartnerApplicationDoc",
+      "description": "Uploaded verification document image or PDF for a Pro Partner application.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "docType": {
+          "type": "string",
+          "enum": ["profile_photo", "cnic_front", "cnic_back", "driving_licence", "vehicle_registration", "vehicle_photo"]
+        },
+        "fileName": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "fileDataUrl": {
+          "type": "string",
+          "maxLength": 800000
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "approved", "rejected"]
+        },
+        "expiryDate": {
+          "type": "string",
+          "maxLength": 24
+        },
+        "reviewNotes": {
+          "type": "string",
+          "maxLength": 400
+        },
+        "isPublic": {
+          "type": "boolean"
+        },
+        "uploadedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "docType", "fileName", "fileDataUrl", "status", "uploadedAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -299,6 +442,14 @@
     "/admins/{adminUid}": {
       "schema": { "$ref": "#/entities/AdminMember" },
       "description": "Server-provisioned Super Admin role registry."
+    },
+    "/partnerApplications/{partnerId}": {
+      "schema": { "$ref": "#/entities/PartnerApplication" },
+      "description": "Pro Partner registration applications synced to Admin panel."
+    },
+    "/partnerApplications/{partnerId}/documents/{docType}": {
+      "schema": { "$ref": "#/entities/PartnerApplicationDoc" },
+      "description": "Pro Partner uploaded verification documents."
     }
   }
 }

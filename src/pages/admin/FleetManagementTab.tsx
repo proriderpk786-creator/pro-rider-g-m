@@ -310,7 +310,7 @@ export const FleetManagementTab: React.FC<FleetManagementTabProps> = ({
                   >
                     <span
                       className={`w-1.5 h-1.5 rounded-full ${
-                        f.is_active === 1 ? 'bg-emerald-200 animate-pulse' : 'bg-zinc-400'
+                        f.is_active === 1 ? 'bg-emerald-200' : 'bg-zinc-400'
                       }`}
                     />
                     {f.is_active === 1 ? tr(lang, 'Active Fleet', 'فعال گاڑی') : tr(lang, 'Disabled', 'بند')}

@@ -9,6 +9,7 @@ import {
   Eye,
   EyeOff,
   FileSpreadsheet,
+  FileText,
   Flame,
   HelpCircle,
   KeyRound,
@@ -17,6 +18,8 @@ import {
   Menu,
   Package,
   Palette,
+  PhoneCall,
+  RefreshCw,
   Settings,
   ShieldAlert,
   ShieldCheck,
@@ -31,6 +34,7 @@ import { BrandLogo, LanguageToggle, VehicleImage } from '../../components/BrandM
 import { GoogleSheetsSyncPanel } from '../../components/GoogleSheetsSyncPanel';
 import { StreetMap } from '../../components/StreetMap';
 import { ThemePreferencesPanel, ThemeQuickToggle } from '../../components/ThemeSwitcher';
+import { useFirebase, type PartnerApplicationCloud } from '../../contexts/FirebaseContext';
 import { tr, trBookingStatus, trVerificationStatus } from '../../i18n/translations';
 import { apiRequest, getRoleToken, isBackendOfflineError, setRoleToken, useRoleWebSocket } from '../../utils/api';
 import { downloadBookingPdf } from '../../utils/pdfGenerator';
@@ -80,6 +84,196 @@ interface AdminPortalProps {
   onRefreshConfig?: () => Promise<void> | void;
 }
 
+const SHARED_PARTNER_SUBMISSIONS_KEY = 'pr_shared_partner_submissions';
+
+function readSharedLocalPartners(): any[] {
+  try {
+    const raw = localStorage.getItem(SHARED_PARTNER_SUBMISSIONS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeSharedLocalPartnerUpdate(
+  partnerId: string,
+  patch: {
+    verification_status?: string;
+    admin_notes?: string;
+    wallet_delta_pkr?: number;
+  }
+) {
+  try {
+    const list = readSharedLocalPartners();
+    const updated = list.map((item) => {
+      if (item?.user_id !== partnerId && item?.id !== partnerId && item?.cloud_uid !== partnerId) {
+        return item;
+      }
+      return {
+        ...item,
+        ...(patch.verification_status ? { verification_status: patch.verification_status } : {}),
+        ...(typeof patch.admin_notes === 'string' ? { admin_notes: patch.admin_notes } : {}),
+        ...(typeof patch.wallet_delta_pkr === 'number'
+          ? { wallet_balance_pkr: Number(item.wallet_balance_pkr || 0) + patch.wallet_delta_pkr }
+          : {}),
+        updated_at: new Date().toISOString(),
+      };
+    });
+    localStorage.setItem(SHARED_PARTNER_SUBMISSIONS_KEY, JSON.stringify(updated));
+
+    // Also update active per-ID cached partner profile if present in same browser
+    for (const key of [`pr_profile_partner_${partnerId}`, 'pr_profile_partner']) {
+      const rawProf = localStorage.getItem(key);
+      if (!rawProf) continue;
+      const prof = JSON.parse(rawProf);
+      if (prof && (prof.user_id === partnerId || key === `pr_profile_partner_${partnerId}`)) {
+        const nextProf = {
+          ...prof,
+          ...(patch.verification_status ? { verification_status: patch.verification_status } : {}),
+          ...(typeof patch.admin_notes === 'string' ? { admin_notes: patch.admin_notes } : {}),
+          ...(typeof patch.wallet_delta_pkr === 'number'
+            ? { wallet_balance_pkr: Number(prof.wallet_balance_pkr || 0) + patch.wallet_delta_pkr }
+            : {}),
+        };
+        localStorage.setItem(key, JSON.stringify(nextProf));
+      }
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function mapCloudAppToAdminPartner(app: PartnerApplicationCloud): any {
+  const docs = Array.isArray(app.documents)
+    ? app.documents.map((d) => ({
+        id: `${app.uid}_${d.docType}`,
+        partner_id: app.uid,
+        doc_type: d.docType,
+        file_name: d.fileName,
+        file_data_url: d.fileDataUrl,
+        status: d.status || 'pending',
+        expiry_date: d.expiryDate || '',
+        is_public: d.isPublic ? 1 : 0,
+        review_notes: d.reviewNotes || '',
+      }))
+    : [];
+
+  return {
+    user_id: app.uid,
+    cloud_uid: app.uid,
+    full_name: app.fullName || 'Pro Partner',
+    email: app.email || '',
+    phone: app.phone || '',
+    reference_phone: app.referencePhone || '',
+    operating_city: app.operatingCity || 'Islamabad',
+    cnic_number: app.cnicNumber || '',
+    cnic_expiry: app.cnicExpiry || '',
+    licence_number: app.licenceNumber || '',
+    licence_expiry: app.licenceExpiry || '',
+    vehicle_category_id: app.vehicleCategoryId || 'fleet-sedan',
+    vehicle_name: app.vehicleName || '',
+    vehicle_number: app.vehicleNumber || '',
+    seating_capacity: app.seatingCapacity || 4,
+    fuel_type: app.fuelType || 'Petrol',
+    service_eligibility: Array.isArray(app.serviceEligibility) ? app.serviceEligibility : ['pick_and_drop'],
+    verification_status: app.verificationStatus || 'under_review',
+    admin_notes: app.adminNotes || '',
+    wallet_balance_pkr: 0,
+    pending_vehicle_review: 0,
+    documents: docs,
+    source: 'cloud',
+  };
+}
+
+function mergeDocs(baseDocs: any[], incomingDocs: any[]): any[] {
+  const byType = new Map<string, any>();
+  for (const d of baseDocs || []) {
+    if (d?.doc_type) byType.set(d.doc_type, d);
+  }
+  for (const d of incomingDocs || []) {
+    if (d?.doc_type && (!byType.has(d.doc_type) || (!byType.get(d.doc_type)?.file_data_url && d.file_data_url))) {
+      byType.set(d.doc_type, d);
+    }
+  }
+  return Array.from(byType.values());
+}
+
+function mergePartnerLists(expressList: any[], cloudApps: PartnerApplicationCloud[], localList: any[]): any[] {
+  const resultMap = new Map<string, any>();
+  const emailToKey = new Map<string, string>();
+
+  const upsert = (raw: any, sourceLabel: string) => {
+    if (!raw) return;
+    const uid = String(raw.user_id || raw.id || '').trim();
+    const emailKey = String(raw.email || '').trim().toLowerCase();
+    const existingKey = (uid && resultMap.has(uid) ? uid : '') || (emailKey && emailToKey.get(emailKey)) || uid || emailKey;
+    if (!existingKey) return;
+
+    const existing = resultMap.get(existingKey);
+    const normalizedDocs = Array.isArray(raw.documents) ? raw.documents : [];
+    const normalizedServices = Array.isArray(raw.service_eligibility)
+      ? raw.service_eligibility
+      : ['pick_and_drop'];
+
+    if (!existing) {
+      resultMap.set(existingKey, {
+        ...raw,
+        user_id: uid || existingKey,
+        cloud_uid: raw.cloud_uid || (sourceLabel === 'cloud' ? uid : undefined),
+        service_eligibility: normalizedServices,
+        documents: normalizedDocs,
+        source: raw.source || sourceLabel,
+      });
+      if (emailKey) emailToKey.set(emailKey, existingKey);
+    } else {
+      resultMap.set(existingKey, {
+        ...existing,
+        full_name: existing.full_name || raw.full_name,
+        email: existing.email || raw.email,
+        phone: existing.phone || raw.phone,
+        reference_phone: existing.reference_phone || raw.reference_phone,
+        operating_city: existing.operating_city || raw.operating_city,
+        cnic_number: existing.cnic_number || raw.cnic_number,
+        cnic_expiry: existing.cnic_expiry || raw.cnic_expiry,
+        licence_number: existing.licence_number || raw.licence_number,
+        licence_expiry: existing.licence_expiry || raw.licence_expiry,
+        vehicle_name: existing.vehicle_name || raw.vehicle_name,
+        vehicle_number: existing.vehicle_number || raw.vehicle_number,
+        seating_capacity: existing.seating_capacity || raw.seating_capacity,
+        fuel_type: existing.fuel_type || raw.fuel_type,
+        admin_notes: existing.admin_notes || raw.admin_notes,
+        cloud_uid: existing.cloud_uid || raw.cloud_uid || (sourceLabel === 'cloud' ? uid : undefined),
+        verification_status:
+          existing.verification_status === 'incomplete' && raw.verification_status
+            ? raw.verification_status
+            : existing.verification_status || raw.verification_status,
+        service_eligibility:
+          existing.service_eligibility?.length ? existing.service_eligibility : normalizedServices,
+        documents: mergeDocs(existing.documents, normalizedDocs),
+      });
+      if (emailKey && !emailToKey.has(emailKey)) {
+        emailToKey.set(emailKey, existingKey);
+      }
+    }
+  };
+
+  for (const p of expressList || []) upsert(p, 'server');
+  for (const app of cloudApps || []) upsert(mapCloudAppToAdminPartner(app), 'cloud');
+  for (const loc of localList || []) upsert(loc, 'local');
+
+  const priority = (status: string) => {
+    if (status === 'under_review') return 0;
+    if (status === 'documents_pending') return 1;
+    if (status === 'approved') return 2;
+    if (status === 'incomplete') return 3;
+    return 4;
+  };
+
+  return Array.from(resultMap.values()).sort((a, b) => priority(a.verification_status) - priority(b.verification_status));
+}
+
 export const AdminPortal: React.FC<AdminPortalProps> = ({
   currentPath = '/admin',
   lang = 'en',
@@ -87,6 +281,12 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   onNavigate,
   onRefreshConfig,
 }) => {
+  const {
+    firebaseUser,
+    signInWithGooglePopup,
+    fetchAllPartnerApplicationsForAdmin,
+    reviewPartnerApplicationInFirestore,
+  } = useFirebase();
   const [token, setToken] = useState<string | null>(() => getRoleToken('admin'));
   const [adminUser, setAdminUser] = useState<User | null>(null);
   const [setupCompleted, setSetupCompleted] = useState<boolean | null>(null);
@@ -146,6 +346,16 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [newPkgPrice, setNewPkgPrice] = useState('24000');
   const [ticketReplies, setTicketReplies] = useState<Record<string, string>>({});
   const [partnerNotes, setPartnerNotes] = useState<Record<string, string>>({});
+  const [partnerFilter, setPartnerFilter] = useState<'all' | 'pending' | 'approved' | 'other'>('all');
+  const [syncingCloud, setSyncingCloud] = useState(false);
+  const [previewDoc, setPreviewDoc] = useState<{
+    title: string;
+    dataUrl: string;
+    fileName?: string;
+    partnerName?: string;
+    status?: string;
+    expiryDate?: string;
+  } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   const loadAdminStatus = useCallback(async () => {
@@ -184,15 +394,33 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         apiRequest<{ passengers: PassengerAccount[] }>('/api/admin/passengers', { role: 'admin' }),
       ]);
       setAdminUser(me.user);
+      const cloudApps = await fetchAllPartnerApplicationsForAdmin().catch(() => []);
+      const localShared = readSharedLocalPartners();
+      const mergedPartners = mergePartnerLists(
+        Array.isArray(prt?.partners) ? prt.partners : [],
+        cloudApps,
+        localShared
+      );
+      const pendingPartnersCount = mergedPartners.filter((p) =>
+        ['under_review', 'documents_pending'].includes(p.verification_status)
+      ).length;
+
       const safeOv: any = ov || {};
       setOverview(
         safeOv.kpis
-          ? safeOv
+          ? {
+              ...safeOv,
+              kpis: {
+                ...safeOv.kpis,
+                totalPartners: Math.max(Number(safeOv.kpis.totalPartners || 0), mergedPartners.length),
+                pendingPartners: Math.max(Number(safeOv.kpis.pendingPartners || 0), pendingPartnersCount),
+              },
+            }
           : {
               kpis: {
                 totalPassengers: Array.isArray(psg?.passengers) ? psg.passengers.length : 0,
-                totalPartners: Array.isArray(prt?.partners) ? prt.partners.length : 0,
-                pendingPartners: 0,
+                totalPartners: mergedPartners.length,
+                pendingPartners: pendingPartnersCount,
                 activeBookings: Array.isArray(bks?.bookings)
                   ? bks.bookings.filter((b: Booking) =>
                       ['searching', 'negotiating', 'confirmed', 'on_the_way', 'arrived', 'started'].includes(b.status)
@@ -207,7 +435,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               mapBookings: Array.isArray(safeOv.mapBookings) ? safeOv.mapBookings : [],
             }
       );
-      setPartners(Array.isArray(prt?.partners) ? prt.partners : []);
+      setPartners(mergedPartners);
       setBookings(Array.isArray(bks?.bookings) ? bks.bookings : []);
       setFleet(Array.isArray(flt?.fleet) ? flt.fleet : []);
       setZones(Array.isArray(zns?.zones) ? zns.zones : []);
@@ -236,6 +464,15 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
           created_at: new Date().toISOString(),
         };
         setAdminUser((prev) => prev || superAdminUser);
+
+        const cloudApps = await fetchAllPartnerApplicationsForAdmin().catch(() => []);
+        const localShared = readSharedLocalPartners();
+        const mergedPartners = mergePartnerLists([], cloudApps, localShared);
+        setPartners(mergedPartners);
+        const pendingPartnersCount = mergedPartners.filter((p) =>
+          ['under_review', 'documents_pending'].includes(p.verification_status)
+        ).length;
+
         const allBookings: Booking[] = [];
         try {
           for (let i = 0; i < localStorage.length; i++) {
@@ -260,30 +497,27 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         const completedList = allBookings.filter((b) => b.status === 'completed');
         const gmvPkr = completedList.reduce((acc, b) => acc + Number(b.total_bill_pkr || 0), 0);
         const commissionPkr = completedList.reduce((acc, b) => acc + Number(b.commission_pkr || 0), 0);
-        setOverview((prev: any) =>
-          prev?.kpis
-            ? prev
-            : {
-                kpis: {
-                  totalPassengers: 1,
-                  totalPartners: 1,
-                  pendingPartners: 0,
-                  activeBookings: activeCount,
-                  completedBookings: completedList.length,
-                  gmvPkr,
-                  commissionPkr,
-                },
-                onlinePartners: [],
-                mapBookings: allBookings.slice(0, 40),
-              }
-        );
+        setOverview((prev: any) => ({
+          kpis: {
+            totalPassengers: prev?.kpis?.totalPassengers ?? 1,
+            totalPartners: mergedPartners.length,
+            pendingPartners: pendingPartnersCount,
+            activeBookings: activeCount,
+            completedBookings: completedList.length,
+            pendingMonthlyAppsCount: prev?.kpis?.pendingMonthlyAppsCount ?? 0,
+            gmvPkr,
+            commissionPkr,
+          },
+          onlinePartners: prev?.onlinePartners ?? [],
+          mapBookings: allBookings.slice(0, 40),
+        }));
         return;
       }
       setRoleToken('admin', null);
       setToken(null);
       setAdminUser(null);
     }
-  }, [token, selectedFleetId]);
+  }, [token, selectedFleetId, fetchAllPartnerApplicationsForAdmin]);
 
   useEffect(() => {
     loadAll();
@@ -1069,24 +1303,86 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     { id: 'security', label: tr(lang, 'Security & Audit Logs', 'سیکیورٹی اور آڈٹ لاگز'), icon: KeyRound },
   ];
 
-  const reviewPartner = async (partnerId: string, status: string, approvePendingVehicle = false) => {
-    await apiRequest(`/api/admin/partners/${partnerId}/review`, {
-      method: 'POST',
-      role: 'admin',
-      body: {
-        verificationStatus: status,
-        adminNotes: partnerNotes[partnerId] || '',
-        approvePendingVehicle,
-      },
+  const reviewPartner = async (
+    partnerId: string,
+    status: PartnerApplicationCloud['verificationStatus'],
+    approvePendingVehicle = false,
+    cloudUid?: string
+  ) => {
+    const notes = partnerNotes[partnerId] || '';
+    try {
+      await apiRequest(`/api/admin/partners/${partnerId}/review`, {
+        method: 'POST',
+        role: 'admin',
+        body: {
+          verificationStatus: status,
+          adminNotes: notes,
+          approvePendingVehicle,
+        },
+      });
+    } catch (err) {
+      if (!isBackendOfflineError(err)) {
+        setToast(err instanceof Error ? err.message : tr(lang, 'Review failed.', 'تصدیق محفوظ نہ ہو سکی۔'));
+        return;
+      }
+    }
+
+    await reviewPartnerApplicationInFirestore(cloudUid || partnerId, status, notes).catch(() => false);
+    writeSharedLocalPartnerUpdate(partnerId, {
+      verification_status: status,
+      admin_notes: notes,
     });
+
+    setPartners((prev) =>
+      prev.map((p) =>
+        p.user_id === partnerId ? { ...p, verification_status: status, admin_notes: notes } : p
+      )
+    );
     setToast(
       tr(
         lang,
-        `Partner ${partnerId} updated to ${status.toUpperCase()}.`,
-        `پارٹنر ${partnerId} کا اسٹیٹس ${trVerificationStatus(lang, status)} کر دیا گیا۔`
+        `Partner status updated to ${status.toUpperCase()}.`,
+        `پارٹنر کا اسٹیٹس ${trVerificationStatus(lang, status)} کر دیا گیا ہے۔`
       )
     );
     await loadAll();
+  };
+
+  const pendingPartnersBadge =
+    partners.filter((p) => ['under_review', 'documents_pending'].includes(p.verification_status)).length ||
+    Number(overview?.kpis?.pendingPartners || 0);
+  const isVerifiedSuperAdminCloud = Boolean(
+    firebaseUser?.emailVerified && firebaseUser?.email?.toLowerCase() === 'prorider.pk786@gmail.com'
+  );
+
+  const handleSyncCloudPartners = async () => {
+    setSyncingCloud(true);
+    try {
+      const res = await signInWithGooglePopup('partner', 'Islamabad', lang);
+      const signedEmail = res.user.email?.toLowerCase() || '';
+      if (signedEmail !== 'prorider.pk786@gmail.com') {
+        setToast(
+          tr(
+            lang,
+            `Please sign in with Super Admin Google account (prorider.pk786@gmail.com). Signed in as ${signedEmail}.`,
+            `براہِ کرم سپر ایڈمن گوگل اکاؤنٹ (prorider.pk786@gmail.com) سے لاگ اِن کریں۔`
+          )
+        );
+      } else {
+        await loadAll();
+        setToast(
+          tr(
+            lang,
+            'Cloud partner applications & documents synced cleanly.',
+            'کلاؤڈ سے تمام پارٹنر درخواستیں اور دستاویزات کامیابی سے سنک ہو گئیں۔'
+          )
+        );
+      }
+    } catch (err: any) {
+      setToast(err?.message || tr(lang, 'Cloud sync failed.', 'کلاؤڈ سنک مکمل نہ ہو سکا۔'));
+    } finally {
+      setSyncingCloud(false);
+    }
   };
 
   const saveFareChanges = async (e: React.FormEvent) => {
@@ -1167,6 +1463,15 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                     <Icon className="w-4 h-4 shrink-0" />
                     <span className="truncate">{item.label}</span>
                   </span>
+                  {item.id === 'partners' && pendingPartnersBadge > 0 && (
+                    <span
+                      className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold shrink-0 ${
+                        active ? 'bg-[#0D0D10] text-[#F4C430]' : 'bg-[#D4A017] text-[#0D0D10]'
+                      }`}
+                    >
+                      {pendingPartnersBadge}
+                    </span>
+                  )}
                   {item.id === 'bookings' && Number(overview?.kpis?.pendingMonthlyAppsCount || 0) > 0 && (
                     <span
                       className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold shrink-0 ${
@@ -1310,112 +1615,316 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         )}
 
         {/* 2. Pro Partner & Document Review */}
-        {tab === 'partners' && (
-          <div className="space-y-5">
-            <h1 className="font-display text-2xl font-bold">
-              {tr(lang, 'Pro Partner Verification & Document Review', 'پرو پارٹنر تصدیق اور دستاویزات کا جائزہ')}
-            </h1>
-            {partners.length === 0 ? (
-              <div className="rounded-2xl border border-zinc-200 bg-white p-10 text-center text-sm text-zinc-500">
-                {tr(lang, 'No Pro Partners registered yet.', 'ابھی کوئی پرو پارٹنر رجسٹر نہیں ہوا۔')}
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {partners.map((p) => (
-                  <div key={p.user_id} className="rounded-2xl border border-zinc-200 bg-white p-5 space-y-4">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <div className="font-display text-lg font-bold">{p.full_name}</div>
-                        <div className="text-xs text-zinc-500 font-mono">
-                          {p.phone} · {p.operating_city} · {tr(lang, 'CNIC', 'شناختی کارڈ')}: {p.cnic_number || 'N/A'} · {tr(lang, 'Licence', 'لائسنس')}: {p.licence_number || 'N/A'}
-                        </div>
-                        <div className="text-xs text-zinc-600 mt-1">
-                          {tr(lang, 'Vehicle:', 'گاڑی:')} <strong>{p.vehicle_name || 'N/A'}</strong> ({p.vehicle_number || tr(lang, 'No Plate', 'نمبر پلیٹ نہیں')}) · {tr(lang, 'Services:', 'سروسز:')}{' '}
-                          {p.service_eligibility.join(', ')}
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="px-3 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 font-mono text-xs font-bold">
-                          {tr(lang, 'Wallet:', 'والیٹ:')} Rs. {Number(p.wallet_balance_pkr || 0).toLocaleString()}
-                        </span>
-                        <span className="px-3 py-1 rounded-lg bg-zinc-100 font-mono text-xs font-bold uppercase">
-                          {trVerificationStatus(lang, p.verification_status)}
-                        </span>
-                      </div>
-                    </div>
+        {tab === 'partners' && (() => {
+          const filteredPartners = partners.filter((p) => {
+            if (partnerFilter === 'pending') {
+              return ['under_review', 'documents_pending', 'incomplete'].includes(p.verification_status);
+            }
+            if (partnerFilter === 'approved') {
+              return p.verification_status === 'approved';
+            }
+            if (partnerFilter === 'other') {
+              return ['rejected', 'suspended'].includes(p.verification_status);
+            }
+            return true;
+          });
 
-                    {p.documents.length > 0 && (
-                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-                        {p.documents.map((doc: any) => (
-                          <div key={doc.id} className="rounded-xl border border-zinc-200 p-2 space-y-1 text-[11px]">
-                            <img src={doc.file_data_url} alt={doc.doc_type} className="w-full h-20 object-cover rounded-lg" />
-                            <div className="font-semibold truncate">{doc.doc_type.replaceAll('_', ' ')}</div>
-                            <div className="text-zinc-500 uppercase">{doc.status}</div>
-                          </div>
-                        ))}
-                      </div>
+          return (
+            <div className="space-y-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h1 className="font-display text-2xl font-bold text-[#0D0D10]">
+                    {tr(lang, 'Pro Partner Verification & Document Review', 'پرو پارٹنر تصدیق اور دستاویزات کا جائزہ')}
+                  </h1>
+                  <p className="text-xs text-zinc-500 mt-0.5">
+                    {tr(
+                      lang,
+                      'Inspect submitted CNIC, driving licence, vehicle documents, and reference contacts before approval.',
+                      'منظوری سے قبل شناختی کارڈ، ڈرائیونگ لائسنس، گاڑی کی دستاویزات اور ریفرنس نمبر کی تصدیق کریں۔'
                     )}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {!isVerifiedSuperAdminCloud && (
+                    <button
+                      type="button"
+                      disabled={syncingCloud}
+                      onClick={handleSyncCloudPartners}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#0D0D10] text-[#F4C430] text-xs font-bold hover:bg-zinc-800 disabled:opacity-60"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${syncingCloud ? 'animate-spin' : ''}`} />
+                      {tr(lang, 'Sync Cloud Docs', 'کلاؤڈ دستاویزات سنک کریں')}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void loadAll()}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-zinc-200 bg-white text-zinc-700 text-xs font-semibold hover:bg-zinc-50"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    {tr(lang, 'Refresh', 'تازہ کریں')}
+                  </button>
+                </div>
+              </div>
 
-                    <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-zinc-100">
-                      <input
-                        placeholder={tr(lang, 'Admin review notes...', 'ایڈمن کے ریویو نوٹس...')}
-                        value={partnerNotes[p.user_id] ?? p.admin_notes ?? ''}
-                        onChange={(e) => setPartnerNotes((n) => ({ ...n, [p.user_id]: e.target.value }))}
-                        className="flex-1 min-w-[200px] px-3 py-2 rounded-xl border border-zinc-200 text-xs"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => reviewPartner(p.user_id, 'approved', Boolean(p.pending_vehicle_review))}
-                        className="px-4 py-2 rounded-xl bg-emerald-700 text-white text-xs font-bold"
-                      >
-                        {tr(lang, 'Approve Partner', 'پارٹنر منظور کریں')}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          await apiRequest(`/api/admin/partners/${p.user_id}/wallet`, {
-                            method: 'POST',
-                            role: 'admin',
-                            body: {
-                              amountPkr: 1000,
-                              type: 'credit',
-                              note: 'Super Admin Partner Wallet Top-Up (+Rs. 1,000)',
-                            },
-                          });
-                          setToast(
-                            tr(
-                              lang,
-                              `Added Rs. 1,000 to ${p.full_name}'s wallet.`,
-                              `${p.full_name} کے والیٹ میں 1,000 روپے شامل کر دیے گئے۔`
-                            )
-                          );
-                          await loadAll();
-                        }}
-                        className="px-3.5 py-2 rounded-xl bg-[#D4A017] text-[#0D0D10] text-xs font-bold hover:bg-[#EAB308]"
-                      >
-                        {tr(lang, '+ Top Up Rs. 1,000', '+ 1,000 روپے والیٹ')}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => reviewPartner(p.user_id, 'rejected')}
-                        className="px-4 py-2 rounded-xl bg-red-600 text-white text-xs font-bold"
-                      >
-                        {tr(lang, 'Reject', 'مسترد کریں')}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => reviewPartner(p.user_id, 'suspended')}
-                        className="px-4 py-2 rounded-xl border border-zinc-300 text-xs font-bold"
-                      >
-                        {tr(lang, 'Suspend', 'معطل کریں')}
-                      </button>
-                    </div>
-                  </div>
+              {/* Filter Tabs */}
+              <div className="flex flex-wrap items-center gap-1.5 p-1 rounded-xl bg-white border border-zinc-200 w-fit text-xs font-semibold">
+                {[
+                  { id: 'all' as const, label: tr(lang, `All (${partners.length})`, `تمام (${partners.length})`) },
+                  {
+                    id: 'pending' as const,
+                    label: tr(
+                      lang,
+                      `Pending (${partners.filter((p) => ['under_review', 'documents_pending', 'incomplete'].includes(p.verification_status)).length})`,
+                      `زیرِ غور (${partners.filter((p) => ['under_review', 'documents_pending', 'incomplete'].includes(p.verification_status)).length})`
+                    ),
+                  },
+                  {
+                    id: 'approved' as const,
+                    label: tr(
+                      lang,
+                      `Approved (${partners.filter((p) => p.verification_status === 'approved').length})`,
+                      `منظور شدہ (${partners.filter((p) => p.verification_status === 'approved').length})`
+                    ),
+                  },
+                  {
+                    id: 'other' as const,
+                    label: tr(
+                      lang,
+                      `Rejected / Suspended (${partners.filter((p) => ['rejected', 'suspended'].includes(p.verification_status)).length})`,
+                      `مسترد / معطل (${partners.filter((p) => ['rejected', 'suspended'].includes(p.verification_status)).length})`
+                    ),
+                  },
+                ].map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={() => setPartnerFilter(f.id)}
+                    className={`px-3 py-1.5 rounded-lg transition-colors ${
+                      partnerFilter === f.id
+                        ? 'bg-[#D4A017] text-[#0D0D10] font-bold'
+                        : 'text-zinc-600 hover:bg-zinc-100'
+                    }`}
+                  >
+                    {f.label}
+                  </button>
                 ))}
               </div>
-            )}
-          </div>
-        )}
+
+              {filteredPartners.length === 0 ? (
+                <div className="rounded-2xl border border-zinc-200 bg-white p-10 text-center space-y-2">
+                  <p className="text-sm font-semibold text-zinc-700">
+                    {tr(lang, 'No Pro Partner applications found in this view.', 'اس حصے میں ابھی کوئی پارٹنر درخواست موجود نہیں۔')}
+                  </p>
+                  {!isVerifiedSuperAdminCloud && (
+                    <p className="text-xs text-zinc-500">
+                      {tr(
+                        lang,
+                        'Tip: Click "Sync Cloud Docs" above with prorider.pk786@gmail.com to fetch online Firestore submissions.',
+                        'کلاؤڈ سے درخواستیں دیکھنے کے لیے اوپر "کلاؤڈ دستاویزات سنک کریں" پر کلک کریں۔'
+                      )}
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {filteredPartners.map((p) => {
+                    const docsList = Array.isArray(p.documents) ? p.documents : [];
+                    const servicesList = Array.isArray(p.service_eligibility) ? p.service_eligibility : [];
+                    const statusColor =
+                      p.verification_status === 'approved'
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                        : ['under_review', 'documents_pending'].includes(p.verification_status)
+                        ? 'bg-amber-50 border-amber-200 text-amber-900'
+                        : p.verification_status === 'rejected' || p.verification_status === 'suspended'
+                        ? 'bg-red-50 border-red-200 text-red-800'
+                        : 'bg-zinc-100 border-zinc-200 text-zinc-700';
+
+                    return (
+                      <div key={p.user_id} className="rounded-2xl border border-zinc-200 bg-white p-5 space-y-4 shadow-sm">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-display text-lg font-bold text-[#0D0D10]">{p.full_name}</span>
+                              {p.email && <span className="text-xs text-zinc-500 font-mono">({p.email})</span>}
+                            </div>
+                            <div className="text-xs text-zinc-600 font-mono flex flex-wrap items-center gap-x-3 gap-y-1">
+                              <span>
+                                <strong>{tr(lang, 'Mobile:', 'موبائل:')}</strong> {p.phone || '—'}
+                              </span>
+                              {p.reference_phone && (
+                                <span className="inline-flex items-center gap-1 text-amber-800">
+                                  <PhoneCall className="w-3 h-3" />
+                                  <strong>{tr(lang, 'Reference:', 'ریفرنس:')}</strong> {p.reference_phone}
+                                </span>
+                              )}
+                              <span>
+                                <strong>{tr(lang, 'City:', 'شہر:')}</strong> {p.operating_city || '—'}
+                              </span>
+                            </div>
+                            <div className="text-xs text-zinc-600 font-mono flex flex-wrap items-center gap-x-3 gap-y-1">
+                              <span>
+                                <strong>{tr(lang, 'CNIC:', 'شناختی کارڈ:')}</strong> {p.cnic_number || 'N/A'}
+                                {p.cnic_expiry ? ` (${tr(lang, 'Exp:', 'میعاد:')} ${p.cnic_expiry})` : ''}
+                              </span>
+                              <span>
+                                <strong>{tr(lang, 'Licence:', 'لائسنس:')}</strong> {p.licence_number || 'N/A'}
+                                {p.licence_expiry ? ` (${tr(lang, 'Exp:', 'میعاد:')} ${p.licence_expiry})` : ''}
+                              </span>
+                            </div>
+                            <div className="text-xs text-zinc-600">
+                              {tr(lang, 'Vehicle:', 'گاڑی:')} <strong>{p.vehicle_name || 'N/A'}</strong> (
+                              {p.vehicle_number || tr(lang, 'No Plate', 'نمبر پلیٹ نہیں')} · {p.seating_capacity || 4}{' '}
+                              {tr(lang, 'seats', 'سیٹیں')} · {p.fuel_type || 'Petrol'}) ·{' '}
+                              {tr(lang, 'Services:', 'سروسز:')} {servicesList.join(', ') || 'pick_and_drop'}
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="px-3 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 font-mono text-xs font-bold">
+                              {tr(lang, 'Wallet:', 'والیٹ:')} Rs. {Number(p.wallet_balance_pkr || 0).toLocaleString()}
+                            </span>
+                            <span className={`px-3 py-1 rounded-lg border font-mono text-xs font-bold uppercase ${statusColor}`}>
+                              {trVerificationStatus(lang, p.verification_status)}
+                            </span>
+                          </div>
+                        </div>
+
+                        {docsList.length > 0 ? (
+                          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                            {docsList.map((doc: any) => {
+                              const isPdf = String(doc.file_data_url || '').startsWith('data:application/pdf');
+                              const labelText = String(doc.doc_type || 'document').replaceAll('_', ' ');
+                              return (
+                                <button
+                                  key={doc.id || doc.doc_type}
+                                  type="button"
+                                  onClick={() =>
+                                    setPreviewDoc({
+                                      title: labelText.toUpperCase(),
+                                      dataUrl: doc.file_data_url,
+                                      fileName: doc.file_name,
+                                      partnerName: p.full_name,
+                                      status: doc.status,
+                                      expiryDate: doc.expiry_date,
+                                    })
+                                  }
+                                  className="group text-start rounded-xl border border-zinc-200 p-2 space-y-1.5 text-[11px] hover:border-[#D4A017] hover:bg-amber-50/40 transition-colors"
+                                >
+                                  <div className="relative w-full h-24 rounded-lg overflow-hidden bg-zinc-100 flex items-center justify-center">
+                                    {isPdf ? (
+                                      <div className="flex flex-col items-center justify-center text-zinc-600 gap-1">
+                                        <FileText className="w-7 h-7 text-[#B8860B]" />
+                                        <span className="text-[10px] font-bold">PDF</span>
+                                      </div>
+                                    ) : doc.file_data_url ? (
+                                      <img
+                                        src={doc.file_data_url}
+                                        alt={labelText}
+                                        className="w-full h-full object-cover"
+                                      />
+                                    ) : (
+                                      <FileText className="w-6 h-6 text-zinc-400" />
+                                    )}
+                                    <span className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
+                                      <Eye className="w-5 h-5" />
+                                    </span>
+                                  </div>
+                                  <div className="font-semibold capitalize truncate text-[#0D0D10]">{labelText}</div>
+                                  <div className="flex items-center justify-between text-[10px] text-zinc-500 uppercase">
+                                    <span>{doc.status || 'pending'}</span>
+                                    {doc.expiry_date && <span className="font-mono">{doc.expiry_date}</span>}
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50 px-4 py-3 text-xs text-zinc-500">
+                            {tr(lang, 'No document photos uploaded yet.', 'ابھی تک کوئی دستاویز اپلوڈ نہیں کی گئی۔')}
+                          </div>
+                        )}
+
+                        <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-zinc-100">
+                          <input
+                            placeholder={tr(lang, 'Admin review notes...', 'ایڈمن کے ریویو نوٹس...')}
+                            value={partnerNotes[p.user_id] ?? p.admin_notes ?? ''}
+                            onChange={(e) => setPartnerNotes((n) => ({ ...n, [p.user_id]: e.target.value }))}
+                            className="flex-1 min-w-[200px] px-3 py-2 rounded-xl border border-zinc-200 text-xs"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => reviewPartner(p.user_id, 'approved', Boolean(p.pending_vehicle_review), p.cloud_uid)}
+                            className="px-4 py-2 rounded-xl bg-emerald-700 text-white text-xs font-bold hover:bg-emerald-800"
+                          >
+                            {tr(lang, 'Approve Partner', 'پارٹنر منظور کریں')}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                await apiRequest(`/api/admin/partners/${p.user_id}/wallet`, {
+                                  method: 'POST',
+                                  role: 'admin',
+                                  body: {
+                                    amountPkr: 1000,
+                                    type: 'credit',
+                                    note: 'Super Admin Partner Wallet Top-Up (+Rs. 1,000)',
+                                  },
+                                });
+                              } catch (walletErr) {
+                                if (!isBackendOfflineError(walletErr)) {
+                                  setToast(
+                                    walletErr instanceof Error
+                                      ? walletErr.message
+                                      : tr(lang, 'Wallet update failed.', 'والیٹ اپڈیٹ نہ ہو سکا۔')
+                                  );
+                                  return;
+                                }
+                              }
+                              writeSharedLocalPartnerUpdate(p.user_id, { wallet_delta_pkr: 1000 });
+                              setPartners((prev) =>
+                                prev.map((item) =>
+                                  item.user_id === p.user_id
+                                    ? { ...item, wallet_balance_pkr: Number(item.wallet_balance_pkr || 0) + 1000 }
+                                    : item
+                                )
+                              );
+                              setToast(
+                                tr(
+                                  lang,
+                                  `Added Rs. 1,000 to ${p.full_name}'s wallet.`,
+                                  `${p.full_name} کے والیٹ میں 1,000 روپے شامل کر دیے گئے۔`
+                                )
+                              );
+                              await loadAll();
+                            }}
+                            className="px-3.5 py-2 rounded-xl bg-[#D4A017] text-[#0D0D10] text-xs font-bold hover:bg-[#EAB308]"
+                          >
+                            {tr(lang, '+ Top Up Rs. 1,000', '+ 1,000 روپے والیٹ')}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => reviewPartner(p.user_id, 'rejected', false, p.cloud_uid)}
+                            className="px-4 py-2 rounded-xl bg-red-600 text-white text-xs font-bold hover:bg-red-700"
+                          >
+                            {tr(lang, 'Reject', 'مسترد کریں')}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => reviewPartner(p.user_id, 'suspended', false, p.cloud_uid)}
+                            className="px-4 py-2 rounded-xl border border-zinc-300 text-xs font-bold hover:bg-zinc-50"
+                          >
+                            {tr(lang, 'Suspend', 'معطل کریں')}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Fleet Management (Add genuine original photos, edit, delete, tariffs) */}
         {tab === 'fleet' && (
@@ -1784,6 +2293,68 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
           />
         )}
       </main>
+
+      {/* Full-Resolution Partner Document Preview Modal */}
+      {previewDoc && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => setPreviewDoc(null)}
+        >
+          <div
+            className="w-full max-w-3xl rounded-2xl bg-white border border-zinc-200 overflow-hidden shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-3.5 bg-[#0D0D10] text-white flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm font-bold text-[#F4C430] truncate">{previewDoc.title}</div>
+                <div className="text-[11px] text-zinc-300 truncate">
+                  {previewDoc.partnerName || 'Pro Partner'}
+                  {previewDoc.expiryDate ? ` · ${tr(lang, 'Expiry', 'میعاد')}: ${previewDoc.expiryDate}` : ''}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {previewDoc.dataUrl && (
+                  <a
+                    href={previewDoc.dataUrl}
+                    download={previewDoc.fileName || `${previewDoc.title}.jpg`}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#D4A017] text-[#0D0D10] text-xs font-bold hover:bg-[#EAB308]"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    {tr(lang, 'Download', 'ڈاؤن لوڈ')}
+                  </a>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setPreviewDoc(null)}
+                  className="p-1.5 rounded-lg bg-zinc-800 text-zinc-200 hover:text-white"
+                  aria-label={tr(lang, 'Close Preview', 'بند کریں')}
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            <div className="p-4 bg-zinc-100 flex items-center justify-center max-h-[80vh] overflow-auto">
+              {String(previewDoc.dataUrl || '').startsWith('data:application/pdf') ? (
+                <iframe
+                  src={previewDoc.dataUrl}
+                  title={previewDoc.title}
+                  className="w-full h-[70vh] rounded-xl border border-zinc-200 bg-white"
+                />
+              ) : previewDoc.dataUrl ? (
+                <img
+                  src={previewDoc.dataUrl}
+                  alt={previewDoc.title}
+                  className="max-h-[72vh] w-auto mx-auto rounded-xl object-contain shadow-md"
+                />
+              ) : (
+                <p className="text-sm text-zinc-500 py-12">
+                  {tr(lang, 'Document preview unavailable.', 'دستاویز کا پیش نظارہ دستیاب نہیں ہے۔')}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

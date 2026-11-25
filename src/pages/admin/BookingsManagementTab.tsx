@@ -17,6 +17,7 @@ import {
   X,
   XCircle,
 } from 'lucide-react';
+import { InvoiceViewerModal } from '../../components/InvoiceViewerModal';
 import { tr, trBookingStatus, trPaymentStatus, trService } from '../../i18n/translations';
 import { apiRequest } from '../../utils/api';
 import { downloadBookingPdf } from '../../utils/pdfGenerator';
@@ -47,6 +48,7 @@ export const BookingsManagementTab: React.FC<BookingsManagementTabProps> = ({
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all');
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
+  const [invoiceBooking, setInvoiceBooking] = useState<Booking | null>(null);
   const [actionBusyId, setActionBusyId] = useState<string | null>(null);
 
   const activeSelectedBooking = selectedBooking
@@ -217,7 +219,7 @@ export const BookingsManagementTab: React.FC<BookingsManagementTabProps> = ({
       case 'started':
       case 'on_the_way':
       case 'arrived':
-        return 'bg-blue-100 text-blue-800 animate-pulse';
+        return 'bg-blue-100 text-blue-800';
       case 'confirmed':
         return 'bg-amber-100 text-amber-800';
       default:
@@ -481,6 +483,15 @@ export const BookingsManagementTab: React.FC<BookingsManagementTabProps> = ({
                             title={tr(lang, 'Inspect Booking & Driver Applicants', 'تفصیل اور ڈرائیور درخواستیں دیکھیں')}
                           >
                             <Eye className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setInvoiceBooking(b)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-zinc-200 bg-white hover:bg-zinc-50 text-[#0D0D10] font-bold text-[11px] transition-colors"
+                            title={tr(lang, 'View & Print Executive Invoice', 'انوائس دیکھیں اور پرنٹ کریں')}
+                          >
+                            <FileText className="w-3 h-3 text-[#D4A017]" />
+                            {tr(lang, 'Invoice', 'انوائس')}
                           </button>
                           <button
                             type="button"
@@ -807,6 +818,14 @@ export const BookingsManagementTab: React.FC<BookingsManagementTabProps> = ({
                   </button>
                   <button
                     type="button"
+                    onClick={() => setInvoiceBooking(activeSelectedBooking)}
+                    className="px-3 py-1.5 rounded-xl border border-zinc-300 bg-white text-[#0D0D10] font-bold inline-flex items-center gap-1"
+                  >
+                    <FileText className="w-3.5 h-3.5 text-[#D4A017]" />{' '}
+                    {tr(lang, 'View Invoice', 'انوائس دیکھیں')}
+                  </button>
+                  <button
+                    type="button"
                     onClick={() =>
                       downloadBookingPdf(activeSelectedBooking, 'admin', activeSelectedBooking.passenger_name)
                     }
@@ -821,6 +840,14 @@ export const BookingsManagementTab: React.FC<BookingsManagementTabProps> = ({
           </div>
         </div>
       )}
+
+      <InvoiceViewerModal
+        booking={invoiceBooking}
+        viewerRole="admin"
+        passengerName={invoiceBooking?.passenger_name}
+        lang={lang}
+        onClose={() => setInvoiceBooking(null)}
+      />
     </div>
   );
 };

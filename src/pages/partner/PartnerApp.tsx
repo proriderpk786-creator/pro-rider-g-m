@@ -61,6 +61,10 @@ function getPartnerDocsStorageKey(userId?: string | null) {
   return `pr_partner_docs_${userId || 'guest'}`;
 }
 
+function getPartnerProfileStorageKey(userId?: string | null) {
+  return `pr_profile_partner_${userId || 'guest'}`;
+}
+
 function readStoredPartnerDocs(userId?: string | null): PartnerDocument[] {
   try {
     const raw = localStorage.getItem(getPartnerDocsStorageKey(userId));
@@ -80,13 +84,28 @@ function writeStoredPartnerDocs(userId: string | undefined | null, docs: Partner
   }
 }
 
-function readStoredPartnerProfile(): PartnerProfile | null {
+function readStoredPartnerProfile(userId?: string | null): PartnerProfile | null {
   try {
-    const raw = localStorage.getItem(PARTNER_PROFILE_STORAGE_KEY);
+    const raw =
+      (userId ? localStorage.getItem(getPartnerProfileStorageKey(userId)) : null) ||
+      localStorage.getItem(PARTNER_PROFILE_STORAGE_KEY);
     if (!raw) return null;
     return JSON.parse(raw) as PartnerProfile;
   } catch {
     return null;
+  }
+}
+
+function writeStoredPartnerProfile(userId: string | undefined | null, p: PartnerProfile) {
+  try {
+    const serialized = JSON.stringify(p);
+    localStorage.setItem(PARTNER_PROFILE_STORAGE_KEY, serialized);
+    const id = userId || p.user_id;
+    if (id) {
+      localStorage.setItem(getPartnerProfileStorageKey(id), serialized);
+    }
+  } catch {
+    // ignore quota errors
   }
 }
 
@@ -115,9 +134,12 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
   onNavigate,
 }) => {
   const { isDark } = useTheme();
+  const { firebaseUser, signOutFirebase, fetchMyPartnerApplication } = useFirebase();
   const [token, setToken] = useState<string | null>(() => getRoleToken('partner'));
   const [user, setUser] = useState<User | null>(() => getStoredRoleUser<User>('partner'));
-  const [profile, setProfile] = useState<PartnerProfile | null>(() => readStoredPartnerProfile());
+  const [profile, setProfile] = useState<PartnerProfile | null>(() =>
+    readStoredPartnerProfile(getStoredRoleUser<User>('partner')?.id)
+  );
   const [documents, setDocuments] = useState<PartnerDocument[]>(() =>
     readStoredPartnerDocs(getStoredRoleUser<User>('partner')?.id)
   );
@@ -162,6 +184,10 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
   const seenRequestIdsRef = useRef<Set<string> | null>(null);
   const bellSoundRef = useRef(bellSound);
   bellSoundRef.current = bellSound;
+  const userRef = useRef(user);
+  userRef.current = user;
+  const profileRef = useRef(profile);
+  profileRef.current = profile;
 
   useEffect(() => {
     const onBellUpdated = () => {
@@ -184,6 +210,35 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
 
   const loadAll = useCallback(async () => {
     if (!token) return;
+    // Upgrade offline Firebase token silently if Express backend is reachable
+    if (token.startsWith('pr_fb_') && firebaseUser) {
+      try {
+        const fbIdToken = await firebaseUser.getIdToken();
+        const exch = await apiRequest<{ token: string; user: User; partnerProfile: PartnerProfile }>(
+          '/api/auth/google/firebase',
+          {
+            method: 'POST',
+            body: { idToken: fbIdToken, role: 'partner', city: userRef.current?.city || 'Islamabad' },
+          }
+        );
+        if (exch?.token) {
+          setRoleToken('partner', exch.token);
+          setToken(exch.token);
+          if (exch.user) {
+            setUser(exch.user);
+            setStoredRoleUser('partner', exch.user);
+          }
+          if (exch.partnerProfile) {
+            setProfile(exch.partnerProfile);
+            writeStoredPartnerProfile(exch.user?.id || exch.partnerProfile.user_id, exch.partnerProfile);
+          }
+          return;
+        }
+      } catch {
+        // Backend still offline or not configured — proceed with cloud/local fallback
+      }
+    }
+
     try {
       const [profRes, reqRes, tripRes, earnRes, ntRes, tkRes] = await Promise.all([
         apiRequest<{ user: User; partnerProfile: PartnerProfile; documents: PartnerDocument[] }>('/api/partner/profile', {
@@ -208,15 +263,11 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
       }
       if (profRes?.partnerProfile) {
         setProfile(profRes.partnerProfile);
-        try {
-          localStorage.setItem(PARTNER_PROFILE_STORAGE_KEY, JSON.stringify(profRes.partnerProfile));
-        } catch {
-          // ignore
-        }
+        writeStoredPartnerProfile(profRes.user?.id || profRes.partnerProfile.user_id, profRes.partnerProfile);
       }
       const serverDocs = Array.isArray(profRes?.documents) ? profRes.documents : [];
       setDocuments(serverDocs);
-      writeStoredPartnerDocs(profRes?.user?.id || user?.id, serverDocs);
+      writeStoredPartnerDocs(profRes?.user?.id || userRef.current?.id, serverDocs);
       setApproved(Boolean(reqRes?.approved));
       setRequests(Array.isArray(reqRes?.requests) ? reqRes.requests : []);
       setTrips(Array.isArray(tripRes?.trips) ? tripRes.trips : []);
@@ -240,14 +291,114 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
       void loadDemand();
     } catch (err) {
       if (isBackendOfflineError(err) || token.startsWith('pr_fb_')) {
-        const localUser = user || getStoredRoleUser<User>('partner');
-        setUser((prev) => prev || localUser);
-        const localProfile = profile || readStoredPartnerProfile();
-        setProfile((prev) => prev || localProfile);
-        const storedDocs = readStoredPartnerDocs(localUser?.id || localProfile?.user_id);
-        if (storedDocs.length > 0) {
-          setDocuments(storedDocs);
+        const localUser = userRef.current || getStoredRoleUser<User>('partner');
+        if (localUser && !userRef.current) setUser(localUser);
+        let localProfile = profileRef.current || readStoredPartnerProfile(localUser?.id);
+        let storedDocs = readStoredPartnerDocs(localUser?.id || localProfile?.user_id);
+
+        // Also check shared local bridge for Admin updates on the same browser
+        try {
+          const sharedRaw = localStorage.getItem('pr_shared_partner_submissions');
+          if (sharedRaw && localUser?.id) {
+            const sharedList = JSON.parse(sharedRaw);
+            const sharedMatch = Array.isArray(sharedList)
+              ? sharedList.find((x: any) => x?.user_id === localUser.id || x?.id === localUser.id)
+              : null;
+            if (sharedMatch && localProfile) {
+              localProfile = {
+                ...localProfile,
+                verification_status: sharedMatch.verification_status || localProfile.verification_status,
+                admin_notes: sharedMatch.admin_notes ?? localProfile.admin_notes,
+              };
+            }
+          }
+        } catch {
+          // ignore
         }
+
+        // Hydrate latest verification status, notes, fields & docs from Firestore if authenticated
+        try {
+          const cloud = await fetchMyPartnerApplication();
+          if (cloud?.application) {
+            const app = cloud.application;
+            localProfile = {
+              ...(localProfile || {
+                user_id: localUser?.id || app.uid,
+                verification_status: 'incomplete',
+                cnic_number: '',
+                cnic_expiry: '',
+                licence_number: '',
+                licence_expiry: '',
+                vehicle_category_id: 'fleet-sedan',
+                vehicle_name: '',
+                vehicle_number: '',
+                seating_capacity: 4,
+                fuel_type: 'Petrol',
+                operating_city: app.operatingCity || 'Islamabad',
+                service_eligibility: ['pick_and_drop'],
+                is_online: 0,
+                current_lat: null,
+                current_lng: null,
+                last_location_at: null,
+                admin_notes: '',
+              }),
+              reference_phone: app.referencePhone || localProfile?.reference_phone || '',
+              cnic_number: app.cnicNumber || localProfile?.cnic_number || '',
+              cnic_expiry: app.cnicExpiry || localProfile?.cnic_expiry || '',
+              licence_number: app.licenceNumber || localProfile?.licence_number || '',
+              licence_expiry: app.licenceExpiry || localProfile?.licence_expiry || '',
+              vehicle_category_id: app.vehicleCategoryId || localProfile?.vehicle_category_id || 'fleet-sedan',
+              vehicle_name: app.vehicleName || localProfile?.vehicle_name || '',
+              vehicle_number: app.vehicleNumber || localProfile?.vehicle_number || '',
+              seating_capacity: app.seatingCapacity || localProfile?.seating_capacity || 4,
+              fuel_type: app.fuelType || localProfile?.fuel_type || 'Petrol',
+              operating_city: app.operatingCity || localProfile?.operating_city || 'Islamabad',
+              service_eligibility: (app.serviceEligibility?.length
+                ? app.serviceEligibility
+                : localProfile?.service_eligibility || ['pick_and_drop']) as any,
+              verification_status: app.verificationStatus || localProfile?.verification_status || 'incomplete',
+              admin_notes: app.adminNotes ?? localProfile?.admin_notes ?? '',
+            };
+            writeStoredPartnerProfile(localUser?.id || localProfile.user_id, localProfile);
+            if (localUser && (app.fullName || app.phone)) {
+              const mergedUser = {
+                ...localUser,
+                full_name: app.fullName || localUser.full_name,
+                phone: app.phone || localUser.phone,
+                city: app.operatingCity || localUser.city,
+              };
+              setUser(mergedUser);
+              setStoredRoleUser('partner', mergedUser);
+            }
+          }
+          if (cloud?.documents?.length) {
+            const cloudDocs: PartnerDocument[] = cloud.documents.map((d) => ({
+              id: `FB-${d.docType}`,
+              partner_id: d.uid,
+              doc_type: d.docType,
+              file_name: d.fileName,
+              file_data_url: d.fileDataUrl,
+              status: d.status,
+              expiry_date: d.expiryDate || '',
+              review_notes: d.reviewNotes || '',
+              is_public: d.isPublic ? 1 : 0,
+              uploaded_at: new Date().toISOString(),
+            }));
+            const merged = [...cloudDocs];
+            for (const ld of storedDocs) {
+              if (!merged.some((cd) => cd.doc_type === ld.doc_type)) {
+                merged.push(ld);
+              }
+            }
+            storedDocs = merged;
+            writeStoredPartnerDocs(localUser?.id || localProfile?.user_id, merged);
+          }
+        } catch {
+          // Firestore offline or unverified email — rely on per-ID localStorage
+        }
+
+        if (localProfile) setProfile(localProfile);
+        if (storedDocs.length > 0) setDocuments(storedDocs);
         setApproved(Boolean(localProfile && localProfile.verification_status === 'approved'));
         try {
           const collected: Booking[] = [];
@@ -286,7 +437,7 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
         setProfile(null);
       }
     }
-  }, [token, loadDemand]);
+  }, [token, firebaseUser, loadDemand, fetchMyPartnerApplication, config?.minPartnerWalletPkr, config?.instantCommissionPct]);
 
   useEffect(() => {
     loadAll();
@@ -452,13 +603,12 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
     [user?.id, profile?.user_id, loadAll]
   );
 
-  const { signOutFirebase } = useFirebase();
-
   const handleLogout = () => {
     setGpsSharing(false);
     setRoleToken('partner', null);
     setStoredRoleUser('partner', null);
     try {
+      // Remove only the active session pointer; keep per-user ID backups intact for seamless re-login
       localStorage.removeItem(PARTNER_PROFILE_STORAGE_KEY);
     } catch {
       // ignore
@@ -475,16 +625,31 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
         lang={lang}
         onChangeLang={onChangeLang}
         onAuthenticated={(tk, u, p) => {
+          const prevForId = readStoredPartnerProfile(u.id);
+          const mergedProfile: PartnerProfile = prevForId && prevForId.user_id === u.id
+            ? {
+                ...prevForId,
+                ...p,
+                reference_phone: p.reference_phone || prevForId.reference_phone || '',
+                cnic_number: p.cnic_number || prevForId.cnic_number || '',
+                cnic_expiry: p.cnic_expiry || prevForId.cnic_expiry || '',
+                licence_number: p.licence_number || prevForId.licence_number || '',
+                licence_expiry: p.licence_expiry || prevForId.licence_expiry || '',
+                vehicle_name: p.vehicle_name || prevForId.vehicle_name || '',
+                vehicle_number: p.vehicle_number || prevForId.vehicle_number || '',
+                verification_status:
+                  p.verification_status && p.verification_status !== 'incomplete'
+                    ? p.verification_status
+                    : prevForId.verification_status || 'incomplete',
+              }
+            : p;
           setRoleToken('partner', tk);
           setStoredRoleUser('partner', u);
-          try {
-            localStorage.setItem(PARTNER_PROFILE_STORAGE_KEY, JSON.stringify(p));
-          } catch {
-            // ignore
-          }
+          writeStoredPartnerProfile(u.id, mergedProfile);
           setToken(tk);
           setUser(u);
-          setProfile(p);
+          setProfile(mergedProfile);
+          setDocuments(readStoredPartnerDocs(u.id));
         }}
         onBackWelcome={() => onNavigate('/')}
       />
@@ -707,10 +872,19 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
             <PartnerVerificationAndVehicleView
               mode={tab}
               lang={lang}
+              user={user}
               profile={profile}
               documents={Array.isArray(documents) ? documents : []}
               config={config}
               onRefresh={loadAll}
+              onUserUpdated={(updatedUser) => {
+                setUser(updatedUser);
+                setStoredRoleUser('partner', updatedUser);
+              }}
+              onProfileUpdated={(updatedProfile) => {
+                setProfile(updatedProfile);
+                writeStoredPartnerProfile(user.id, updatedProfile);
+              }}
               onLocalDocumentSaved={handleLocalDocumentSaved}
               onToggleDocVisibility={handleToggleDocVisibility}
             />
@@ -753,11 +927,7 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
               }}
               onProfileUpdated={(updatedProfile) => {
                 setProfile(updatedProfile);
-                try {
-                  localStorage.setItem(PARTNER_PROFILE_STORAGE_KEY, JSON.stringify(updatedProfile));
-                } catch {
-                  // ignore
-                }
+                writeStoredPartnerProfile(user.id, updatedProfile);
               }}
               onLocalDocumentSaved={handleLocalDocumentSaved}
               onToggleDocVisibility={handleToggleDocVisibility}

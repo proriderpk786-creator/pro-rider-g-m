@@ -81,6 +81,45 @@ export interface CloudAiMessage {
   places?: GroundedPlace[];
 }
 
+export interface PartnerApplicationDocCloud {
+  uid: string;
+  docType: 'profile_photo' | 'cnic_front' | 'cnic_back' | 'driving_licence' | 'vehicle_registration' | 'vehicle_photo';
+  fileName: string;
+  fileDataUrl: string;
+  status: 'pending' | 'approved' | 'rejected';
+  expiryDate?: string;
+  reviewNotes?: string;
+  isPublic?: boolean;
+  uploadedAt?: any;
+  updatedAt?: any;
+}
+
+export interface PartnerApplicationCloud {
+  uid: string;
+  fullName: string;
+  email?: string;
+  phone?: string;
+  referencePhone?: string;
+  cnicNumber?: string;
+  cnicExpiry?: string;
+  licenceNumber?: string;
+  licenceExpiry?: string;
+  vehicleCategoryId?: string;
+  vehicleName?: string;
+  vehicleNumber?: string;
+  seatingCapacity?: number;
+  fuelType?: string;
+  operatingCity: string;
+  serviceEligibility?: string[];
+  verificationStatus: 'incomplete' | 'documents_pending' | 'under_review' | 'approved' | 'rejected' | 'suspended';
+  adminNotes?: string;
+  docsCount?: number;
+  submittedAt?: any;
+  createdAt?: any;
+  updatedAt?: any;
+  documents?: PartnerApplicationDocCloud[];
+}
+
 export function normalizePakistanPhoneE164(raw: string): string {
   const cleaned = raw.replace(/[\s\-()]+/g, '').trim();
   if (!cleaned) return '';
@@ -194,12 +233,95 @@ interface FirebaseContextValue {
     farePkr: number;
     status: string;
   }) => Promise<void>;
+  syncPartnerApplication: (input: {
+    fullName: string;
+    email?: string;
+    phone?: string;
+    referencePhone?: string;
+    cnicNumber?: string;
+    cnicExpiry?: string;
+    licenceNumber?: string;
+    licenceExpiry?: string;
+    vehicleCategoryId?: string;
+    vehicleName?: string;
+    vehicleNumber?: string;
+    seatingCapacity?: number;
+    fuelType?: string;
+    operatingCity: string;
+    serviceEligibility?: string[];
+    docsCount?: number;
+    isSubmit?: boolean;
+  }) => Promise<boolean>;
+  syncPartnerDocument: (input: {
+    docType: PartnerApplicationDocCloud['docType'];
+    fileName: string;
+    fileDataUrl: string;
+    expiryDate?: string;
+    isPublic?: boolean;
+    fallbackName?: string;
+    fallbackCity?: string;
+    fallbackPhone?: string;
+  }) => Promise<boolean>;
+  fetchMyPartnerApplication: () => Promise<{
+    application: PartnerApplicationCloud | null;
+    documents: PartnerApplicationDocCloud[];
+  }>;
+  fetchAllPartnerApplicationsForAdmin: () => Promise<PartnerApplicationCloud[]>;
+  reviewPartnerApplicationInFirestore: (
+    partnerId: string,
+    verificationStatus: PartnerApplicationCloud['verificationStatus'],
+    adminNotes?: string
+  ) => Promise<boolean>;
 }
 
 const FirebaseContext = createContext<FirebaseContextValue | null>(null);
 
 function sanitizeId(raw: string): string {
   return raw.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120) || `id_${Date.now()}`;
+}
+
+async function shrinkDataUrlForFirestore(dataUrl: string, maxChars = 700_000): Promise<string> {
+  if (!dataUrl || dataUrl.length <= maxChars) return dataUrl;
+  if (!dataUrl.startsWith('data:image/')) {
+    return dataUrl.slice(0, maxChars);
+  }
+  const attempts: Array<[number, number]> = [
+    [960, 0.72],
+    [760, 0.62],
+    [600, 0.52],
+  ];
+  for (const [dim, quality] of attempts) {
+    try {
+      const next = await new Promise<string>((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          const w = img.naturalWidth || img.width;
+          const h = img.naturalHeight || img.height;
+          if (!w || !h) {
+            resolve(dataUrl);
+            return;
+          }
+          const scale = Math.min(1, dim / Math.max(w, h));
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, Math.round(w * scale));
+          canvas.height = Math.max(1, Math.round(h * scale));
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(dataUrl);
+            return;
+          }
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        };
+        img.onerror = () => reject(new Error('Image resize failed'));
+        img.src = dataUrl;
+      });
+      if (next.length <= maxChars) return next;
+    } catch {
+      break;
+    }
+  }
+  return dataUrl.slice(0, maxChars);
 }
 
 export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -721,6 +843,259 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     [firebaseUser]
   );
 
+  const syncPartnerApplication = useCallback(
+    async (input: {
+      fullName: string;
+      email?: string;
+      phone?: string;
+      referencePhone?: string;
+      cnicNumber?: string;
+      cnicExpiry?: string;
+      licenceNumber?: string;
+      licenceExpiry?: string;
+      vehicleCategoryId?: string;
+      vehicleName?: string;
+      vehicleNumber?: string;
+      seatingCapacity?: number;
+      fuelType?: string;
+      operatingCity: string;
+      serviceEligibility?: string[];
+      docsCount?: number;
+      isSubmit?: boolean;
+    }): Promise<boolean> => {
+      if (!firebaseUser || !firebaseUser.emailVerified) return false;
+      const uid = sanitizeId(firebaseUser.uid);
+      const path = `partnerApplications/${uid}`;
+      try {
+        const ref = doc(db, 'partnerApplications', uid);
+        const snap = await getDoc(ref);
+        const existingData = snap.exists() ? (snap.data() as PartnerApplicationCloud) : null;
+        if (existingData?.verificationStatus === 'suspended') {
+          return false;
+        }
+        const docsTotal = Math.max(0, Math.min(12, Number(input.docsCount ?? existingData?.docsCount ?? 0)));
+        let nextStatus: PartnerApplicationCloud['verificationStatus'] =
+          existingData?.verificationStatus || 'incomplete';
+        if (input.isSubmit) {
+          if (['incomplete', 'documents_pending', 'rejected', 'under_review'].includes(nextStatus)) {
+            nextStatus = docsTotal >= 1 ? 'under_review' : 'documents_pending';
+          }
+        } else if (nextStatus === 'incomplete' && docsTotal >= 1) {
+          nextStatus = 'documents_pending';
+        }
+
+        const payload: Record<string, any> = {
+          uid,
+          fullName: (input.fullName || firebaseUser.displayName || 'Pro Partner').trim().slice(0, 120) || 'Pro Partner',
+          email: (input.email || firebaseUser.email || '').trim().slice(0, 180),
+          phone: (input.phone || '').trim().slice(0, 32),
+          referencePhone: (input.referencePhone || '').trim().slice(0, 32),
+          cnicNumber: (input.cnicNumber || '').trim().slice(0, 40),
+          cnicExpiry: (input.cnicExpiry || '').trim().slice(0, 24),
+          licenceNumber: (input.licenceNumber || '').trim().slice(0, 60),
+          licenceExpiry: (input.licenceExpiry || '').trim().slice(0, 24),
+          vehicleCategoryId: (input.vehicleCategoryId || 'fleet-sedan').trim().slice(0, 64),
+          vehicleName: (input.vehicleName || '').trim().slice(0, 120),
+          vehicleNumber: (input.vehicleNumber || '').trim().slice(0, 40),
+          seatingCapacity: Math.max(1, Math.min(30, Number(input.seatingCapacity || 4))),
+          fuelType: (input.fuelType || 'Petrol').trim().slice(0, 40),
+          operatingCity: (input.operatingCity || 'Islamabad').trim().slice(0, 80) || 'Islamabad',
+          serviceEligibility: Array.isArray(input.serviceEligibility)
+            ? input.serviceEligibility.slice(0, 3).map((s) => String(s))
+            : ['pick_and_drop'],
+          verificationStatus: nextStatus,
+          docsCount: docsTotal,
+          updatedAt: serverTimestamp(),
+          createdAt: existingData?.createdAt || serverTimestamp(),
+        };
+
+        if (existingData && typeof existingData.adminNotes === 'string') {
+          payload.adminNotes = existingData.adminNotes;
+        }
+        if (input.isSubmit) {
+          payload.submittedAt = serverTimestamp();
+        } else if (existingData?.submittedAt) {
+          payload.submittedAt = existingData.submittedAt;
+        }
+
+        await setDoc(ref, payload);
+        return true;
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, path);
+      }
+    },
+    [firebaseUser]
+  );
+
+  const syncPartnerDocument = useCallback(
+    async (input: {
+      docType: PartnerApplicationDocCloud['docType'];
+      fileName: string;
+      fileDataUrl: string;
+      expiryDate?: string;
+      isPublic?: boolean;
+      fallbackName?: string;
+      fallbackCity?: string;
+      fallbackPhone?: string;
+    }): Promise<boolean> => {
+      if (!firebaseUser || !firebaseUser.emailVerified) return false;
+      const uid = sanitizeId(firebaseUser.uid);
+      const appRef = doc(db, 'partnerApplications', uid);
+      const docRef = doc(db, 'partnerApplications', uid, 'documents', input.docType);
+      const docPath = `partnerApplications/${uid}/documents/${input.docType}`;
+      try {
+        const appSnap = await getDoc(appRef);
+        if (!appSnap.exists()) {
+          await setDoc(appRef, {
+            uid,
+            fullName: (input.fallbackName || firebaseUser.displayName || 'Pro Partner').trim().slice(0, 120) || 'Pro Partner',
+            email: (firebaseUser.email || '').slice(0, 180),
+            phone: (input.fallbackPhone || firebaseUser.phoneNumber || '').slice(0, 32),
+            operatingCity: (input.fallbackCity || 'Islamabad').slice(0, 80),
+            verificationStatus: 'under_review',
+            docsCount: 1,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        }
+
+        const safeDataUrl = await shrinkDataUrlForFirestore(input.fileDataUrl, 700_000);
+        const existingDocSnap = await getDoc(docRef);
+        const existingDoc = existingDocSnap.exists() ? existingDocSnap.data() : null;
+
+        const docPayload: Record<string, any> = {
+          uid,
+          docType: input.docType,
+          fileName: (input.fileName || `${input.docType}.jpg`).slice(0, 200),
+          fileDataUrl: safeDataUrl,
+          status: 'pending',
+          expiryDate: (input.expiryDate || '').slice(0, 24),
+          isPublic: Boolean(input.isPublic),
+          uploadedAt: existingDoc?.uploadedAt || serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        };
+        if (existingDoc && typeof existingDoc.reviewNotes === 'string') {
+          docPayload.reviewNotes = existingDoc.reviewNotes;
+        }
+
+        await setDoc(docRef, docPayload);
+
+        // Refresh docs count and bump status if incomplete/documents_pending
+        const docsSnap = await getDocs(
+          query(collection(db, 'partnerApplications', uid, 'documents'), where('uid', '==', uid), limit(12))
+        );
+        const currentAppSnap = await getDoc(appRef);
+        const currentApp = currentAppSnap.exists() ? (currentAppSnap.data() as PartnerApplicationCloud) : null;
+        if (currentApp && currentApp.verificationStatus !== 'suspended') {
+          const nextStatus = ['incomplete', 'documents_pending', 'rejected'].includes(currentApp.verificationStatus)
+            ? 'under_review'
+            : currentApp.verificationStatus;
+          await setDoc(
+            appRef,
+            {
+              ...currentApp,
+              verificationStatus: nextStatus,
+              docsCount: docsSnap.size,
+              updatedAt: serverTimestamp(),
+            },
+            { merge: true }
+          );
+        }
+        return true;
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, docPath);
+      }
+    },
+    [firebaseUser]
+  );
+
+  const fetchMyPartnerApplication = useCallback(async () => {
+    if (!firebaseUser || !firebaseUser.emailVerified) {
+      return { application: null, documents: [] };
+    }
+    const uid = sanitizeId(firebaseUser.uid);
+    const path = `partnerApplications/${uid}`;
+    try {
+      const appSnap = await getDoc(doc(db, 'partnerApplications', uid));
+      const docsSnap = await getDocs(
+        query(collection(db, 'partnerApplications', uid, 'documents'), where('uid', '==', uid), limit(12))
+      );
+      const documents = docsSnap.docs.map((d) => d.data() as PartnerApplicationDocCloud);
+      return {
+        application: appSnap.exists() ? (appSnap.data() as PartnerApplicationCloud) : null,
+        documents,
+      };
+    } catch (err) {
+      handleFirestoreError(err, OperationType.GET, path);
+    }
+  }, [firebaseUser]);
+
+  const fetchAllPartnerApplicationsForAdmin = useCallback(async (): Promise<PartnerApplicationCloud[]> => {
+    if (
+      !firebaseUser ||
+      !firebaseUser.emailVerified ||
+      firebaseUser.email?.toLowerCase() !== 'prorider.pk786@gmail.com'
+    ) {
+      return [];
+    }
+    const path = 'partnerApplications';
+    try {
+      const snap = await getDocs(query(collection(db, 'partnerApplications'), limit(100)));
+      const apps = await Promise.all(
+        snap.docs.map(async (d) => {
+          const data = d.data() as PartnerApplicationCloud;
+          let documents: PartnerApplicationDocCloud[] = [];
+          try {
+            const docSnap = await getDocs(
+              query(collection(db, 'partnerApplications', d.id, 'documents'), limit(12))
+            );
+            documents = docSnap.docs.map((x) => x.data() as PartnerApplicationDocCloud);
+          } catch {
+            documents = [];
+          }
+          return { ...data, uid: data.uid || d.id, documents };
+        })
+      );
+      return apps;
+    } catch (err) {
+      handleFirestoreError(err, OperationType.LIST, path);
+    }
+  }, [firebaseUser]);
+
+  const reviewPartnerApplicationInFirestore = useCallback(
+    async (
+      partnerId: string,
+      verificationStatus: PartnerApplicationCloud['verificationStatus'],
+      adminNotes = ''
+    ): Promise<boolean> => {
+      if (
+        !firebaseUser ||
+        !firebaseUser.emailVerified ||
+        firebaseUser.email?.toLowerCase() !== 'prorider.pk786@gmail.com'
+      ) {
+        return false;
+      }
+      const cleanId = sanitizeId(partnerId);
+      const path = `partnerApplications/${cleanId}`;
+      try {
+        const ref = doc(db, 'partnerApplications', cleanId);
+        const snap = await getDoc(ref);
+        if (!snap.exists()) return false;
+        const current = snap.data() as PartnerApplicationCloud;
+        await setDoc(ref, {
+          ...current,
+          verificationStatus,
+          adminNotes: adminNotes.slice(0, 500),
+          updatedAt: serverTimestamp(),
+        });
+        return true;
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, path);
+      }
+    },
+    [firebaseUser]
+  );
+
   return (
     <FirebaseContext.Provider
       value={{
@@ -748,6 +1123,11 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         saveAiMessage,
         fetchThreadMessages,
         syncBookingSummary,
+        syncPartnerApplication,
+        syncPartnerDocument,
+        fetchMyPartnerApplication,
+        fetchAllPartnerApplicationsForAdmin,
+        reviewPartnerApplicationInFirestore,
       }}
     >
       {children}
