@@ -291,83 +291,72 @@ export const PartnerAuth: React.FC<{
           DEFAULT_PUBLIC_CONFIG.fleet.find((f) => f.id === vehicleCategoryId) || DEFAULT_PUBLIC_CONFIG.fleet[3];
 
         try {
-          const fbRes = await registerWithFirebaseEmail({
-            fullName,
-            email: cleanEmail,
-            password,
-            role: 'partner',
-            city,
-            lang,
-          });
-          void apiRequest('/api/auth/partner/register', {
-            method: 'POST',
-            body: {
-              fullName,
-              phone: phone.trim(),
-              whatsapp: whatsapp.trim() || phone.trim(),
-              email: cleanEmail,
-              city,
-              operatingArea,
-              password,
-              vehicleCategoryId: selectedRegisterFleet.id,
-              seatingCapacity: selectedRegisterFleet.seating_capacity,
-            },
-          }).catch(() => {});
-
-          if (fbRes.emailVerified) {
-            await finalizePartnerSession(fbRes.idToken, fbRes.user, fullName);
-          } else {
-            setEmailVerificationPending(true);
-            setInfo(
-              tr(
-                lang,
-                `Verification email sent to ${cleanEmail}. Open your inbox and verify before continuing.`,
-                `تصدیقی لنک ${cleanEmail} پر بھیجا گیا ہے۔ ای میل میں لنک کھول کر نیچے بٹن دبائیں۔`
-              )
-            );
-          }
-        } catch (fbErr: any) {
-          const code = String(fbErr?.code || '');
-          if (
-            code === 'auth/operation-not-allowed' ||
-            code === 'auth/unauthorized-domain' ||
-            code === 'auth/network-request-failed'
-          ) {
-            try {
-              const res = await apiRequest<{ token: string; user: User; partnerProfile: PartnerProfile }>(
-                '/api/auth/partner/register',
-                {
-                  method: 'POST',
-                  body: {
-                    fullName,
-                    phone: phone.trim(),
-                    whatsapp: whatsapp.trim() || phone.trim(),
-                    email: cleanEmail,
-                    city,
-                    operatingArea,
-                    password,
-                    vehicleCategoryId: selectedRegisterFleet.id,
-                    seatingCapacity: selectedRegisterFleet.seating_capacity,
-                  },
-                }
-              );
-              setRoleToken('partner', res.token);
-              setStoredRoleUser('partner', res.user);
-              try {
-                localStorage.setItem('pr_profile_partner', JSON.stringify(res.partnerProfile));
-              } catch {
-                // ignore
-              }
-              onAuthenticated(res.token, res.user, res.partnerProfile);
-              return;
-            } catch (apiFallbackErr) {
-              if (isBackendOfflineError(apiFallbackErr)) {
-                throw fbErr;
-              }
-              throw apiFallbackErr;
+          const res = await apiRequest<{ token: string; user: User; partnerProfile: PartnerProfile }>(
+            '/api/auth/partner/register',
+            {
+              method: 'POST',
+              body: {
+                fullName,
+                phone: phone.trim(),
+                whatsapp: whatsapp.trim() || phone.trim(),
+                email: cleanEmail,
+                city,
+                operatingArea,
+                password,
+                vehicleCategoryId: selectedRegisterFleet.id,
+                seatingCapacity: selectedRegisterFleet.seating_capacity,
+              },
             }
+          );
+          setRoleToken('partner', res.token);
+          setStoredRoleUser('partner', res.user);
+          try {
+            localStorage.setItem('pr_profile_partner', JSON.stringify(res.partnerProfile));
+          } catch {
+            // ignore
           }
-          throw fbErr;
+          onAuthenticated(res.token, res.user, res.partnerProfile);
+          return;
+        } catch (apiRegErr: any) {
+          try {
+            const fbRes = await registerWithFirebaseEmail({
+              fullName,
+              email: cleanEmail,
+              password,
+              role: 'partner',
+              city,
+              lang,
+            });
+            void apiRequest('/api/auth/partner/register', {
+              method: 'POST',
+              body: {
+                fullName,
+                phone: phone.trim(),
+                whatsapp: whatsapp.trim() || phone.trim(),
+                email: cleanEmail,
+                city,
+                operatingArea,
+                password,
+                vehicleCategoryId: selectedRegisterFleet.id,
+                seatingCapacity: selectedRegisterFleet.seating_capacity,
+              },
+            }).catch(() => {});
+
+            if (fbRes.emailVerified) {
+              await finalizePartnerSession(fbRes.idToken, fbRes.user, fullName);
+            } else {
+              setEmailVerificationPending(true);
+              setInfo(
+                tr(
+                  lang,
+                  `Verification email sent to ${cleanEmail}. Open your inbox and verify before continuing.`,
+                  `تصدیقی لنک ${cleanEmail} پر بھیجا گیا ہے۔ ای میل میں لنک کھول کر نیچے بٹن دبائیں۔`
+                )
+              );
+            }
+          } catch (fbErr) {
+            throw apiRegErr?.message ? apiRegErr : fbErr;
+          }
         }
       }
     } catch (err: any) {

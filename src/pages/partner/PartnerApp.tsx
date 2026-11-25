@@ -423,8 +423,9 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
         writeStoredPartnerDocs(user?.id || profile?.user_id, next);
         return next;
       });
+      void loadAll();
     },
-    [user?.id, profile?.user_id]
+    [user?.id, profile?.user_id, loadAll]
   );
 
   const handleToggleDocVisibility = useCallback(
