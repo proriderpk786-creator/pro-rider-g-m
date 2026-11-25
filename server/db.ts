@@ -5,7 +5,11 @@ import path from 'node:path';
 const DB_PATH = path.resolve(process.cwd(), 'prorider.db');
 export const db = new Database(DB_PATH);
 
-db.pragma('journal_mode = WAL');
+try {
+  db.pragma('journal_mode = DELETE');
+} catch {
+  // fallback
+}
 db.pragma('foreign_keys = ON');
 
 export const SUPER_ADMIN_EMAIL = 'prorider.pk786@gmail.com';

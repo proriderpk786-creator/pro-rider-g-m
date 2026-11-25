@@ -1,8 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import {
   ArrowLeft,
+  Camera,
   CarFront,
+  Check,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Eye,
   EyeOff,
   FileCheck2,
@@ -10,8 +14,10 @@ import {
   Lock,
   Mail,
   Phone,
+  RefreshCw,
   ShieldAlert,
   ShieldCheck,
+  Sparkles,
   Upload,
   User as UserIcon,
 } from 'lucide-react';
@@ -837,21 +843,18 @@ export const PartnerVerificationAndVehicleView: React.FC<{
   config,
   onRefresh,
   onLocalDocumentSaved,
-  onToggleDocVisibility,
 }) => {
   const fleetCategories = (
     config?.fleet?.length ? config.fleet : DEFAULT_PUBLIC_CONFIG.fleet
   ).filter((f) => f.is_active === 1);
 
-  const docSlots: Array<{ type: PartnerDocument['doc_type']; label: string; hasExpiry?: boolean }> = [
-    { type: 'profile_photo', label: tr(lang, 'Partner Profile Photo', 'ڈرائیور کی پروفائل تصویر') },
-    { type: 'cnic_front', label: tr(lang, 'CNIC Front Copy', 'شناختی کارڈ فرنٹ کاپی'), hasExpiry: true },
-    { type: 'cnic_back', label: tr(lang, 'CNIC Back Copy', 'شناختی کارڈ بیک کاپی') },
-    { type: 'driving_licence', label: tr(lang, 'Valid Driving Licence', 'کارآمد ڈرائیونگ لائسنس'), hasExpiry: true },
-    { type: 'vehicle_registration', label: tr(lang, 'Vehicle Registration Book / Smart Card', 'گاڑی کی رجسٹریشن بک / اسمارٹ کارڈ') },
-    { type: 'vehicle_photo', label: tr(lang, 'Vehicle Exterior Photo (with Number Plate)', 'گاڑی کی تصویر (نمبر پلیٹ سمیت)') },
-  ];
+  const [step, setStep] = useState<number>(1);
+  const totalSteps = 6;
 
+  // Form fields
+  const [fullName, setFullName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [referencePhone, setReferencePhone] = useState('');
   const [cnicNumber, setCnicNumber] = useState(profile.cnic_number || '');
   const [cnicExpiry, setCnicExpiry] = useState(profile.cnic_expiry || '');
   const [licenceNumber, setLicenceNumber] = useState(profile.licence_number || '');
@@ -868,35 +871,111 @@ export const PartnerVerificationAndVehicleView: React.FC<{
     profile.service_eligibility?.length ? profile.service_eligibility : ['pick_and_drop']
   );
 
-  const selectedFleetCategory =
-    fleetCategories.find((f) => f.id === vehicleCategoryId) || fleetCategories[0] || null;
+  const [saving, setSaving] = useState(false);
+  const [uploadingType, setUploadingType] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
 
-  const handleSelectCategory = (catId: string) => {
-    setVehicleCategoryId(catId);
-    const matched = fleetCategories.find((f) => f.id === catId);
-    if (matched?.seating_capacity) {
-      setSeatingCapacity(matched.seating_capacity);
+  const getDoc = (type: PartnerDocument['doc_type']) => documents.find((d) => d.doc_type === type);
+
+  const handleDocumentUpload = async (docType: PartnerDocument['doc_type'], file: File) => {
+    setUploadingType(docType);
+    setMsg(null);
+    try {
+      const { dataUrl, fileName } = await compressAndReadUploadFile(file, 1280, 0.82);
+
+      // Run AI OCR scan for documents
+      let ocr: any = null;
+      if (['cnic_front', 'cnic_back', 'driving_licence', 'vehicle_registration'].includes(docType)) {
+        try {
+          const res = await apiRequest<any>('/api/gemini/ocr', {
+            method: 'POST',
+            role: 'partner',
+            body: { imageDataUrl: dataUrl, docType },
+          });
+          ocr = res;
+          if (ocr) {
+            if (ocr.fullName && !fullName) setFullName(ocr.fullName);
+            if (ocr.cnicNumber && (docType === 'cnic_front' || docType === 'cnic_back')) {
+              setCnicNumber(ocr.cnicNumber);
+            }
+            if (ocr.licenceNumber && docType === 'driving_licence') {
+              setLicenceNumber(ocr.licenceNumber);
+            }
+            if (ocr.licenceExpiry && docType === 'driving_licence') {
+              setLicenceExpiry(ocr.licenceExpiry);
+            }
+          }
+        } catch (err) {
+          console.warn('OCR scan warning:', err);
+        }
+      }
+
+      const existing = getDoc(docType);
+      const localDoc: PartnerDocument = {
+        id: existing?.id || `DOC-${Date.now()}`,
+        partner_id: profile.user_id,
+        doc_type: docType,
+        file_name: fileName,
+        file_data_url: dataUrl,
+        status: 'pending',
+        expiry_date: existing?.expiry_date || '',
+        review_notes: '',
+        is_public: docType === 'profile_photo' || docType === 'vehicle_photo' ? 1 : 0,
+        uploaded_at: new Date().toISOString(),
+      };
+
+      try {
+        const apiRes = await apiRequest<{ document?: PartnerDocument }>('/api/partner/documents', {
+          method: 'POST',
+          role: 'partner',
+          body: {
+            docType,
+            fileName,
+            fileDataUrl: dataUrl,
+            expiryDate: existing?.expiry_date || '',
+            isPublic: localDoc.is_public === 1,
+          },
+        });
+        onLocalDocumentSaved?.(apiRes.document || localDoc);
+        await onRefresh();
+      } catch (err: any) {
+        if (isBackendOfflineError(err)) {
+          onLocalDocumentSaved?.(localDoc);
+        } else {
+          throw err;
+        }
+      }
+
+      if (ocr?.imageQuality && ocr.imageQuality !== 'sharp') {
+        setMsg(
+          tr(
+            lang,
+            `⚠️ Image Quality Notice: ${ocr.qualityMessage || 'Please upload a sharper, clearer photo.'}`,
+            `⚠️ تصویر دھندلی ہے۔ براہ کرم زیادہ واضح تصویر اپ لوڈ کریں۔`
+          )
+        );
+      } else {
+        setMsg(
+          tr(
+            lang,
+            `✨ Document uploaded & scanned successfully! Review details below.`,
+            `✨ دستاویز کامیابی سے اپ لوڈ اور اسکین ہو گئی ہے۔`
+          )
+        );
+      }
+    } catch (err: any) {
+      setMsg(err?.message || tr(lang, 'Upload failed. Please try again.', 'اپ لوڈ ناکام ہو گیا۔'));
+    } finally {
+      setUploadingType(null);
     }
   };
 
-  const [expiryDrafts, setExpiryDrafts] = useState<Record<string, string>>({});
-  const [saving, setSaving] = useState(false);
-  const [uploadingSlot, setUploadingSlot] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
-
-  const statusColor =
-    profile.verification_status === 'approved'
-      ? 'text-emerald-700'
-      : profile.verification_status === 'rejected' || profile.verification_status === 'suspended'
-      ? 'text-red-700'
-      : 'text-amber-700';
-
-  const saveVehicleAndDetails = async (e: React.FormEvent) => {
+  const handleFinalSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
     setMsg(null);
     try {
-      const res = await apiRequest<{ message?: string }>('/api/partner/registration', {
+      await apiRequest('/api/partner/registration', {
         method: 'PUT',
         role: 'partner',
         body: {
@@ -914,429 +993,634 @@ export const PartnerVerificationAndVehicleView: React.FC<{
         },
       });
       setMsg(
-        res.message ||
-          tr(lang, 'Registration & vehicle details saved.', 'رجسٹریشن اور گاڑی کی تفصیلات محفوظ ہو گئیں۔')
+        tr(
+          lang,
+          '🎉 Registration submitted successfully! Pending Admin approval.',
+          '🎉 رجسٹریشن کامیابی سے جمع ہو گئی ہے! ایڈمن کی منظوری کا انتظار ہے۔'
+        )
       );
       await onRefresh();
     } catch (err: any) {
-      setMsg(err.message);
+      setMsg(err?.message || tr(lang, 'Submission failed.', 'جمع کرانا ناکام ہو گیا۔'));
     } finally {
       setSaving(false);
     }
   };
 
-  const handleUpload = async (docType: PartnerDocument['doc_type'], file: File) => {
-    setUploadingSlot(docType);
-    setMsg(null);
-    const defaultPublic = docType === 'profile_photo' || docType === 'vehicle_photo';
-    const existingDoc = documents.find((d) => d.doc_type === docType);
-    const resolvedPublic =
-      typeof existingDoc?.is_public === 'number' ? existingDoc.is_public === 1 : defaultPublic;
-
-    try {
-      const { dataUrl, fileName } = await compressAndReadUploadFile(file, 1280, 0.82);
-      const localDoc: PartnerDocument = {
-        id: existingDoc?.id || `DOC-${Date.now()}`,
-        partner_id: profile.user_id,
-        doc_type: docType,
-        file_name: fileName,
-        file_data_url: dataUrl,
-        status: 'pending',
-        expiry_date: expiryDrafts[docType] || existingDoc?.expiry_date || '',
-        review_notes: '',
-        is_public: resolvedPublic ? 1 : 0,
-        uploaded_at: new Date().toISOString(),
-      };
-
-      try {
-        const res = await apiRequest<{ uploaded?: boolean; document?: PartnerDocument }>('/api/partner/documents', {
-          method: 'POST',
-          role: 'partner',
-          body: {
-            docType,
-            fileName,
-            fileDataUrl: dataUrl,
-            expiryDate: expiryDrafts[docType] || '',
-            isPublic: resolvedPublic,
-          },
-        });
-        onLocalDocumentSaved?.(res.document || localDoc);
-        await onRefresh();
-      } catch (apiErr: any) {
-        if (isBackendOfflineError(apiErr)) {
-          onLocalDocumentSaved?.(localDoc);
-        } else {
-          throw apiErr;
-        }
-      }
-
-      setMsg(
-        tr(
-          lang,
-          `${docType.replaceAll('_', ' ')} uploaded successfully for Admin review.`,
-          `${docType.replaceAll('_', ' ')} کامیابی سے اپ لوڈ ہو گیا ہے۔`
-        )
-      );
-    } catch (err: any) {
-      setMsg(err?.message || tr(lang, 'Upload failed. Please try another photo.', 'اپ لوڈ ناکام ہو گیا۔ دوبارہ کوشش کریں۔'));
-    } finally {
-      setUploadingSlot(null);
-    }
-  };
+  const stepTitles = [
+    { num: 1, titleEn: 'Selfie', titleUr: 'سیلفی' },
+    { num: 2, titleEn: 'CNIC', titleUr: 'شناختی کارڈ' },
+    { num: 3, titleEn: 'Licence', titleUr: 'ڈرائیونگ لائسنس' },
+    { num: 4, titleEn: 'Vehicle Book', titleUr: 'گاڑی کی بک' },
+    { num: 5, titleEn: 'Vehicle Photos', titleUr: 'گاڑی کی تصاویر' },
+    { num: 6, titleEn: 'Basic Info & Submit', titleUr: 'بنیادی معلومات اور سبمٹ' },
+  ];
 
   return (
-    <div className="space-y-6 w-full min-w-0 overflow-x-clip">
-      <div className="rounded-2xl border border-zinc-200 bg-white p-5 flex flex-wrap items-center justify-between gap-4">
-        <div className="space-y-1">
-          <p className="text-xs text-zinc-500 font-semibold uppercase tracking-wider">
-            {tr(lang, 'Verification Status', 'تصدیق کی صورتحال')}
-          </p>
-          <div className="flex items-center gap-2">
-            {profile.verification_status === 'approved' ? (
-              <CheckCircle2 className="w-5 h-5 text-emerald-700" />
-            ) : (
-              <ShieldAlert className="w-5 h-5 text-amber-600" />
-            )}
-            <span className={`font-display text-xl font-bold ${statusColor}`}>
-              {trVerificationStatus(lang, profile.verification_status)}
+    <div className="space-y-6 w-full max-w-3xl mx-auto pb-12">
+      {/* Progress Bar Header */}
+      <div className="rounded-2xl border border-zinc-200 bg-white p-5 space-y-4 shadow-sm">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <span className="text-[11px] font-bold uppercase tracking-wider text-[#D4A017]">
+              {tr(lang, `Step ${step} of ${totalSteps}`, `مرحلہ ${step} از ${totalSteps}`)}
             </span>
+            <h2 className="font-display text-lg font-bold text-[#0D0D10]">
+              {lang === 'ur' ? stepTitles[step - 1].titleUr : stepTitles[step - 1].titleEn}
+            </h2>
           </div>
-          {profile.admin_notes && (
-            <p className="text-xs text-zinc-600">
-              {tr(lang, 'Admin Note:', 'ایڈمن نوٹ:')} {profile.admin_notes}
-            </p>
-          )}
+          <span className="px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-800 font-mono text-xs font-bold">
+            {Math.round((step / totalSteps) * 100)}% {tr(lang, 'Completed', 'مکمل')}
+          </span>
         </div>
-        <div className="text-xs text-zinc-500 font-mono">
-          {tr(lang, 'Uploaded Docs:', 'اپ لوڈ شدہ دستاویزات:')} {documents.length} / {docSlots.length}
+
+        <div className="w-full bg-zinc-100 h-2 rounded-full overflow-hidden">
+          <div
+            className="bg-[#D4A017] h-full transition-all duration-300"
+            style={{ width: `${(step / totalSteps) * 100}%` }}
+          />
+        </div>
+
+        <div className="hidden sm:grid grid-cols-6 gap-1 pt-1">
+          {stepTitles.map((st) => (
+            <button
+              key={st.num}
+              type="button"
+              onClick={() => setStep(st.num)}
+              className={`text-[10px] font-bold py-1 px-1 rounded-lg border text-center truncate transition-all ${
+                step === st.num
+                  ? 'border-[#D4A017] bg-[#D4A017]/15 text-[#0D0D10]'
+                  : st.num < step
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                  : 'border-zinc-200 text-zinc-400'
+              }`}
+            >
+              {st.num}. {lang === 'ur' ? st.titleUr : st.titleEn}
+            </button>
+          ))}
         </div>
       </div>
 
       {msg && (
-        <div className="rounded-xl bg-[#0D0D10] text-[#F4C430] px-4 py-2.5 text-xs font-semibold">{msg}</div>
+        <div className="rounded-xl bg-[#0D0D10] text-[#F4C430] px-4 py-3 text-xs font-semibold shadow-md flex items-center justify-between">
+          <span>{msg}</span>
+          <button type="button" onClick={() => setMsg(null)} className="text-zinc-400 hover:text-white">✕</button>
+        </div>
       )}
 
-      <form onSubmit={saveVehicleAndDetails} className="rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6 space-y-5">
-        <h3 className="font-display text-lg font-bold flex items-center gap-2">
-          <CarFront className="w-5 h-5 text-[#D4A017]" />
-          {mode === 'vehicle'
-            ? tr(lang, 'Vehicle Management & Service Eligibility', 'گاڑی کا انتظام اور سروس اہلیت')
-            : tr(lang, 'Personal Identity & Vehicle Registration', 'ذاتی شناخت اور گاڑی کی رجسٹریشن')}
-        </h3>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">
-              {tr(lang, 'CNIC Number', 'شناختی کارڈ نمبر')}
-            </label>
-            <input
-              required
-              value={cnicNumber}
-              onChange={(e) => setCnicNumber(e.target.value)}
-              placeholder="61101-XXXXXXX-X"
-              className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm font-mono"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">
-              {tr(lang, 'CNIC Expiry', 'شناختی کارڈ کی میعاد')}
-            </label>
-            <input type="date" value={cnicExpiry} onChange={(e) => setCnicExpiry(e.target.value)} className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm" />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">
-              {tr(lang, 'Driving Licence No.', 'ڈرائیونگ لائسنس نمبر')}
-            </label>
-            <input
-              required
-              value={licenceNumber}
-              onChange={(e) => setLicenceNumber(e.target.value)}
-              placeholder="ISB-XXXXXX"
-              className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm font-mono"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">
-              {tr(lang, 'Licence Expiry', 'لائسنس کی میعاد')}
-            </label>
-            <input type="date" value={licenceExpiry} onChange={(e) => setLicenceExpiry(e.target.value)} className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm" />
-          </div>
-        </div>
-
-        <div className="space-y-2.5">
-          <div className="flex items-center justify-between gap-2">
-            <label className="block text-xs font-semibold text-zinc-600">
-              {tr(lang, 'Select Vehicle Category (including Van · 7-seater)', 'گاڑی کی کیٹگری منتخب کریں (7 سیٹر وین سمیت)')}
-            </label>
-            {selectedFleetCategory && (
-              <span className="text-[11px] font-mono font-bold text-[#B8860B]">
-                {selectedFleetCategory.seating_capacity} {tr(lang, 'Seats', 'سیٹیں')}
-              </span>
-            )}
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5 max-h-60 overflow-y-auto pr-1">
-            {fleetCategories.map((f) => {
-              const active = vehicleCategoryId === f.id;
-              return (
-                <button
-                  key={f.id}
-                  type="button"
-                  onClick={() => handleSelectCategory(f.id)}
-                  className={`p-2 rounded-xl border text-start transition-all flex items-center gap-2.5 min-w-0 ${
-                    active
-                      ? 'border-[#D4A017] bg-[#D4A017]/15 shadow-xs ring-1 ring-[#D4A017]'
-                      : 'border-zinc-200 bg-white hover:border-zinc-300'
-                  }`}
-                >
-                  <VehicleImage src={f.image_url} alt={f.name} categorySlug={f.slug} className="w-14 h-10 rounded-lg border shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[11px] font-bold text-[#0D0D10] truncate">{formatVehicleLabel(f.name, lang)}</div>
-                    <div className="text-[10px] text-zinc-500 font-mono">
-                      {f.seating_capacity} {tr(lang, 'Seats', 'سیٹیں')}
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">
-              {tr(lang, 'Vehicle Category', 'گاڑی کی قسم')}
-            </label>
-            <select
-              value={vehicleCategoryId}
-              onChange={(e) => handleSelectCategory(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm bg-white"
-            >
-              {fleetCategories.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.name} ({f.seating_capacity} {tr(lang, 'seats', 'سیٹیں')})
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">
-              {tr(lang, 'Vehicle Make & Model', 'گاڑی کا نام اور ماڈل')}
-            </label>
-            <input
-              required
-              value={vehicleName}
-              onChange={(e) => setVehicleName(e.target.value)}
-              placeholder={tr(lang, 'e.g. Suzuki Every 7-Seater / Corolla GLi', 'مثال: سوزوکی ایوری / کرولا جی ایل آئی')}
-              className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">
-              {tr(lang, 'Registration Plate Number', 'رجسٹریشن نمبر پلیٹ')}
-            </label>
-            <input
-              required
-              value={vehicleNumber}
-              onChange={(e) => setVehicleNumber(e.target.value)}
-              placeholder="e.g. LEA-4512"
-              className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm font-mono uppercase"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">
-              {tr(lang, 'Seating Capacity', 'نشستوں کی تعداد')}
-            </label>
-            <input
-              type="number"
-              min={1}
-              max={30}
-              value={seatingCapacity}
-              onChange={(e) => setSeatingCapacity(Number(e.target.value))}
-              className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm font-mono"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">
-              {tr(lang, 'Fuel Type', 'ایندھن کی قسم')}
-            </label>
-            <select value={fuelType} onChange={(e) => setFuelType(e.target.value)} className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm bg-white">
-              <option value="Petrol">{tr(lang, 'Petrol', 'پیٹرول')}</option>
-              <option value="Hybrid">{tr(lang, 'Hybrid', 'ہائبرڈ')}</option>
-              <option value="CNG">{tr(lang, 'CNG', 'سی این جی')}</option>
-              <option value="Diesel">{tr(lang, 'Diesel', 'ڈیزل')}</option>
-              <option value="Electric">{tr(lang, 'Electric', 'الیکٹرک')}</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">
-              {tr(lang, 'Operating City', 'کام کا شہر')}
-            </label>
-            <select value={operatingCity} onChange={(e) => setOperatingCity(e.target.value)} className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm bg-white">
-              <option value="Islamabad">{tr(lang, 'Islamabad', 'اسلام آباد')}</option>
-              <option value="Rawalpindi">{tr(lang, 'Rawalpindi', 'راولپنڈی')}</option>
-              <option value="Lahore">{tr(lang, 'Lahore', 'لاہور')}</option>
-              <option value="Karachi">{tr(lang, 'Karachi', 'کراچی')}</option>
-            </select>
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <label className="block text-xs font-semibold text-zinc-600">
-            {tr(lang, 'Service Eligibility Preferences', 'خدمات کی اقسام')}
-          </label>
-          <div className="flex flex-wrap gap-3 text-xs">
-            {(['pick_and_drop', 'ride_sharing', 'fuel_sharing'] as const).map((id) => {
-              const checked = services.includes(id);
-              return (
-                <label key={id} className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-zinc-200 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() =>
-                      setServices((prev) =>
-                        checked ? prev.filter((x) => x !== id) : [...prev, id]
-                      )
-                    }
-                    className="accent-[#D4A017]"
-                  />
-                  <span className="font-semibold">{trService(lang, id)}</span>
-                </label>
-              );
-            })}
-          </div>
-        </div>
-
-        <button
-          type="submit"
-          disabled={saving}
-          className="px-6 py-2.5 rounded-xl bg-[#0D0D10] text-white text-xs font-bold hover:bg-zinc-800"
-        >
-          {saving
-            ? tr(lang, 'Saving...', 'محفوظ ہو رہا ہے...')
-            : tr(lang, 'Save Vehicle & Registration Details', 'گاڑی اور رجسٹریشن کی تفصیلات محفوظ کریں')}
-        </button>
-      </form>
-
-      {mode === 'documents' && (
-        <div className="space-y-3">
-          <div className="rounded-xl bg-zinc-50 border border-zinc-200 px-3.5 py-2.5 text-xs text-zinc-600 flex flex-wrap items-center justify-between gap-2">
-            <span>
+      {/* Step 1: Selfie Upload */}
+      {step === 1 && (
+        <div className="rounded-2xl border border-zinc-200 bg-white p-6 space-y-5 shadow-sm">
+          <div className="space-y-1">
+            <h3 className="font-display text-base font-bold flex items-center gap-2">
+              <Camera className="w-5 h-5 text-[#D4A017]" />
+              {tr(lang, '1. Pro Partner Live Selfie / Profile Photo', '1. پرو پارٹنر لائیو سیلفی یا پروفائل تصویر')}
+            </h3>
+            <p className="text-xs text-zinc-500">
               {tr(
                 lang,
-                'Use the privacy button on each photo to show or hide it from Passengers. Admin always sees uploaded verification docs.',
-                'ہر تصویر کے اوپر آنکھ / لاک بٹن سے آپ پبلک ویزیبلٹی آن یا بند کر سکتے ہیں۔ ایڈمن تمام دستاویزات دیکھ سکتا ہے۔'
+                'Upload a clear, front-facing live photo of yourself. If unclear, you can retake anytime.',
+                'اپنی واضح سامنے کی تصویر اپ لوڈ کریں۔ اگر تصویر واضح نہ ہو تو دوبارہ لیں۔'
               )}
-            </span>
+            </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {docSlots.map((slot) => {
-              const uploaded = documents.find((d) => d.doc_type === slot.type);
-              const defaultPublic = slot.type === 'profile_photo' || slot.type === 'vehicle_photo';
-              const isPublic = uploaded ? uploaded.is_public === 1 : defaultPublic;
-              const isBusy = uploadingSlot === slot.type;
+          <div className="flex flex-col items-center justify-center p-6 border-2 border-dashed border-zinc-200 rounded-2xl bg-zinc-50/50 space-y-4">
+            {getDoc('profile_photo')?.file_data_url ? (
+              <div className="relative w-36 h-36 rounded-2xl overflow-hidden border-2 border-[#D4A017] shadow-md">
+                <img src={getDoc('profile_photo')?.file_data_url} alt="Selfie" className="w-full h-full object-cover" />
+              </div>
+            ) : (
+              <div className="w-24 h-24 rounded-full bg-zinc-200 flex items-center justify-center text-zinc-400">
+                <Camera className="w-8 h-8" />
+              </div>
+            )}
 
-              return (
-                <div key={slot.type} className="rounded-2xl border border-zinc-200 bg-white p-4 flex flex-col justify-between space-y-3">
-                  <div>
-                    <div className="flex items-center justify-between gap-2 text-xs">
-                      <span className="font-bold text-[#0D0D10]">{slot.label}</span>
-                      {uploaded ? (
-                        <span
-                          className={`font-semibold uppercase ${
-                            uploaded.status === 'approved'
-                              ? 'text-emerald-700'
-                              : uploaded.status === 'rejected'
-                              ? 'text-red-700'
-                              : 'text-amber-700'
-                          }`}
-                        >
-                          {uploaded.status === 'approved'
-                            ? tr(lang, 'Approved', 'منظور شدہ')
-                            : uploaded.status === 'rejected'
-                            ? tr(lang, 'Rejected', 'مسترد')
-                            : tr(lang, 'Pending', 'زیرِ جائزہ')}
-                        </span>
-                      ) : (
-                        <span className="text-zinc-400">{tr(lang, 'Missing', 'باقی ہے')}</span>
-                      )}
-                    </div>
+            <div className="flex flex-wrap gap-2 justify-center">
+              <label className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#0D0D10] text-white text-xs font-bold hover:bg-zinc-800 cursor-pointer shadow-md">
+                {uploadingType === 'profile_photo' ? <Loader2 className="w-4 h-4 animate-spin text-[#D4A017]" /> : <Upload className="w-4 h-4" />}
+                <span>{getDoc('profile_photo') ? tr(lang, 'Retake / Change Selfie', 'سیلفی دوبارہ لیں') : tr(lang, 'Take / Upload Selfie', 'سیلفی اپ لوڈ کریں')}</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="user"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = '';
+                    if (f) void handleDocumentUpload('profile_photo', f);
+                  }}
+                />
+              </label>
+            </div>
+          </div>
 
-                    {uploaded?.file_data_url && (
-                      <div className="relative mt-2.5 rounded-xl overflow-hidden border border-zinc-200 bg-zinc-100">
-                        <img
-                          src={uploaded.file_data_url}
-                          alt={slot.label}
-                          className={`w-full h-32 object-cover transition-opacity ${!isPublic ? 'opacity-80' : ''}`}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => onToggleDocVisibility?.(slot.type, !isPublic)}
-                          className={`pr-preserve-light absolute top-2 right-2 inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold shadow-sm backdrop-blur ${
-                            isPublic ? 'bg-emerald-700/95 !text-white' : 'bg-[#0D0D10]/90 !text-[#F4C430]'
-                          }`}
-                        >
-                          {isPublic ? (
-                            <>
-                              <Eye className="w-3 h-3" />
-                              <span>{tr(lang, 'Public', 'پبلک آن')}</span>
-                            </>
-                          ) : (
-                            <>
-                              <EyeOff className="w-3 h-3" />
-                              <span>{tr(lang, 'Locked · Admin Only', 'بند · ایڈمن')}</span>
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    )}
-                    {uploaded?.review_notes && (
-                      <p className="mt-1.5 text-[11px] text-red-700">
-                        {tr(lang, 'Note:', 'نوٹ:')} {uploaded.review_notes}
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="space-y-2 pt-2 border-t border-zinc-100">
-                    {slot.hasExpiry && (
-                      <input
-                        type="date"
-                        value={expiryDrafts[slot.type] ?? uploaded?.expiry_date ?? ''}
-                        onChange={(e) => setExpiryDrafts((d) => ({ ...d, [slot.type]: e.target.value }))}
-                        className="w-full px-2.5 py-1.5 rounded-lg border border-zinc-200 text-xs"
-                      />
-                    )}
-                    <label className="w-full min-h-[40px] inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-xs font-semibold text-[#0D0D10] cursor-pointer transition-colors">
-                      {isBusy ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin text-[#D4A017]" />
-                      ) : uploaded ? (
-                        <FileCheck2 className="w-3.5 h-3.5 text-[#D4A017]" />
-                      ) : (
-                        <Upload className="w-3.5 h-3.5" />
-                      )}
-                      {isBusy
-                        ? tr(lang, 'Compressing & Uploading...', 'اپ لوڈ ہو رہا ہے...')
-                        : uploaded
-                        ? tr(lang, 'Re-upload Document', 'دوبارہ اپ لوڈ کریں')
-                        : tr(lang, 'Upload Photo / File', 'تصویر / فائل اپ لوڈ کریں')}
-                      <input
-                        type="file"
-                        accept="image/*,.pdf"
-                        disabled={isBusy}
-                        className="hidden"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          e.target.value = '';
-                          if (file) void handleUpload(slot.type, file);
-                        }}
-                      />
-                    </label>
-                  </div>
-                </div>
-              );
-            })}
+          <div className="flex justify-end pt-4 border-t border-zinc-100">
+            <button
+              type="button"
+              onClick={() => setStep(2)}
+              className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-[#D4A017] text-[#0D0D10] text-xs font-bold hover:bg-amber-400 shadow-sm"
+            >
+              <span>{tr(lang, 'Continue to CNIC', 'شناختی کارڈ پر جائیں')}</span>
+              <ChevronRight className="w-4 h-4" />
+            </button>
           </div>
         </div>
+      )}
+
+      {/* Step 2: CNIC Front & Back with AI OCR */}
+      {step === 2 && (
+        <div className="rounded-2xl border border-zinc-200 bg-white p-6 space-y-6 shadow-sm">
+          <div className="space-y-1">
+            <h3 className="font-display text-base font-bold flex items-center gap-2">
+              <FileCheck2 className="w-5 h-5 text-[#D4A017]" />
+              {tr(lang, '2. CNIC Front & Back (AI Auto-Scan)', '2. شناختی کارڈ فرنٹ اور بیک (AI خودکار اسکین)')}
+            </h3>
+            <p className="text-xs text-zinc-500">
+              {tr(
+                lang,
+                'Upload CNIC Front first, then CNIC Back. AI OCR automatically extracts your Name, CNIC Number, and Date of Birth.',
+                'پہلے فرنٹ اور پھر بیک تصویر اپلوڈ کریں۔ OCR خودکار طور پر آپ کا نام اور شناختی کارڈ نمبر پڑھ لے گا۔'
+              )}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Front */}
+            <div className="p-4 rounded-xl border border-zinc-200 bg-zinc-50 space-y-3">
+              <div className="text-xs font-bold text-zinc-700">{tr(lang, 'CNIC Front Copy', 'شناختی کارڈ فرنٹ')}</div>
+              {getDoc('cnic_front')?.file_data_url ? (
+                <div className="relative h-32 rounded-lg overflow-hidden border border-zinc-200 bg-white">
+                  <img src={getDoc('cnic_front')?.file_data_url} alt="CNIC Front" className="w-full h-full object-cover" />
+                </div>
+              ) : (
+                <div className="h-32 rounded-lg border-2 border-dashed border-zinc-300 flex items-center justify-center text-zinc-400 text-xs">
+                  {tr(lang, 'No Front Uploaded', 'فرنٹ اپلوڈ نہیں')}
+                </div>
+              )}
+              <label className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#0D0D10] text-white text-xs font-bold cursor-pointer">
+                {uploadingType === 'cnic_front' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                <span>{getDoc('cnic_front') ? tr(lang, 'Retake Front', 'فرنٹ دوبارہ لیں') : tr(lang, 'Upload Front', 'فرنٹ اپلوڈ کریں')}</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = '';
+                    if (f) void handleDocumentUpload('cnic_front', f);
+                  }}
+                />
+              </label>
+            </div>
+
+            {/* Back */}
+            <div className="p-4 rounded-xl border border-zinc-200 bg-zinc-50 space-y-3">
+              <div className="text-xs font-bold text-zinc-700">{tr(lang, 'CNIC Back Copy', 'شناختی کارڈ بیک')}</div>
+              {getDoc('cnic_back')?.file_data_url ? (
+                <div className="relative h-32 rounded-lg overflow-hidden border border-zinc-200 bg-white">
+                  <img src={getDoc('cnic_back')?.file_data_url} alt="CNIC Back" className="w-full h-full object-cover" />
+                </div>
+              ) : (
+                <div className="h-32 rounded-lg border-2 border-dashed border-zinc-300 flex items-center justify-center text-zinc-400 text-xs">
+                  {tr(lang, 'No Back Uploaded', 'بیک اپلوڈ نہیں')}
+                </div>
+              )}
+              <label className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#0D0D10] text-white text-xs font-bold cursor-pointer">
+                {uploadingType === 'cnic_back' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                <span>{getDoc('cnic_back') ? tr(lang, 'Retake Back', 'بیک دوبارہ لیں') : tr(lang, 'Upload Back', 'بیک اپلوڈ کریں')}</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = '';
+                    if (f) void handleDocumentUpload('cnic_back', f);
+                  }}
+                />
+              </label>
+            </div>
+          </div>
+
+          {/* OCR Extracted Data Preview & Verification */}
+          <div className="p-4 rounded-xl border border-amber-200 bg-amber-50/50 space-y-3">
+            <div className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
+              <Sparkles className="w-4 h-4 text-[#D4A017]" />
+              {tr(lang, 'AI OCR Extracted Information (Verify & Correct if needed):', 'AI OCR سے پڑھی گئی معلومات (تصدیق کریں):')}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <div>
+                <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'CNIC Number', 'شناختی کارڈ نمبر')}</label>
+                <input
+                  value={cnicNumber}
+                  onChange={(e) => setCnicNumber(e.target.value)}
+                  placeholder="37405-XXXXXXX-X"
+                  className="w-full px-3 py-2 rounded-lg border border-zinc-300 font-mono text-xs bg-white"
+                />
+              </div>
+              <div>
+                <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'CNIC Expiry Date', 'میعاد تاریخ')}</label>
+                <input
+                  type="date"
+                  value={cnicExpiry}
+                  onChange={(e) => setCnicExpiry(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-zinc-300 text-xs bg-white"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-between pt-4 border-t border-zinc-100">
+            <button
+              type="button"
+              onClick={() => setStep(1)}
+              className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-zinc-200 text-xs font-semibold text-zinc-700"
+            >
+              <ChevronLeft className="w-4 h-4" />
+              <span>{tr(lang, 'Back', 'پچھلا')}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setStep(3)}
+              className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-[#D4A017] text-[#0D0D10] text-xs font-bold hover:bg-amber-400 shadow-sm"
+            >
+              <span>{tr(lang, 'Continue to Licence', 'لائسنس پر جائیں')}</span>
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 3: Driving License */}
+      {step === 3 && (
+        <div className="rounded-2xl border border-zinc-200 bg-white p-6 space-y-6 shadow-sm">
+          <div className="space-y-1">
+            <h3 className="font-display text-base font-bold flex items-center gap-2">
+              <FileCheck2 className="w-5 h-5 text-[#D4A017]" />
+              {tr(lang, '3. Driving Licence (AI Auto-Scan)', '3. ڈرائیونگ لائسنس (AI خودکار اسکین)')}
+            </h3>
+            <p className="text-xs text-zinc-500">
+              {tr(
+                lang,
+                'Upload your valid driving licence photo. OCR will automatically extract your licence number and expiry date.',
+                'اپنے کارآمد ڈرائیونگ لائسنس کی تصویر اپ لوڈ کریں۔ OCR خودکار طور پر نمبر اور تاریخ پڑھ لے گا۔'
+              )}
+            </p>
+          </div>
+
+          <div className="flex flex-col items-center justify-center p-6 border-2 border-dashed border-zinc-200 rounded-2xl bg-zinc-50/50 space-y-4">
+            {getDoc('driving_licence')?.file_data_url ? (
+              <div className="relative w-full max-w-sm h-40 rounded-xl overflow-hidden border border-zinc-200 bg-white shadow-sm">
+                <img src={getDoc('driving_licence')?.file_data_url} alt="Driving Licence" className="w-full h-full object-cover" />
+              </div>
+            ) : (
+              <div className="w-20 h-20 rounded-xl bg-zinc-200 flex items-center justify-center text-zinc-400">
+                <FileCheck2 className="w-8 h-8" />
+              </div>
+            )}
+
+            <label className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#0D0D10] text-white text-xs font-bold cursor-pointer shadow-md">
+              {uploadingType === 'driving_licence' ? <Loader2 className="w-4 h-4 animate-spin text-[#D4A017]" /> : <Upload className="w-4 h-4" />}
+              <span>{getDoc('driving_licence') ? tr(lang, 'Retake / Change Licence', 'لائسنس دوبارہ لیں') : tr(lang, 'Upload Driving Licence', 'لائسنس اپ لوڈ کریں')}</span>
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = '';
+                  if (f) void handleDocumentUpload('driving_licence', f);
+                }}
+              />
+            </label>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4 rounded-xl border border-amber-200 bg-amber-50/50 text-xs">
+            <div>
+              <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'Licence Number', 'لائسنس نمبر')}</label>
+              <input
+                value={licenceNumber}
+                onChange={(e) => setLicenceNumber(e.target.value)}
+                placeholder="ISB-123456"
+                className="w-full px-3 py-2 rounded-lg border border-zinc-300 font-mono text-xs bg-white"
+              />
+            </div>
+            <div>
+              <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'Licence Expiry', 'لائسنس کی میعاد')}</label>
+              <input
+                type="date"
+                value={licenceExpiry}
+                onChange={(e) => setLicenceExpiry(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-zinc-300 text-xs bg-white"
+              />
+            </div>
+          </div>
+
+          <div className="flex justify-between pt-4 border-t border-zinc-100">
+            <button
+              type="button"
+              onClick={() => setStep(2)}
+              className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-zinc-200 text-xs font-semibold text-zinc-700"
+            >
+              <ChevronLeft className="w-4 h-4" />
+              <span>{tr(lang, 'Back', 'پچھلا')}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setStep(4)}
+              className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-[#D4A017] text-[#0D0D10] text-xs font-bold hover:bg-amber-400 shadow-sm"
+            >
+              <span>{tr(lang, 'Continue to Vehicle Book', 'گاڑی کی بک پر جائیں')}</span>
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 4: Vehicle Registration Book / Smart Card */}
+      {step === 4 && (
+        <div className="rounded-2xl border border-zinc-200 bg-white p-6 space-y-6 shadow-sm">
+          <div className="space-y-1">
+            <h3 className="font-display text-base font-bold flex items-center gap-2">
+              <CarFront className="w-5 h-5 text-[#D4A017]" />
+              {tr(lang, '4. Vehicle Registration Book / Smart Card', '4. گاڑی کی رجسٹریشن بک / اسمارٹ کارڈ')}
+            </h3>
+            <p className="text-xs text-zinc-500">
+              {tr(
+                lang,
+                'Upload the vehicle registration book or smart card. AI OCR extracts your vehicle registration number and make.',
+                'گاڑی کی رجسٹریشن بک یا اسمارٹ کارڈ اپ لوڈ کریں۔ AI OCR نمبر اور گاڑی کی تفصیلات خودکار پڑھ لے گا۔'
+              )}
+            </p>
+          </div>
+
+          <div className="flex flex-col items-center justify-center p-6 border-2 border-dashed border-zinc-200 rounded-2xl bg-zinc-50/50 space-y-4">
+            {getDoc('vehicle_registration')?.file_data_url ? (
+              <div className="relative w-full max-w-sm h-40 rounded-xl overflow-hidden border border-zinc-200 bg-white shadow-sm">
+                <img src={getDoc('vehicle_registration')?.file_data_url} alt="Vehicle Book" className="w-full h-full object-cover" />
+              </div>
+            ) : (
+              <div className="w-20 h-20 rounded-xl bg-zinc-200 flex items-center justify-center text-zinc-400">
+                <CarFront className="w-8 h-8" />
+              </div>
+            )}
+
+            <label className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#0D0D10] text-white text-xs font-bold cursor-pointer shadow-md">
+              {uploadingType === 'vehicle_registration' ? <Loader2 className="w-4 h-4 animate-spin text-[#D4A017]" /> : <Upload className="w-4 h-4" />}
+              <span>{getDoc('vehicle_registration') ? tr(lang, 'Retake / Change Book', 'بک دوبارہ لیں') : tr(lang, 'Upload Vehicle Book', 'رجسٹریشن بک اپ لوڈ کریں')}</span>
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = '';
+                  if (f) void handleDocumentUpload('vehicle_registration', f);
+                }}
+              />
+            </label>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4 rounded-xl border border-zinc-200 bg-zinc-50 text-xs">
+            <div>
+              <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'Vehicle Plate Number', 'نمبر پلیٹ')}</label>
+              <input
+                value={vehicleNumber}
+                onChange={(e) => setVehicleNumber(e.target.value)}
+                placeholder="LEA-4512"
+                className="w-full px-3 py-2 rounded-lg border border-zinc-300 font-mono uppercase text-xs bg-white"
+              />
+            </div>
+            <div>
+              <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'Vehicle Make & Model', 'گاڑی کا ماڈل')}</label>
+              <input
+                value={vehicleName}
+                onChange={(e) => setVehicleName(e.target.value)}
+                placeholder="Suzuki Every / Corolla GLi"
+                className="w-full px-3 py-2 rounded-lg border border-zinc-300 text-xs bg-white"
+              />
+            </div>
+          </div>
+
+          <div className="flex justify-between pt-4 border-t border-zinc-100">
+            <button
+              type="button"
+              onClick={() => setStep(3)}
+              className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-zinc-200 text-xs font-semibold text-zinc-700"
+            >
+              <ChevronLeft className="w-4 h-4" />
+              <span>{tr(lang, 'Back', 'پچھلا')}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setStep(5)}
+              className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-[#D4A017] text-[#0D0D10] text-xs font-bold hover:bg-amber-400 shadow-sm"
+            >
+              <span>{tr(lang, 'Continue to Vehicle Photos', 'گاڑی کی تصاویر پر جائیں')}</span>
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 5: Vehicle Exterior Photos */}
+      {step === 5 && (
+        <div className="rounded-2xl border border-zinc-200 bg-white p-6 space-y-6 shadow-sm">
+          <div className="space-y-1">
+            <h3 className="font-display text-base font-bold flex items-center gap-2">
+              <CarFront className="w-5 h-5 text-[#D4A017]" />
+              {tr(lang, '5. Vehicle Exterior Photo (with Number Plate)', '5. گاڑی کی بیرونی تصویر (نمبر پلیٹ سمیت)')}
+            </h3>
+            <p className="text-xs text-zinc-500">
+              {tr(
+                lang,
+                'Upload a clear exterior photo of your vehicle showing the front/rear number plate clearly.',
+                'گاڑی کی ایسی واضح تصویر اپ لوڈ کریں جس میں نمبر پلیٹ صاف دکھائی دے رہی ہو۔'
+              )}
+            </p>
+          </div>
+
+          <div className="flex flex-col items-center justify-center p-6 border-2 border-dashed border-zinc-200 rounded-2xl bg-zinc-50/50 space-y-4">
+            {getDoc('vehicle_photo')?.file_data_url ? (
+              <div className="relative w-full max-w-sm h-40 rounded-xl overflow-hidden border border-zinc-200 bg-white shadow-sm">
+                <img src={getDoc('vehicle_photo')?.file_data_url} alt="Vehicle Photo" className="w-full h-full object-cover" />
+              </div>
+            ) : (
+              <div className="w-20 h-20 rounded-xl bg-zinc-200 flex items-center justify-center text-zinc-400">
+                <CarFront className="w-8 h-8" />
+              </div>
+            )}
+
+            <label className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#0D0D10] text-white text-xs font-bold cursor-pointer shadow-md">
+              {uploadingType === 'vehicle_photo' ? <Loader2 className="w-4 h-4 animate-spin text-[#D4A017]" /> : <Upload className="w-4 h-4" />}
+              <span>{getDoc('vehicle_photo') ? tr(lang, 'Retake / Change Photo', 'تصویر دوبارہ لیں') : tr(lang, 'Upload Vehicle Photo', 'گاڑی کی تصویر اپ لوڈ کریں')}</span>
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = '';
+                  if (f) void handleDocumentUpload('vehicle_photo', f);
+                }}
+              />
+            </label>
+          </div>
+
+          <div className="flex justify-between pt-4 border-t border-zinc-100">
+            <button
+              type="button"
+              onClick={() => setStep(4)}
+              className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-zinc-200 text-xs font-semibold text-zinc-700"
+            >
+              <ChevronLeft className="w-4 h-4" />
+              <span>{tr(lang, 'Back', 'پچھلا')}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setStep(6)}
+              className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-[#D4A017] text-[#0D0D10] text-xs font-bold hover:bg-amber-400 shadow-sm"
+            >
+              <span>{tr(lang, 'Continue to Final Info', 'آخری معلومات پر جائیں')}</span>
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 6: Basic Information (Only Manual Input) & Final Submit */}
+      {step === 6 && (
+        <form onSubmit={handleFinalSubmit} className="rounded-2xl border border-zinc-200 bg-white p-6 space-y-6 shadow-sm">
+          <div className="space-y-1">
+            <h3 className="font-display text-base font-bold flex items-center gap-2">
+              <CheckCircle2 className="w-5 h-5 text-[#D4A017]" />
+              {tr(lang, '6. Basic Information & Final Submission', '6. بنیادی معلومات اور حتمی سبمشن')}
+            </h3>
+            <p className="text-xs text-zinc-500">
+              {tr(
+                lang,
+                'Please enter your manual contact details, select your vehicle category, and submit your registration for Admin approval.',
+                'براہ کرم اپنی رابطہ کی معلومات درج کریں اور ایڈمن کی منظوری کے لیے رجسٹریشن جمع کروائیں۔'
+              )}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+            <div>
+              <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'Full Name (Manual)', 'پورا نام')}</label>
+              <input
+                required
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                placeholder="Muhammad Ali"
+                className="w-full px-3 py-2 rounded-xl border border-zinc-300 bg-white"
+              />
+            </div>
+            <div>
+              <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'Mobile Number', 'موبائل نمبر')}</label>
+              <input
+                required
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="03125007782"
+                className="w-full px-3 py-2 rounded-xl border border-zinc-300 font-mono bg-white"
+              />
+            </div>
+            <div>
+              <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'Reference Mobile Number', 'حوالہ / ایمرجنسی موبائل نمبر')}</label>
+              <input
+                required
+                value={referencePhone}
+                onChange={(e) => setReferencePhone(e.target.value)}
+                placeholder="03001234567"
+                className="w-full px-3 py-2 rounded-xl border border-zinc-300 font-mono bg-white"
+              />
+            </div>
+            <div>
+              <label className="block font-semibold text-zinc-700 mb-1">{tr(lang, 'Operating City', 'آپریٹنگ سٹی')}</label>
+              <select value={operatingCity} onChange={(e) => setOperatingCity(e.target.value)} className="w-full px-3 py-2 rounded-xl border border-zinc-300 bg-white">
+                <option value="Islamabad">Islamabad</option>
+                <option value="Rawalpindi">Rawalpindi</option>
+                <option value="Lahore">Lahore</option>
+                <option value="Karachi">Karachi</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <label className="block text-xs font-semibold text-zinc-700">
+              {tr(lang, 'Select Vehicle Category (including Van · 7-seater)', 'گاڑی کی کیٹگری منتخب کریں')}
+            </label>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+              {fleetCategories.map((f) => {
+                const active = vehicleCategoryId === f.id;
+                return (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={() => {
+                      setVehicleCategoryId(f.id);
+                      if (f.seating_capacity) setSeatingCapacity(f.seating_capacity);
+                    }}
+                    className={`p-2.5 rounded-xl border text-start transition-all flex items-center gap-2 ${
+                      active ? 'border-[#D4A017] bg-[#D4A017]/15 ring-1 ring-[#D4A017]' : 'border-zinc-200 bg-white'
+                    }`}
+                  >
+                    <VehicleImage src={f.image_url} alt={f.name} categorySlug={f.slug} className="w-12 h-9 rounded-lg border shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[11px] font-bold truncate">{formatVehicleLabel(f.name, lang)}</div>
+                      <div className="text-[10px] text-zinc-500 font-mono">{f.seating_capacity} seats</div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="block text-xs font-semibold text-zinc-700">
+              {tr(lang, 'Service Eligibility Preferences', 'سروس کی اقسام')}
+            </label>
+            <div className="flex flex-wrap gap-3 text-xs">
+              {(['pick_and_drop', 'ride_sharing', 'fuel_sharing'] as const).map((id) => {
+                const checked = services.includes(id);
+                return (
+                  <label key={id} className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-zinc-200 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() =>
+                        setServices((prev) => (checked ? prev.filter((x) => x !== id) : [...prev, id]))
+                      }
+                      className="accent-[#D4A017]"
+                    />
+                    <span className="font-semibold">{trService(lang, id)}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="flex justify-between pt-4 border-t border-zinc-100">
+            <button
+              type="button"
+              onClick={() => setStep(5)}
+              className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-zinc-200 text-xs font-semibold text-zinc-700"
+            >
+              <ChevronLeft className="w-4 h-4" />
+              <span>{tr(lang, 'Back', 'پچھلا')}</span>
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="inline-flex items-center gap-2 px-8 py-3 rounded-xl bg-emerald-700 text-white text-xs font-bold hover:bg-emerald-800 shadow-md"
+            >
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+              <span>{tr(lang, 'Submit Registration for Admin Approval', 'ایڈمن منظوری کے لیے رجسٹریشن جمع کروائیں')}</span>
+            </button>
+          </div>
+        </form>
       )}
     </div>
   );

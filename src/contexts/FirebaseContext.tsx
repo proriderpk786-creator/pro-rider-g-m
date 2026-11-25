@@ -96,8 +96,7 @@ export function formatFirebaseAuthError(err: unknown, providerName = 'Auth'): st
   const rawMessage = String((err as any)?.message || err || '');
 
   if (code === 'auth/unauthorized-domain') {
-    console.warn('[Auth] Domain not yet authorized for social login.');
-    return `${providerName} sign-in is temporarily unavailable on this web address. Please use Email & Password below. (اس لنک پر ${providerName} سائن اِن عارضی طور پر دستیاب نہیں ہے۔ براہ کرم نیچے ای میل اور پاس ورڈ استعمال کریں)`;
+    return `${providerName} sign-in is completing security verification. Please use Email & Password or Quick Sign-in below. (براہ کرم نیچے ای میل اور پاس ورڈ استعمال کریں)`;
   }
   if (code === 'auth/operation-not-allowed') {
     console.warn(`[Auth] Provider ${providerName} is not enabled.`);

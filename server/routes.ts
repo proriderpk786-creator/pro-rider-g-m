@@ -22,6 +22,7 @@ import {
   emitToUser,
 } from './ws.ts';
 import {
+  getGeminiClient,
   runAiChat,
   runMapsGrounding,
   runSearchGrounding,
@@ -2924,6 +2925,75 @@ export function registerAppRoutes(app: Express) {
     `).run(id, req.auth!.sub, bookingId || null, String(category), String(subject).trim(), String(message).trim());
     emitToRole('admin', 'support:new', { id, role: 'partner', category });
     res.status(201).json({ id });
+  });
+
+  app.post('/api/gemini/ocr', requireRole('partner'), async (req: AuthedRequest, res: Response) => {
+    try {
+      const { imageDataUrl, docType } = req.body || {};
+      if (!imageDataUrl || typeof imageDataUrl !== 'string') {
+        res.status(400).json({ error: 'imageDataUrl is required' });
+        return;
+      }
+
+      const matches = imageDataUrl.match(/^data:(image\/[a-zA-Z+-]+);base64,(.+)$/);
+      if (!matches) {
+        res.status(400).json({ error: 'Invalid image data URL format' });
+        return;
+      }
+      const mimeType = matches[1];
+      const base64Data = matches[2];
+
+      const ai = getGeminiClient('v1beta');
+      const prompt = `You are an expert OCR and document analysis engine for Pakistan CNIC (National Identity Card) and Driving Licences.
+Analyze the provided image (${docType || 'document'}) and extract all readable information accurately.
+Also inspect image quality: check if the image is sharp, clear, well-lit, and fully readable, or if it is blurry, dark, incomplete, or unreadable.
+
+Return a valid JSON object with EXACTLY the following keys:
+{
+  "fullName": "Extracted Full Name in English or Urdu transliteration",
+  "cnicNumber": "Extracted CNIC number formatted as XXXXX-XXXXXXX-X",
+  "dateOfBirth": "Extracted Date of Birth (YYYY-MM-DD)",
+  "address": "Extracted Address",
+  "licenceNumber": "Extracted Driving Licence Number",
+  "licenceExpiry": "Extracted Licence Expiry Date (YYYY-MM-DD)",
+  "imageQuality": "sharp" | "blurry" | "unreadable",
+  "qualityMessage": "If image is blurry, incomplete, or unreadable, provide a clear instruction in English and Urdu asking the user to upload a sharper, clearer image. If sharp, return 'Image quality verified successfully.'",
+  "confidence": 0.95
+}
+If a field is not present in this specific image, return empty string "" for that field.`;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.1-flash-lite',
+        contents: [
+          {
+            inlineData: {
+              mimeType,
+              data: base64Data,
+            },
+          },
+          {
+            text: prompt,
+          },
+        ],
+        config: {
+          responseMimeType: 'application/json',
+        },
+      });
+
+      const text = response.text || '{}';
+      let parsed = {};
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        const cleaned = text.replace(/```json/gi, '').replace(/```/g, '').trim();
+        parsed = JSON.parse(cleaned);
+      }
+
+      res.json(parsed);
+    } catch (err: any) {
+      console.error('[OCR Error]', err);
+      res.status(500).json({ error: err.message || 'OCR processing failed' });
+    }
   });
 
   // ===========================================================================
