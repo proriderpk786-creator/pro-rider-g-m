@@ -31,6 +31,7 @@ import { ShareTripStatusModal } from '../../components/ShareTripStatusModal';
 import { StreetMap } from '../../components/StreetMap';
 import { DEFAULT_PUBLIC_CONFIG } from '../../config/defaultConfig';
 import { useFirebase } from '../../contexts/FirebaseContext';
+import { useToast } from '../../contexts/ToastContext';
 import { tr, trBookingStatus, trDay, trService } from '../../i18n/translations';
 import type {
   Booking,
@@ -556,10 +557,14 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
 
   const minOfferFare = Math.round(referenceFare * 0.9);
 
+  const toast = useToast();
+
   // Confirm & Submit Booking
   const handleConfirmBooking = async () => {
     if (!pickup || !dropoff || !selectedVehicle) {
-      setSubmitError(tr(lang, 'Please complete all booking steps.', 'براہ کرم بُکنگ کے تمام مراحل مکمل کریں۔'));
+      const msg = tr(lang, 'Please complete all booking steps.', 'براہ کرم بُکنگ کے تمام مراحل مکمل کریں۔');
+      setSubmitError(msg);
+      toast.warning(msg);
       return;
     }
     setSubmitting(true);
@@ -626,6 +631,13 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
             status: createdBooking.status || 'searching',
           }).catch(() => {});
         }
+        toast.success(
+          tr(
+            lang,
+            `Booking ${createdBooking.id} submitted! Awaiting Pro Partner confirmation.`,
+            `بُکنگ ${createdBooking.id} جمع ہو گئی! پرو پارٹنر کی تصدیق کا انتظار ہے۔`
+          )
+        );
         await onRefreshBookings();
       }
     } catch (err: any) {
@@ -703,10 +715,19 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
         setConfirmedBooking(localBooking);
         setShowReviewModal(false);
         setCurrentStep(7);
+        toast.success(
+          tr(
+            lang,
+            `Booking ${localBooking.id} submitted! Awaiting Pro Partner confirmation.`,
+            `بُکنگ ${localBooking.id} جمع ہو گئی! پرو پارٹنر کی تصدیق کا انتظار ہے۔`
+          )
+        );
         await onRefreshBookings();
         return;
       }
-      setSubmitError(err.message || 'Unable to confirm booking. Please try again.');
+      const errMsg = err.message || tr(lang, 'Unable to confirm booking. Please try again.', 'بُکنگ مکمل نہیں ہو سکی۔ براہ کرم دوبارہ کوشش کریں۔');
+      setSubmitError(errMsg);
+      toast.error(errMsg);
     } finally {
       setSubmitting(false);
     }
@@ -883,7 +904,10 @@ PRO RIDER AI — Travel with Trust`;
                 </button>
                 <button
                   type="button"
-                  onClick={() => downloadBookingPdf(activeBooking, 'passenger', passengerName)}
+                  onClick={() => {
+                    downloadBookingPdf(activeBooking, 'passenger', passengerName);
+                    toast.info(tr(lang, 'PDF invoice downloaded.', 'پی ڈی ایف انوائس ڈاؤن لوڈ ہو گئی۔'));
+                  }}
                   className="px-4 py-2.5 rounded-xl bg-[#0D0D10] text-white text-xs font-semibold inline-flex items-center gap-1.5"
                 >
                   <Download className="w-3.5 h-3.5 text-[#D4A017]" />
@@ -2442,7 +2466,10 @@ PRO RIDER AI — Travel with Trust`;
                 </button>
                 <button
                   type="button"
-                  onClick={() => downloadBookingPdf(confirmedBooking, 'passenger', passengerName)}
+                  onClick={() => {
+                    downloadBookingPdf(confirmedBooking, 'passenger', passengerName);
+                    toast.info(tr(lang, 'PDF invoice downloaded.', 'پی ڈی ایف انوائس ڈاؤن لوڈ ہو گئی۔'));
+                  }}
                   className="w-full py-3.5 rounded-2xl border border-zinc-200 text-zinc-800 font-semibold text-xs hover:bg-zinc-50 flex items-center justify-center gap-2"
                 >
                   <Download className="w-4 h-4 text-[#D4A017]" />

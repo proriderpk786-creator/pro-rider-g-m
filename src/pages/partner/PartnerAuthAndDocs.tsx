@@ -29,6 +29,7 @@ import { BrandLogo, LanguageToggle, VehicleImage } from '../../components/BrandM
 import { DEFAULT_PUBLIC_CONFIG } from '../../config/defaultConfig';
 import { formatFirebaseAuthError, useFirebase } from '../../contexts/FirebaseContext';
 import { useTheme } from '../../contexts/ThemeContext';
+import { useToast } from '../../contexts/ToastContext';
 import { formatVehicleLabel, tr, trService, trVerificationStatus } from '../../i18n/translations';
 import { apiRequest, isBackendOfflineError, setRoleToken, setStoredRoleUser } from '../../utils/api';
 import { compressAndReadUploadFile } from '../../utils/imageUpload';
@@ -1006,10 +1007,10 @@ export const PartnerVerificationAndVehicleView: React.FC<{
       : ['pick_and_drop']
   );
 
+  const toast = useToast();
   const [saving, setSaving] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
   const [uploadingType, setUploadingType] = useState<string | null>(null);
-  const [banner, setBanner] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
   // If partner switches to Vehicle mode from sidebar, jump straight to vehicle step if earlier
   useEffect(() => {
@@ -1209,7 +1210,6 @@ export const PartnerVerificationAndVehicleView: React.FC<{
 
   const handleDocumentUpload = async (docType: PartnerDocument['doc_type'], file: File) => {
     setUploadingType(docType);
-    setBanner(null);
     try {
       const { dataUrl, fileName } = await compressAndReadUploadFile(file, 1280, 0.82);
 
@@ -1313,29 +1313,24 @@ export const PartnerVerificationAndVehicleView: React.FC<{
       }
 
       if (ocr?.imageQuality && ocr.imageQuality !== 'sharp') {
-        setBanner({
-          type: 'info',
-          text: tr(
+        toast.warning(
+          tr(
             lang,
             `Document saved, but photo appears blurry: ${ocr.qualityMessage || 'Please upload a sharper copy if needed.'}`,
             `دستاویز محفوظ ہو گئی ہے، مگر تصویر ہلکی دھندلی ہے۔ بہتر منظوری کے لیے صاف تصویر اپ لوڈ کریں۔`
-          ),
-        });
+          )
+        );
       } else {
-        setBanner({
-          type: 'success',
-          text: tr(
+        toast.success(
+          tr(
             lang,
             'Document uploaded and synced directly for Super Admin review.',
             'دستاویز کامیابی سے محفوظ ہو کر سپر ایڈمن پینل میں بھیج دی گئی ہے۔'
-          ),
-        });
+          )
+        );
       }
     } catch (err: any) {
-      setBanner({
-        type: 'error',
-        text: err?.message || tr(lang, 'Upload failed. Please try again.', 'اپ لوڈ ناکام ہو گیا۔ براہِ کرم دوبارہ کوشش کریں۔'),
-      });
+      toast.error(err?.message || tr(lang, 'Upload failed. Please try again.', 'اپ لوڈ ناکام ہو گیا۔ براہِ کرم دوبارہ کوشش کریں۔'));
     } finally {
       setUploadingType(null);
     }
@@ -1343,7 +1338,6 @@ export const PartnerVerificationAndVehicleView: React.FC<{
 
   const handleSaveDraft = async () => {
     setSavingDraft(true);
-    setBanner(null);
     try {
       const nextStatus: PartnerProfile['verification_status'] =
         profile.verification_status === 'approved'
@@ -1405,19 +1399,15 @@ export const PartnerVerificationAndVehicleView: React.FC<{
         }
       }
 
-      setBanner({
-        type: 'success',
-        text: tr(
+      toast.success(
+        tr(
           lang,
           'Draft saved securely to your Partner ID. Your numbers and details will stay here.',
           'آپ کی معلومات آپ کی آئی ڈی کے ساتھ محفوظ کر لی گئی ہیں، اب یہ دوبارہ نہیں مٹیں گی۔'
-        ),
-      });
+        )
+      );
     } catch (err: any) {
-      setBanner({
-        type: 'error',
-        text: err?.message || tr(lang, 'Could not save draft.', 'ڈرافٹ محفوظ نہ ہو سکا۔'),
-      });
+      toast.error(err?.message || tr(lang, 'Could not save draft.', 'ڈرافٹ محفوظ نہ ہو سکا۔'));
     } finally {
       setSavingDraft(false);
     }
@@ -1425,35 +1415,29 @@ export const PartnerVerificationAndVehicleView: React.FC<{
 
   const handleFinalSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setBanner(null);
 
     if (fullName.trim().length < 2) {
-      setBanner({
-        type: 'error',
-        text: tr(lang, 'Please enter your complete full name.', 'براہِ کرم اپنا مکمل نام درج کریں۔'),
-      });
+      toast.error(tr(lang, 'Please enter your complete full name.', 'براہِ کرم اپنا مکمل نام درج کریں۔'));
       return;
     }
     if (phoneDigits.length < 10) {
-      setBanner({
-        type: 'error',
-        text: tr(
+      toast.error(
+        tr(
           lang,
           'Please enter a complete 11-digit mobile number (e.g. 03001234567).',
           'براہِ کرم مکمل 11 ہندسوں کا موبائل نمبر درج کریں (مثال: 03001234567)۔'
-        ),
-      });
+        )
+      );
       return;
     }
     if (refDigits.length < 10) {
-      setBanner({
-        type: 'error',
-        text: tr(
+      toast.error(
+        tr(
           lang,
           'Please enter a complete 11-digit reference mobile number.',
           'براہِ کرم مکمل 11 ہندسوں کا حوالہ موبائل نمبر درج کریں۔'
-        ),
-      });
+        )
+      );
       return;
     }
 
@@ -1552,9 +1536,8 @@ export const PartnerVerificationAndVehicleView: React.FC<{
         void onRefresh();
       }
 
-      setBanner({
-        type: 'success',
-        text: expressRes?.queuedForReview
+      toast.success(
+        expressRes?.queuedForReview
           ? tr(
               lang,
               'Updated vehicle details queued for Super Admin review. Your saved records remain intact.',
@@ -1564,13 +1547,17 @@ export const PartnerVerificationAndVehicleView: React.FC<{
               lang,
               'Application submitted! Your details and documents are now visible in the Super Admin Panel for approval.',
               'درخواست کامیابی سے جمع ہو گئی ہے! آپ کی تمام تفصیلات اور دستاویزات براہِ راست ایڈمن پینل میں پہنچ چکی ہیں۔'
-            ),
-      });
+            )
+      );
     } catch (err: any) {
-      setBanner({
-        type: 'error',
-        text: err?.message || tr(lang, 'Submission failed. Please verify your entries and try again.', 'درخواست جمع کرانے میں رکاوٹ پیش آئی۔ براہِ کرم معلومات چیک کر کے دوبارہ کوشش کریں۔'),
-      });
+      toast.error(
+        err?.message ||
+          tr(
+            lang,
+            'Submission failed. Please verify your entries and try again.',
+            'درخواست جمع کرانے میں رکاوٹ پیش آئی۔ براہِ کرم معلومات چیک کر کے دوبارہ کوشش کریں۔'
+          )
+      );
     } finally {
       setSaving(false);
     }
@@ -1689,28 +1676,6 @@ export const PartnerVerificationAndVehicleView: React.FC<{
           })}
         </div>
       </div>
-
-      {banner && (
-        <div
-          className={`rounded-xl px-4 py-3 text-xs font-semibold shadow-md flex items-center justify-between gap-3 border ${
-            banner.type === 'error'
-              ? 'bg-red-950 border-red-700 text-red-100'
-              : banner.type === 'success'
-              ? 'bg-emerald-950 border-emerald-700 text-emerald-100'
-              : 'bg-[#0D0D10] border-[#D4A017]/60 text-[#F4C430]'
-          }`}
-        >
-          <span className={urBodyClass}>{banner.text}</span>
-          <button
-            type="button"
-            onClick={() => setBanner(null)}
-            className="text-white/70 hover:text-white shrink-0 font-bold px-1"
-            aria-label="Close"
-          >
-            ✕
-          </button>
-        </div>
-      )}
 
       {/* Step 1: Selfie Upload */}
       {step === 1 && (

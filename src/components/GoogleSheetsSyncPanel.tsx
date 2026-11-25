@@ -12,6 +12,7 @@ import {
   X,
 } from 'lucide-react';
 import type { User as FirebaseUser } from 'firebase/auth';
+import { useToast } from '../contexts/ToastContext';
 import { tr } from '../i18n/translations';
 import type { Booking, Language, WalletTransaction } from '../types';
 import {
@@ -45,6 +46,7 @@ export const GoogleSheetsSyncPanel: React.FC<{
   transactions: WalletTransaction[];
   partners: any[];
 }> = ({ lang = 'en', bookings, transactions, partners }) => {
+  const toast = useToast();
   const [needsAuth, setNeedsAuth] = useState<boolean>(() => !getWorkspaceAccessToken());
   const [accessToken, setAccessToken] = useState<string | null>(() => getWorkspaceAccessToken());
   const [wsUser, setWsUser] = useState<FirebaseUser | null>(null);
@@ -91,7 +93,9 @@ export const GoogleSheetsSyncPanel: React.FC<{
         setSelectedFileId(list[0].id);
       }
     } catch (err: any) {
-      setError(err?.message || 'Unable to load spreadsheets');
+      const errMsg = err?.message || 'Unable to load spreadsheets';
+      setError(errMsg);
+      toast.error(errMsg);
     } finally {
       setBusy(false);
     }
@@ -121,7 +125,11 @@ export const GoogleSheetsSyncPanel: React.FC<{
         setSelectedTab(firstTab);
       })
       .catch((err: any) => {
-        if (!cancelled) setError(err?.message || 'Failed to load spreadsheet tabs');
+        if (!cancelled) {
+          const errMsg = err?.message || 'Failed to load spreadsheet tabs';
+          setError(errMsg);
+          toast.error(errMsg);
+        }
       })
       .finally(() => {
         if (!cancelled) setBusy(false);
@@ -142,7 +150,11 @@ export const GoogleSheetsSyncPanel: React.FC<{
         if (!cancelled) setPreviewRows(vals);
       })
       .catch((err: any) => {
-        if (!cancelled) setError(err?.message || 'Failed to read tab rows');
+        if (!cancelled) {
+          const errMsg = err?.message || 'Failed to read tab rows';
+          setError(errMsg);
+          toast.error(errMsg);
+        }
       });
     return () => {
       cancelled = true;
@@ -208,8 +220,11 @@ export const GoogleSheetsSyncPanel: React.FC<{
       setWsUser(user);
       setAccessToken(tk);
       setNeedsAuth(false);
+      toast.success(tr(lang, 'Connected to Google Sheets.', 'گوگل شیٹس کامیابی سے منسلک ہو گیا۔'));
     } catch (err: any) {
-      setError(err?.message || 'Google sign-in failed.');
+      const errMsg = err?.message || 'Google sign-in failed.';
+      setError(errMsg);
+      toast.error(errMsg);
     } finally {
       setAuthBusy(false);
     }
@@ -260,14 +275,16 @@ export const GoogleSheetsSyncPanel: React.FC<{
           action.tabName,
           action.rows
         );
+        const successMsg = tr(
+          lang,
+          `Created "${action.title}" with ${Math.max(0, action.rows.length - 1)} data row(s).`,
+          `گوگل شیٹ "${action.title}" ${Math.max(0, action.rows.length - 1)} ریکارڈز کے ساتھ بنا دی گئی۔`
+        );
         setSuccessInfo({
-          message: tr(
-            lang,
-            `Created "${action.title}" with ${Math.max(0, action.rows.length - 1)} data row(s).`,
-            `گوگل شیٹ "${action.title}" ${Math.max(0, action.rows.length - 1)} ریکارڈز کے ساتھ بنا دی گئی۔`
-          ),
+          message: successMsg,
           url: res.spreadsheetUrl,
         });
+        toast.success(successMsg);
         await loadFiles(accessToken);
         setSelectedFileId(res.spreadsheetId);
       } else if (action.spreadsheetId) {
@@ -277,19 +294,23 @@ export const GoogleSheetsSyncPanel: React.FC<{
           action.tabName,
           action.rows
         );
+        const successMsg = tr(
+          lang,
+          `Updated tab "${action.tabName}" in "${action.title}" with ${Math.max(0, action.rows.length - 1)} data row(s).`,
+          `"${action.title}" کے ٹیب "${action.tabName}" کو ${Math.max(0, action.rows.length - 1)} ریکارڈز سے اپ ڈیٹ کر دیا گیا۔`
+        );
         setSuccessInfo({
-          message: tr(
-            lang,
-            `Updated tab "${action.tabName}" in "${action.title}" with ${Math.max(0, action.rows.length - 1)} data row(s).`,
-            `"${action.title}" کے ٹیب "${action.tabName}" کو ${Math.max(0, action.rows.length - 1)} ریکارڈز سے اپ ڈیٹ کر دیا گیا۔`
-          ),
+          message: successMsg,
           url: `https://docs.google.com/spreadsheets/d/${action.spreadsheetId}/edit`,
         });
+        toast.success(successMsg);
         const refreshed = await readSheetTabValues(accessToken, action.spreadsheetId, action.tabName, 25);
         setPreviewRows(refreshed);
       }
     } catch (err: any) {
-      setError(err?.message || 'Google Sheets sync failed');
+      const errMsg = err?.message || 'Google Sheets sync failed';
+      setError(errMsg);
+      toast.error(errMsg);
     } finally {
       setBusy(false);
     }

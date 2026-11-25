@@ -138,7 +138,6 @@ export function formatFirebaseAuthError(err: unknown, providerName = 'Auth'): st
     return `${providerName} sign-in is completing security verification. Please use Email & Password or Quick Sign-in below. (براہ کرم نیچے ای میل اور پاس ورڈ استعمال کریں)`;
   }
   if (code === 'auth/operation-not-allowed') {
-    console.warn(`[Auth] Provider ${providerName} is not enabled.`);
     return `${providerName} sign-in is currently unavailable. Please try another sign-in method. (یہ سائن اِن طریقہ فی الحال دستیاب نہیں ہے)`;
   }
   if (code === 'auth/account-exists-with-different-credential') {

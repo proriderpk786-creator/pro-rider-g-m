@@ -18,6 +18,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { InvoiceViewerModal } from '../../components/InvoiceViewerModal';
+import type { ToastType } from '../../contexts/ToastContext';
 import { tr, trBookingStatus, trPaymentStatus, trService } from '../../i18n/translations';
 import { apiRequest } from '../../utils/api';
 import { downloadBookingPdf } from '../../utils/pdfGenerator';
@@ -27,7 +28,7 @@ interface BookingsManagementTabProps {
   bookings: Booking[];
   lang?: Language;
   onReload: () => Promise<void>;
-  onShowToast: (msg: string) => void;
+  onShowToast: (msg: string, type?: ToastType) => void;
 }
 
 type CategoryFilter =
@@ -128,11 +129,15 @@ export const BookingsManagementTab: React.FC<BookingsManagementTabProps> = ({
           lang,
           `Booking ${b.id} payment status set to ${nextPayment.toUpperCase()}.`,
           `بُکنگ ${b.id} کی ادائیگی کا اسٹیٹس ${trPaymentStatus(lang, nextPayment.toUpperCase())} کر دیا گیا۔`
-        )
+        ),
+        'success'
       );
       await onReload();
     } catch (err: any) {
-      onShowToast(tr(lang, `Error updating payment: ${err.message}`, `ادائیگی اپڈیٹ کرنے میں خرابی: ${err.message}`));
+      onShowToast(
+        tr(lang, `Error updating payment: ${err.message}`, `ادائیگی اپڈیٹ کرنے میں خرابی: ${err.message}`),
+        'error'
+      );
     } finally {
       setActionBusyId(null);
     }
@@ -151,11 +156,15 @@ export const BookingsManagementTab: React.FC<BookingsManagementTabProps> = ({
           lang,
           `Booking ${b.id} status changed to ${nextStatus.toUpperCase()}.`,
           `بُکنگ ${b.id} کا اسٹیٹس ${trBookingStatus(lang, nextStatus)} کر دیا گیا۔`
-        )
+        ),
+        'success'
       );
       await onReload();
     } catch (err: any) {
-      onShowToast(tr(lang, `Error updating trip status: ${err.message}`, `ٹرپ اسٹیٹس اپڈیٹ کرنے میں خرابی: ${err.message}`));
+      onShowToast(
+        tr(lang, `Error updating trip status: ${err.message}`, `ٹرپ اسٹیٹس اپڈیٹ کرنے میں خرابی: ${err.message}`),
+        'error'
+      );
     } finally {
       setActionBusyId(null);
     }
@@ -178,11 +187,12 @@ export const BookingsManagementTab: React.FC<BookingsManagementTabProps> = ({
           lang,
           `Approved ${app.partner_name || 'Pro Partner'} for ${b.id}.`,
           `${app.partner_name || 'پرو پارٹنر'} کو بکنگ ${b.id} کے لیے منظور کر لیا گیا۔`
-        )
+        ),
+        'success'
       );
       await onReload();
     } catch (err: any) {
-      onShowToast(tr(lang, `Approval failed: ${err.message}`, `منظوری میں خرابی: ${err.message}`));
+      onShowToast(tr(lang, `Approval failed: ${err.message}`, `منظوری میں خرابی: ${err.message}`), 'error');
     } finally {
       setActionBusyId(null);
     }
@@ -200,11 +210,12 @@ export const BookingsManagementTab: React.FC<BookingsManagementTabProps> = ({
           lang,
           `Application from ${app.partner_name || 'driver'} declined.`,
           `${app.partner_name || 'ڈرائیور'} کی درخواست مسترد کر دی گئی۔`
-        )
+        ),
+        'info'
       );
       await onReload();
     } catch (err: any) {
-      onShowToast(tr(lang, `Reject failed: ${err.message}`, `مسترد کرنے میں خرابی: ${err.message}`));
+      onShowToast(tr(lang, `Reject failed: ${err.message}`, `مسترد کرنے میں خرابی: ${err.message}`), 'error');
     } finally {
       setActionBusyId(null);
     }

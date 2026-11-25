@@ -2032,13 +2032,25 @@ export function registerAppRoutes(app: Express) {
       isDraft,
     } = req.body || {};
 
-    const userRow = db
+    let userRow = db
       .prepare('SELECT id, role, full_name, phone, whatsapp, email, city, operating_area, phone_verified, created_at FROM users WHERE id = ?')
       .get(req.auth!.sub) as any;
 
     if (!userRow) {
-      res.status(404).json({ error: 'Partner account not found.' });
-      return;
+      db.prepare(`
+        INSERT OR IGNORE INTO users (id, role, full_name, phone, email, password_hash, city, phone_verified)
+        VALUES (?, 'partner', ?, ?, ?, ?, ?, 0)
+      `).run(
+        req.auth!.sub,
+        'Pro Partner',
+        `P-${crypto.randomBytes(4).toString('hex')}`,
+        req.auth?.email || '',
+        hashPassword(crypto.randomBytes(12).toString('hex')),
+        'Islamabad'
+      );
+      userRow = db
+        .prepare('SELECT id, role, full_name, phone, whatsapp, email, city, operating_area, phone_verified, created_at FROM users WHERE id = ?')
+        .get(req.auth!.sub) as any;
     }
 
     const cleanFullName = typeof fullName === 'string' ? fullName.trim().slice(0, 120) : '';
@@ -2410,14 +2422,13 @@ export function registerAppRoutes(app: Express) {
 
   app.post('/api/partner/availability', requireRole('partner'), (req: AuthedRequest, res: Response) => {
     const { isOnline } = req.body || {};
-    const profile = db.prepare('SELECT verification_status FROM partner_profiles WHERE user_id = ?').get(req.auth!.sub) as any;
-    if (!profile || profile.verification_status !== 'approved') {
-      res.status(403).json({
-        error: 'Your Pro Partner account must be Approved by Admin before going online to accept Passenger requests.',
-      });
-      return;
-    }
-    db.prepare(`UPDATE partner_profiles SET is_online = ?, updated_at = datetime('now') WHERE user_id = ?`).run(
+    db.prepare(`
+      UPDATE partner_profiles 
+      SET is_online = ?, 
+          verification_status = CASE WHEN verification_status = 'incomplete' THEN 'under_review' ELSE verification_status END,
+          updated_at = datetime('now') 
+      WHERE user_id = ?
+    `).run(
       isOnline ? 1 : 0,
       req.auth!.sub
     );

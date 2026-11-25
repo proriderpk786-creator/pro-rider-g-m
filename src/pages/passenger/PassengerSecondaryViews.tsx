@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { InvoiceViewerModal } from '../../components/InvoiceViewerModal';
 import { ShareTripStatusModal } from '../../components/ShareTripStatusModal';
+import { useToast } from '../../contexts/ToastContext';
 import { tr, trBookingStatus, trPaymentStatus, trService } from '../../i18n/translations';
 import { apiRequest } from '../../utils/api';
 import { downloadBookingPdf, downloadWalletStatementPdf, shareBookingPdf } from '../../utils/pdfGenerator';
@@ -81,10 +82,10 @@ export const PassengerBookingsView: React.FC<{
     if (activeList.length > 0) return 'active';
     return 'pending';
   });
+  const toast = useToast();
   const manualTabSelectedRef = useRef(Boolean(initialTab));
   const [refreshing, setRefreshing] = useState(false);
   const [actionBusyId, setActionBusyId] = useState<string | null>(null);
-  const [actionMsg, setActionMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (initialTab) {
@@ -150,7 +151,6 @@ export const PassengerBookingsView: React.FC<{
 
   const handleAcceptOffer = async (bookingId: string, offerId: string) => {
     setActionBusyId(offerId);
-    setActionMsg(null);
     try {
       await apiRequest(`/api/passenger/bookings/${bookingId}/accept-offer`, {
         method: 'POST',
@@ -159,9 +159,9 @@ export const PassengerBookingsView: React.FC<{
       });
       await onRefresh();
       setTab('active');
-      setActionMsg(tr(lang, 'Offer accepted! Your ride is now Active.', 'آفر قبول کر لی گئی! آپ کی رائیڈ اب ایکٹیو ٹیب میں ہے۔'));
+      toast.success(tr(lang, 'Offer accepted! Your ride is now Active.', 'آفر قبول کر لی گئی! آپ کی رائیڈ اب ایکٹیو ٹیب میں ہے۔'));
     } catch (err: any) {
-      setActionMsg(err?.message || 'Unable to accept offer.');
+      toast.error(err?.message || tr(lang, 'Unable to accept offer.', 'آفر قبول نہیں ہو سکی۔'));
     } finally {
       setActionBusyId(null);
     }
@@ -175,7 +175,10 @@ export const PassengerBookingsView: React.FC<{
         role: 'passenger',
         body: { offerId },
       });
+      toast.info(tr(lang, 'Offer declined.', 'آفر مسترد کر دی گئی۔'));
       await onRefresh();
+    } catch (err: any) {
+      toast.error(err?.message || tr(lang, 'Unable to decline offer.', 'آفر مسترد نہیں ہو سکی۔'));
     } finally {
       setActionBusyId(null);
     }
@@ -183,7 +186,6 @@ export const PassengerBookingsView: React.FC<{
 
   const handleCancelBooking = async (bookingId: string) => {
     setActionBusyId(bookingId);
-    setActionMsg(null);
     try {
       await apiRequest(`/api/passenger/bookings/${bookingId}/cancel`, {
         method: 'POST',
@@ -191,22 +193,28 @@ export const PassengerBookingsView: React.FC<{
       });
       await onRefresh();
       setTab('cancelled');
+      toast.info(tr(lang, 'Booking cancelled.', 'بُکنگ منسوخ کر دی گئی۔'));
     } catch (err: any) {
-      setActionMsg(err?.message || 'Unable to cancel booking.');
+      toast.error(err?.message || tr(lang, 'Unable to cancel booking.', 'بُکنگ منسوخ نہیں ہو سکی۔'));
     } finally {
       setActionBusyId(null);
     }
   };
 
   const submitRating = async (bookingId: string) => {
-    await apiRequest(`/api/passenger/bookings/${bookingId}/rate`, {
-      method: 'POST',
-      role: 'passenger',
-      body: { rating: stars, comment },
-    });
-    setRatingTarget(null);
-    setComment('');
-    await onRefresh();
+    try {
+      await apiRequest(`/api/passenger/bookings/${bookingId}/rate`, {
+        method: 'POST',
+        role: 'passenger',
+        body: { rating: stars, comment },
+      });
+      setRatingTarget(null);
+      setComment('');
+      toast.success(tr(lang, 'Thank you! Your rating has been submitted.', 'شکریہ! آپ کی ریٹنگ محفوظ کر لی گئی ہے۔'));
+      await onRefresh();
+    } catch (err: any) {
+      toast.error(err?.message || tr(lang, 'Unable to submit rating.', 'ریٹنگ محفوظ نہیں ہو سکی۔'));
+    }
   };
 
   const tabLabels: Record<'pending' | 'active' | 'completed' | 'cancelled', string> = {
@@ -279,12 +287,6 @@ export const PassengerBookingsView: React.FC<{
           })}
         </div>
       </div>
-
-      {actionMsg && (
-        <div className="rounded-xl bg-[#0D0D10] text-[#F4C430] px-4 py-2.5 text-xs font-semibold">
-          {actionMsg}
-        </div>
-      )}
 
       {filtered.length === 0 ? (
         <div className="rounded-2xl border border-zinc-200 bg-white p-10 text-center space-y-2.5">
@@ -708,10 +710,10 @@ export const PassengerWalletView: React.FC<{
   };
   onRefresh: () => Promise<void>;
 }> = ({ passengerName, bookings, lang = 'en', wallet, onRefresh }) => {
+  const toast = useToast();
   const [topupAmount, setTopupAmount] = useState('2000');
   const [topupMethod, setTopupMethod] = useState<'jazzcash' | 'easypaisa' | 'bank_transfer'>('jazzcash');
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
 
   const unpaidBookings = bookings.filter(
     (b) => ['confirmed', 'on_the_way', 'arrived', 'started', 'completed'].includes(b.status) && b.payment_status !== 'PAID'
@@ -720,17 +722,16 @@ export const PassengerWalletView: React.FC<{
   const handleTopup = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
-    setMsg(null);
     try {
       const res = await apiRequest<{ txRef: string }>('/api/passenger/wallet/topup', {
         method: 'POST',
         role: 'passenger',
         body: { amountPkr: Number(topupAmount), method: topupMethod },
       });
-      setMsg(tr(lang, `Wallet credited (${res.txRef}).`, `والیٹ میں رقم شامل ہو گئی (${res.txRef})۔`));
+      toast.success(tr(lang, `Wallet credited (${res.txRef}).`, `والیٹ میں رقم شامل ہو گئی (${res.txRef})۔`));
       await onRefresh();
     } catch (err: any) {
-      setMsg(err.message);
+      toast.error(err?.message || tr(lang, 'Wallet top-up failed.', 'والیٹ ریچارج ناکام ہو گیا۔'));
     } finally {
       setBusy(false);
     }
@@ -738,17 +739,16 @@ export const PassengerWalletView: React.FC<{
 
   const handlePayBooking = async (bookingId: string, method: 'wallet' | 'jazzcash' | 'easypaisa') => {
     setBusy(true);
-    setMsg(null);
     try {
       const res = await apiRequest<{ txRef: string }>(`/api/passenger/bookings/${bookingId}/pay`, {
         method: 'POST',
         role: 'passenger',
         body: { method },
       });
-      setMsg(tr(lang, `Payment confirmed (${res.txRef}).`, `ادائیگی مکمل ہو گئی (${res.txRef})۔`));
+      toast.success(tr(lang, `Payment confirmed (${res.txRef}).`, `ادائیگی مکمل ہو گئی (${res.txRef})۔`));
       await onRefresh();
     } catch (err: any) {
-      setMsg(err.message);
+      toast.error(err?.message || tr(lang, 'Payment failed.', 'ادائیگی مکمل نہیں ہو سکی۔'));
     } finally {
       setBusy(false);
     }
@@ -762,7 +762,10 @@ export const PassengerWalletView: React.FC<{
         </h2>
         <button
           type="button"
-          onClick={() => downloadWalletStatementPdf(passengerName, 'Passenger', wallet.balancePkr, wallet.transactions)}
+          onClick={() => {
+            downloadWalletStatementPdf(passengerName, 'Passenger', wallet.balancePkr, wallet.transactions);
+            toast.info(tr(lang, 'Wallet statement PDF downloaded.', 'والیٹ اسٹیٹمنٹ پی ڈی ایف ڈاؤن لوڈ ہو گئی۔'));
+          }}
           className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#0D0D10] text-white text-xs font-semibold hover:bg-zinc-800"
         >
           <Download className="w-3.5 h-3.5 text-[#D4A017]" />
@@ -791,10 +794,6 @@ export const PassengerWalletView: React.FC<{
           </div>
         </div>
       </div>
-
-      {msg && (
-        <div className="rounded-xl bg-zinc-900 text-[#F4C430] px-4 py-2.5 text-xs font-semibold">{msg}</div>
-      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <form onSubmit={handleTopup} className="lg:col-span-5 rounded-2xl border border-zinc-200 bg-white p-5 space-y-4">
@@ -936,6 +935,7 @@ export const NotificationsView: React.FC<{
   onChangeBellSound?: (sound: RideBellSoundId) => void;
   onMarkAllRead: () => Promise<void>;
 }> = ({ notifications, lang = 'en', role = 'passenger', bellSound, onChangeBellSound, onMarkAllRead }) => {
+  const toast = useToast();
   const [localBell, setLocalBell] = useState<RideBellSoundId>(() => bellSound ?? getSavedRideBellSound(role));
 
   useEffect(() => {
@@ -952,6 +952,11 @@ export const NotificationsView: React.FC<{
     if (next !== 'muted') {
       playRideBell(next);
     }
+    toast.info(
+      next === 'muted'
+        ? tr(lang, 'Ride bell tone muted.', 'رائیڈ بیل ٹون میوٹ کر دی گئی۔')
+        : tr(lang, 'Ride bell tone updated.', 'رائیڈ بیل ٹون اپڈیٹ ہو گئی۔')
+    );
   };
 
   return (
@@ -962,7 +967,14 @@ export const NotificationsView: React.FC<{
         </h2>
         <button
           type="button"
-          onClick={onMarkAllRead}
+          onClick={async () => {
+            try {
+              await onMarkAllRead();
+              toast.success(tr(lang, 'All notifications marked as read.', 'تمام نوٹیفکیشنز پڑھے ہوئے نشان زد کر دیے گئے۔'));
+            } catch {
+              toast.error(tr(lang, 'Could not mark notifications read.', 'نوٹیفکیشنز اپڈیٹ نہیں ہو سکے۔'));
+            }
+          }}
           className="px-3.5 py-1.5 rounded-lg border border-zinc-200 bg-white text-xs font-semibold hover:bg-zinc-50"
         >
           {tr(lang, 'Mark All Read', 'سب پڑھے ہوئے نشان زد کریں')}
@@ -988,7 +1000,10 @@ export const NotificationsView: React.FC<{
 
           <button
             type="button"
-            onClick={() => playRideBell(activeBell === 'muted' ? 'soft_gold' : activeBell)}
+            onClick={() => {
+              playRideBell(activeBell === 'muted' ? 'soft_gold' : activeBell);
+              toast.info(tr(lang, 'Playing ride bell preview.', 'رائیڈ بیل کی آواز سنائی جا رہی ہے۔'));
+            }}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#0D0D10] text-[#F4C430] text-xs font-bold hover:bg-zinc-800"
           >
             <Volume2 className="w-3.5 h-3.5" />
@@ -1050,6 +1065,7 @@ export const SupportView: React.FC<{
   lang?: Language;
   onRefresh: () => Promise<void>;
 }> = ({ role, tickets, defaultBookingId = '', lang = 'en', onRefresh }) => {
+  const toast = useToast();
   const categories =
     role === 'passenger'
       ? [
@@ -1082,7 +1098,10 @@ export const SupportView: React.FC<{
       });
       setSubject('');
       setMessage('');
+      toast.success(tr(lang, 'Support ticket submitted. Our team will respond shortly.', 'سپورٹ ٹکٹ جمع ہو گیا ہے۔ ہماری ٹیم جلد رابطہ کرے گی۔'));
       await onRefresh();
+    } catch (err: any) {
+      toast.error(err?.message || tr(lang, 'Failed to submit support ticket.', 'سپورٹ ٹکٹ جمع نہیں ہو سکا۔'));
     } finally {
       setBusy(false);
     }
@@ -1218,6 +1237,7 @@ export const PassengerProfileView: React.FC<{
   onUpdated: (u: User) => void;
   onLogout: () => void;
 }> = ({ user, lang = 'en', unreadNotifications = 0, bellSound, onChangeBellSound, onOpenNotifications, onUpdated, onLogout }) => {
+  const toast = useToast();
   const [fullName, setFullName] = useState(user.full_name);
   const [phoneInput, setPhoneInput] = useState(isSyntheticPhone(user.phone) ? '' : user.phone);
   const [whatsapp, setWhatsapp] = useState(isSyntheticPhone(user.whatsapp) ? '' : (user.whatsapp || ''));
@@ -1227,8 +1247,6 @@ export const PassengerProfileView: React.FC<{
   const [notifySms, setNotifySms] = useState(Boolean(user.notify_sms));
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
-  const [statusMsg, setStatusMsg] = useState<string | null>(null);
-  const [otpNotice, setOtpNotice] = useState<string | null>(null);
 
   useEffect(() => {
     setFullName(user.full_name);
@@ -1240,7 +1258,6 @@ export const PassengerProfileView: React.FC<{
 
   const saveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    setStatusMsg(null);
     try {
       const cleanPhone = phoneInput.trim();
       const res = await apiRequest<{ user: User }>('/api/auth/profile', {
@@ -1257,9 +1274,9 @@ export const PassengerProfileView: React.FC<{
         },
       });
       onUpdated(res.user);
-      setStatusMsg(tr(lang, 'Profile updated.', 'پروفائل اپڈیٹ ہو گئی۔'));
+      toast.success(tr(lang, 'Profile updated.', 'پروفائل اپڈیٹ ہو گئی۔'));
     } catch (err: any) {
-      setStatusMsg(err?.message || tr(lang, 'Unable to update profile.', 'پروفائل محفوظ نہیں ہو سکی۔'));
+      toast.error(err?.message || tr(lang, 'Unable to update profile.', 'پروفائل محفوظ نہیں ہو سکی۔'));
     }
   };
 
@@ -1273,22 +1290,21 @@ export const PassengerProfileView: React.FC<{
       });
       setCurrentPassword('');
       setNewPassword('');
-      setStatusMsg(tr(lang, 'Password changed successfully.', 'پاس ورڈ کامیابی سے تبدیل ہو گیا۔'));
+      toast.success(tr(lang, 'Password changed successfully.', 'پاس ورڈ کامیابی سے تبدیل ہو گیا۔'));
     } catch (err: any) {
-      setStatusMsg(err.message);
+      toast.error(err?.message || tr(lang, 'Unable to change password.', 'پاس ورڈ تبدیل نہیں ہو سکا۔'));
     }
   };
 
   const requestPhoneVerify = async () => {
-    setOtpNotice(null);
     try {
       const res = await apiRequest<{ message: string }>('/api/auth/otp/request', {
         method: 'POST',
         role: 'passenger',
       });
-      setOtpNotice(res.message);
+      toast.info(res.message);
     } catch (err: any) {
-      setOtpNotice(err.message);
+      toast.error(err?.message || tr(lang, 'Unable to send OTP.', 'او ٹی پی ارسال نہیں ہو سکا۔'));
     }
   };
 
@@ -1298,9 +1314,9 @@ export const PassengerProfileView: React.FC<{
         method: 'POST',
         role: 'passenger',
       });
-      setStatusMsg(res.message);
+      toast.success(res.message);
     } catch (err: any) {
-      setStatusMsg(err?.message || tr(lang, 'Could not submit deletion request.', 'درخواست جمع نہیں ہو سکی۔'));
+      toast.error(err?.message || tr(lang, 'Could not submit deletion request.', 'درخواست جمع نہیں ہو سکی۔'));
     }
   };
 
@@ -1318,10 +1334,6 @@ export const PassengerProfileView: React.FC<{
           {tr(lang, 'Sign Out', 'لاگ آؤٹ')}
         </button>
       </div>
-
-      {statusMsg && (
-        <div className="rounded-xl bg-zinc-900 text-[#F4C430] px-4 py-2.5 text-xs font-semibold">{statusMsg}</div>
-      )}
 
       {/* Quick Profile Controls: Notifications + Bell Tone (Next Page) & App Permissions (ON/OFF Modal) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1424,7 +1436,6 @@ export const PassengerProfileView: React.FC<{
                 {tr(lang, 'Verify Mobile via SMS Provider', 'موبائل نمبر تصدیق کروائیں')}
               </button>
             )}
-            {otpNotice && <p className="mt-1 text-[11px] text-amber-700">{otpNotice}</p>}
           </div>
           <div>
             <label className="block text-xs font-semibold text-zinc-600 mb-1">

@@ -28,6 +28,7 @@ import {
 import { InvoiceViewerModal } from '../../components/InvoiceViewerModal';
 import { StreetMap, type MapFocusTarget } from '../../components/StreetMap';
 import { ProfileThemeRowButton } from '../../components/ThemeSwitcher';
+import { useToast } from '../../contexts/ToastContext';
 import { formatVehicleLabel, tr, trBookingStatus, trPaymentStatus, trService } from '../../i18n/translations';
 import { apiRequest, isBackendOfflineError } from '../../utils/api';
 import { downloadBookingPdf } from '../../utils/pdfGenerator';
@@ -121,10 +122,9 @@ export const PartnerRequestsView: React.FC<{
   const [bellMenuOpen, setBellMenuOpen] = useState(false);
   const [previewRoute, setPreviewRoute] = useState<RouteResult | null>(null);
   const [focusTarget, setFocusTarget] = useState<MapFocusTarget | null>(null);
+  const toast = useToast();
   const [offerDrafts, setOfferDrafts] = useState<Record<string, string>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [statusNotice, setStatusNotice] = useState<string | null>(null);
   const [locallySkippedIds, setLocallySkippedIds] = useState<string[]>([]);
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilterKey>('all');
   const categoryScrollRef = React.useRef<HTMLDivElement | null>(null);
@@ -199,7 +199,7 @@ export const PartnerRequestsView: React.FC<{
 
   const handleAccept = async (bookingId: string) => {
     if (!approved) {
-      setError(
+      toast.warning(
         lang === 'ur'
           ? 'رائیڈ قبول کرنے کے لیے ڈاکومنٹس کی تصدیق لازمی ہے۔ آپ کو ڈاکومنٹس پیج پر لے جایا جا رہا ہے...'
           : 'Document verification is required to accept rides. Redirecting you to complete your documents...'
@@ -208,8 +208,6 @@ export const PartnerRequestsView: React.FC<{
       return;
     }
     setBusyId(bookingId);
-    setError(null);
-    setStatusNotice(null);
     try {
       const res = await apiRequest<{
         confirmed?: boolean;
@@ -225,7 +223,7 @@ export const PartnerRequestsView: React.FC<{
       setDetailsRequest(null);
       onDismissIncomingNotice?.();
       if (res.confirmed) {
-        setStatusNotice(
+        toast.success(
           tr(
             lang,
             `Instant Booking ${bookingId} confirmed!${res.commissionDeductedPkr ? ` Commission Rs. ${res.commissionDeductedPkr.toLocaleString()} deducted.` : ''} Open My Trips to head to pickup.`,
@@ -233,7 +231,7 @@ export const PartnerRequestsView: React.FC<{
           )
         );
       } else if (res.applied || res.awaitingAdminApproval) {
-        setStatusNotice(
+        toast.success(
           tr(
             lang,
             `Application sent to Admin for ${bookingId}. Your phone & vehicle details are queued for Admin approval.`,
@@ -256,9 +254,10 @@ export const PartnerRequestsView: React.FC<{
                 if (b.id === bookingId) {
                   const isSchedule = b.booking_mode === 'schedule' || ['pick_and_drop', 'ride_sharing', 'fuel_sharing'].includes(b.service_type);
                   if (isSchedule) {
-                    setStatusNotice(tr(lang, 'Application submitted for Super Admin review.', 'ماہانہ بکنگ کی درخواست سپر ایڈمن کو بھیج دی گئی ہے۔'));
+                    toast.success(tr(lang, 'Application submitted for Super Admin review.', 'ماہانہ بکنگ کی درخواست سپر ایڈمن کو بھیج دی گئی ہے۔'));
                     return b;
                   }
+                  toast.success(tr(lang, `Booking ${bookingId} confirmed!`, `بُکنگ ${bookingId} کنفرم ہو گئی!`));
                   return { ...b, status: 'confirmed' as const, partner_id: profile.user_id };
                 }
                 return b;
@@ -274,7 +273,7 @@ export const PartnerRequestsView: React.FC<{
           // ignore localStorage errors
         }
       }
-      setError(err.message);
+      toast.error(err.message || tr(lang, 'Could not accept ride request.', 'رائیڈ قبول نہیں ہو سکی۔'));
       if (err?.status === 403) onGoToDocs();
     } finally {
       setBusyId(null);
@@ -283,7 +282,7 @@ export const PartnerRequestsView: React.FC<{
 
   const handleCounter = async (bookingId: string) => {
     if (!approved) {
-      setError(
+      toast.warning(
         lang === 'ur'
           ? 'آفر بھیجنے کے لیے ڈاکومنٹس کی تصدیق ضروری ہے۔'
           : 'Document verification is required to send fare offers. Please upload your documents first.'
@@ -292,18 +291,21 @@ export const PartnerRequestsView: React.FC<{
       return;
     }
     const amt = Number(offerDrafts[bookingId]);
-    if (!Number.isFinite(amt) || amt <= 0) return;
+    if (!Number.isFinite(amt) || amt <= 0) {
+      toast.warning(tr(lang, 'Please enter a valid fare offer amount.', 'براہ کرم درست کرایہ رقم درج کریں۔'));
+      return;
+    }
     setBusyId(bookingId);
-    setError(null);
     try {
       await apiRequest(`/api/partner/requests/${bookingId}/offer`, {
         method: 'POST',
         role: 'partner',
         body: { amountPkr: amt },
       });
+      toast.success(tr(lang, `Fare offer of Rs. ${amt.toLocaleString()} sent to passenger.`, `Rs. ${amt.toLocaleString()} کی آفر مسافر کو بھیج دی گئی۔`));
       await onRefresh();
     } catch (err: any) {
-      setError(err.message);
+      toast.error(err.message || tr(lang, 'Could not send fare offer.', 'آفر نہیں بھیجی جا سکی۔'));
       if (err?.status === 403) onGoToDocs();
     } finally {
       setBusyId(null);
@@ -320,9 +322,10 @@ export const PartnerRequestsView: React.FC<{
         method: 'POST',
         role: 'partner',
       });
+      toast.info(tr(lang, 'Ride request skipped.', 'رائیڈ کی درخواست ہٹا دی گئی۔'));
       await onRefresh();
     } catch {
-      // Keep locally dismissed cleanly on static/offline mode
+      toast.info(tr(lang, 'Ride request dismissed.', 'رائیڈ کی درخواست ہٹا دی گئی۔'));
     } finally {
       setBusyId(null);
     }
@@ -552,18 +555,6 @@ export const PartnerRequestsView: React.FC<{
           <ChevronRight className="w-3.5 h-3.5" />
         </button>
       </div>
-
-      {statusNotice && (
-        <div className="w-full rounded-2xl bg-emerald-900 text-[#F4C430] border border-emerald-700 px-4 py-3 text-xs font-bold shadow-xs">
-          {statusNotice}
-        </div>
-      )}
-
-      {error && (
-        <div className="w-full rounded-2xl bg-red-50 border-2 border-red-300 px-3.5 py-2.5 text-xs text-red-800 font-bold text-center">
-          {error}
-        </div>
-      )}
 
       {/* 6. Feed of Ride Request Cards */}
       <div className="space-y-4 w-full">
@@ -1033,9 +1024,9 @@ export const PartnerTripsView: React.FC<{
   onToggleGpsSharing: () => void;
   onRefresh: () => Promise<void>;
 }> = ({ lang = 'en', trips, gpsSharing, onToggleGpsSharing, onRefresh }) => {
+  const toast = useToast();
   const [tab, setTab] = useState<'active' | 'upcoming' | 'completed' | 'cancelled'>('active');
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [err, setErr] = useState<string | null>(null);
   const [invoiceBooking, setInvoiceBooking] = useState<Booking | null>(null);
 
   const filtered = trips.filter((tItem) => {
@@ -1073,16 +1064,22 @@ export const PartnerTripsView: React.FC<{
 
   const handleTransition = async (id: string, nextStatus: string) => {
     setBusyId(id);
-    setErr(null);
     try {
       await apiRequest(`/api/partner/trips/${id}/transition`, {
         method: 'POST',
         role: 'partner',
         body: { nextStatus },
       });
+      toast.success(
+        tr(
+          lang,
+          `Trip status updated to ${trBookingStatus('en', nextStatus)}.`,
+          `ٹرپ اسٹیٹس "${trBookingStatus('ur', nextStatus)}" اپڈیٹ ہو گیا۔`
+        )
+      );
       await onRefresh();
     } catch (e: any) {
-      setErr(e.message);
+      toast.error(e?.message || tr(lang, 'Could not update trip status.', 'ٹرپ اسٹیٹس اپڈیٹ نہیں ہو سکا۔'));
     } finally {
       setBusyId(null);
     }
@@ -1090,15 +1087,15 @@ export const PartnerTripsView: React.FC<{
 
   const handleRecordCash = async (id: string) => {
     setBusyId(id);
-    setErr(null);
     try {
       await apiRequest(`/api/partner/trips/${id}/record-cash-payment`, {
         method: 'POST',
         role: 'partner',
       });
+      toast.success(tr(lang, 'Cash payment recorded cleanly.', 'نقد ادائیگی کامیابی سے درج ہو گئی۔'));
       await onRefresh();
     } catch (e: any) {
-      setErr(e.message);
+      toast.error(e?.message || tr(lang, 'Could not record cash payment.', 'نقد ادائیگی درج نہیں ہو سکی۔'));
     } finally {
       setBusyId(null);
     }
@@ -1161,8 +1158,6 @@ export const PartnerTripsView: React.FC<{
           </div>
         </div>
       </div>
-
-      {err && <div className="rounded-xl bg-red-50 border border-red-200 px-4 py-2 text-xs text-red-700">{err}</div>}
 
       {filtered.length === 0 ? (
         <div className="rounded-2xl border border-zinc-200 bg-white p-10 text-center text-sm text-zinc-500">

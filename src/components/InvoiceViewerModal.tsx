@@ -9,6 +9,7 @@ import {
   X,
 } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
+import { useToast } from '../contexts/ToastContext';
 import { tr, trBookingStatus, trPaymentStatus, trService } from '../i18n/translations';
 import type { Booking, Language } from '../types';
 import {
@@ -45,8 +46,8 @@ export const InvoiceViewerModal: React.FC<InvoiceViewerModalProps> = ({
   onClose,
 }) => {
   const { isDark } = useTheme();
+  const toast = useToast();
   const [sharing, setSharing] = useState(false);
-  const [shareNote, setShareNote] = useState<string | null>(null);
 
   if (!booking) return null;
 
@@ -59,16 +60,16 @@ export const InvoiceViewerModal: React.FC<InvoiceViewerModalProps> = ({
 
   const handleShare = async () => {
     setSharing(true);
-    setShareNote(null);
     try {
       const result = await shareBookingPdf(booking, viewerRole, passengerName);
-      setShareNote(
+      toast.success(
         result === 'shared'
           ? tr(lang, 'Invoice shared successfully.', 'انوائس شیئر کر دی گئی۔')
           : tr(lang, 'PDF invoice downloaded for sharing.', 'شیئر کرنے کے لیے پی ڈی ایف انوائس ڈاؤن لوڈ ہو گئی۔')
       );
     } catch {
       downloadBookingPdf(booking, viewerRole, passengerName);
+      toast.info(tr(lang, 'PDF invoice downloaded.', 'پی ڈی ایف انوائس ڈاؤن لوڈ ہو گئی۔'));
     } finally {
       setSharing(false);
     }
@@ -389,12 +390,6 @@ export const InvoiceViewerModal: React.FC<InvoiceViewerModalProps> = ({
                   </tbody>
                 </table>
               </div>
-            </div>
-          )}
-
-          {shareNote && (
-            <div className="rounded-xl bg-[#0D0D10] text-[#F4C430] px-4 py-2 text-xs font-semibold text-center">
-              {shareNote}
             </div>
           )}
         </div>

@@ -16,6 +16,7 @@ import {
   Wallet,
   X,
 } from 'lucide-react';
+import type { ToastType } from '../../contexts/ToastContext';
 import { tr } from '../../i18n/translations';
 import { apiRequest } from '../../utils/api';
 import type { Language, PassengerAccount } from '../../types';
@@ -24,7 +25,7 @@ interface PassengerManagementTabProps {
   passengers: PassengerAccount[];
   lang?: Language;
   onReload: () => Promise<void>;
-  onShowToast: (msg: string) => void;
+  onShowToast: (msg: string, type?: ToastType) => void;
 }
 
 export const PassengerManagementTab: React.FC<PassengerManagementTabProps> = ({
@@ -77,11 +78,15 @@ export const PassengerManagementTab: React.FC<PassengerManagementTabProps> = ({
           lang,
           `Passenger "${p.full_name}" is now ${nextStatus.toUpperCase()}.`,
           `مسافر "${p.full_name}" اب ${nextStatus === 'suspended' ? 'معطل' : 'فعال'} ہے۔`
-        )
+        ),
+        nextStatus === 'suspended' ? 'warning' : 'success'
       );
       await onReload();
     } catch (err: any) {
-      onShowToast(tr(lang, `Failed to update passenger status: ${err.message}`, `اسٹیٹس اپڈیٹ کرنے میں خرابی: ${err.message}`));
+      onShowToast(
+        tr(lang, `Failed to update passenger status: ${err.message}`, `اسٹیٹس اپڈیٹ کرنے میں خرابی: ${err.message}`),
+        'error'
+      );
     } finally {
       setActionBusyId(null);
     }
@@ -101,11 +106,15 @@ export const PassengerManagementTab: React.FC<PassengerManagementTabProps> = ({
           lang,
           `Phone verification for "${p.full_name}" set to ${nextVerified === 1 ? 'VERIFIED' : 'UNVERIFIED'}.`,
           `"${p.full_name}" کی فون تصدیق اب ${nextVerified === 1 ? 'تصدیق شدہ' : 'غیر تصدیق شدہ'} ہے۔`
-        )
+        ),
+        nextVerified === 1 ? 'success' : 'info'
       );
       await onReload();
     } catch (err: any) {
-      onShowToast(tr(lang, `Failed to update phone verification: ${err.message}`, `فون تصدیق اپڈیٹ کرنے میں خرابی: ${err.message}`));
+      onShowToast(
+        tr(lang, `Failed to update phone verification: ${err.message}`, `فون تصدیق اپڈیٹ کرنے میں خرابی: ${err.message}`),
+        'error'
+      );
     } finally {
       setActionBusyId(null);
     }
@@ -138,12 +147,13 @@ export const PassengerManagementTab: React.FC<PassengerManagementTabProps> = ({
           lang,
           `Passenger record for "${editForm.full_name}" saved.`,
           `"${editForm.full_name}" کا ریکارڈ محفوظ ہو گیا۔`
-        )
+        ),
+        'success'
       );
       setEditingPassenger(null);
       await onReload();
     } catch (err: any) {
-      onShowToast(tr(lang, `Error saving passenger: ${err.message}`, `مسافر محفوظ کرنے میں خرابی: ${err.message}`));
+      onShowToast(tr(lang, `Error saving passenger: ${err.message}`, `مسافر محفوظ کرنے میں خرابی: ${err.message}`), 'error');
     } finally {
       setSavingEdit(false);
     }

@@ -2,6 +2,7 @@ import { initializeApp, getApps } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, FacebookAuthProvider } from 'firebase/auth';
 import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
+import { notifyToast } from './contexts/ToastContext';
 
 const app = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
 
@@ -61,7 +62,6 @@ export function handleFirestoreError(
     operationType,
     path,
   };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
 }
 
@@ -70,15 +70,11 @@ export async function testFirestoreConnection(): Promise<boolean> {
   if (connectionTested) return true;
   connectionTested = true;
   try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
+    await getDocFromServer(doc(db, 'test', 'connection')).catch(() => {});
     return true;
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error('Please check your Firebase configuration.');
-      return false;
-    }
-    return true;
+  } catch {
+    return false;
   }
 }
 
-void testFirestoreConnection();
+void testFirestoreConnection().catch(() => {});

@@ -35,6 +35,7 @@ import { GoogleSheetsSyncPanel } from '../../components/GoogleSheetsSyncPanel';
 import { StreetMap } from '../../components/StreetMap';
 import { ThemePreferencesPanel, ThemeQuickToggle } from '../../components/ThemeSwitcher';
 import { useFirebase, type PartnerApplicationCloud } from '../../contexts/FirebaseContext';
+import { inferToastType, type ToastType, useToast } from '../../contexts/ToastContext';
 import { tr, trBookingStatus, trVerificationStatus } from '../../i18n/translations';
 import { apiRequest, getRoleToken, isBackendOfflineError, setRoleToken, useRoleWebSocket } from '../../utils/api';
 import { downloadBookingPdf } from '../../utils/pdfGenerator';
@@ -356,7 +357,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     status?: string;
     expiryDate?: string;
   } | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
+  const toast = useToast();
 
   const loadAdminStatus = useCallback(async () => {
     try {
@@ -1322,7 +1323,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       });
     } catch (err) {
       if (!isBackendOfflineError(err)) {
-        setToast(err instanceof Error ? err.message : tr(lang, 'Review failed.', 'تصدیق محفوظ نہ ہو سکی۔'));
+        toast.error(err instanceof Error ? err.message : tr(lang, 'Review failed.', 'تصدیق محفوظ نہ ہو سکی۔'));
         return;
       }
     }
@@ -1338,7 +1339,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         p.user_id === partnerId ? { ...p, verification_status: status, admin_notes: notes } : p
       )
     );
-    setToast(
+    toast.success(
       tr(
         lang,
         `Partner status updated to ${status.toUpperCase()}.`,
@@ -1361,7 +1362,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       const res = await signInWithGooglePopup('partner', 'Islamabad', lang);
       const signedEmail = res.user.email?.toLowerCase() || '';
       if (signedEmail !== 'prorider.pk786@gmail.com') {
-        setToast(
+        toast.warning(
           tr(
             lang,
             `Please sign in with Super Admin Google account (prorider.pk786@gmail.com). Signed in as ${signedEmail}.`,
@@ -1370,7 +1371,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         );
       } else {
         await loadAll();
-        setToast(
+        toast.success(
           tr(
             lang,
             'Cloud partner applications & documents synced cleanly.',
@@ -1379,7 +1380,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         );
       }
     } catch (err: any) {
-      setToast(err?.message || tr(lang, 'Cloud sync failed.', 'کلاؤڈ سنک مکمل نہ ہو سکا۔'));
+      toast.error(err?.message || tr(lang, 'Cloud sync failed.', 'کلاؤڈ سنک مکمل نہ ہو سکا۔'));
     } finally {
       setSyncingCloud(false);
     }
@@ -1388,20 +1389,24 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const saveFareChanges = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedFleetId) return;
-    await apiRequest(`/api/admin/fleet/${selectedFleetId}`, {
-      method: 'PATCH',
-      role: 'admin',
-      body: {
-        base_fare_pkr: fareForm.base_fare_pkr,
-        per_km_min_pkr: fareForm.per_km_min_pkr,
-        per_km_max_pkr: fareForm.per_km_max_pkr,
-        waiting_charge_per_min: fareForm.waiting_charge_per_min,
-        extra_stop_pkr: fareForm.extra_stop_pkr,
-        commission_pct: fareForm.commission_pct,
-      },
-    });
-    setToast(tr(lang, 'Fare tariff saved and active for new bookings.', 'کرایہ ریٹ محفوظ ہو کر نئی بکنگز پر لاگو ہو گیا ہے۔'));
-    await loadAll();
+    try {
+      await apiRequest(`/api/admin/fleet/${selectedFleetId}`, {
+        method: 'PATCH',
+        role: 'admin',
+        body: {
+          base_fare_pkr: fareForm.base_fare_pkr,
+          per_km_min_pkr: fareForm.per_km_min_pkr,
+          per_km_max_pkr: fareForm.per_km_max_pkr,
+          waiting_charge_per_min: fareForm.waiting_charge_per_min,
+          extra_stop_pkr: fareForm.extra_stop_pkr,
+          commission_pct: fareForm.commission_pct,
+        },
+      });
+      toast.success(tr(lang, 'Fare tariff saved and active for new bookings.', 'کرایہ ریٹ محفوظ ہو کر نئی بکنگز پر لاگو ہو گیا ہے۔'));
+      await loadAll();
+    } catch (err: any) {
+      toast.error(err?.message || tr(lang, 'Failed to save fare tariff.', 'کرایہ ریٹ محفوظ نہیں ہو سکا۔'));
+    }
   };
 
   return (
@@ -1502,14 +1507,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
 
       {/* Admin Main Viewport */}
       <main className="flex-1 p-4 sm:p-6 lg:p-8 space-y-6 max-w-7xl w-full mx-auto">
-        {toast && (
-          <div className="rounded-xl bg-[#0D0D10] text-[#F4C430] px-4 py-2.5 text-xs font-semibold flex items-center justify-between">
-            <span>{toast}</span>
-            <button type="button" onClick={() => setToast(null)} className="text-zinc-400 hover:text-white">
-              {tr(lang, 'Dismiss', 'بند کریں')}
-            </button>
-          </div>
-        )}
 
         {/* 1. Dashboard & Full Operational Map */}
         {tab === 'dashboard' && overview && (
@@ -1608,7 +1605,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               });
               await onRefreshConfig?.();
               window.dispatchEvent(new Event('pr:refresh-config'));
-              setToast(tr(lang, 'Global theme & layout applied to entire app!', 'گلوبل تھیم اور ڈیزائن پوری ایپ پر لاگو کر دیا گیا ہے!'));
+              toast.success(tr(lang, 'Global theme & layout applied to entire app!', 'گلوبل تھیم اور ڈیزائن پوری ایپ پر لاگو کر دیا گیا ہے!'));
               await loadAll();
             }}
           />
@@ -1873,7 +1870,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                                 });
                               } catch (walletErr) {
                                 if (!isBackendOfflineError(walletErr)) {
-                                  setToast(
+                                  toast.error(
                                     walletErr instanceof Error
                                       ? walletErr.message
                                       : tr(lang, 'Wallet update failed.', 'والیٹ اپڈیٹ نہ ہو سکا۔')
@@ -1889,7 +1886,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                                     : item
                                 )
                               );
-                              setToast(
+                              toast.success(
                                 tr(
                                   lang,
                                   `Added Rs. 1,000 to ${p.full_name}'s wallet.`,
@@ -1932,7 +1929,9 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             fleet={fleet}
             lang={lang}
             onReload={loadAll}
-            onShowToast={(msg) => setToast(msg)}
+            onShowToast={(msg: string, type?: ToastType) =>
+              toast.show(msg, { type: type ?? inferToastType(msg) })
+            }
           />
         )}
 
@@ -1943,7 +1942,9 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             settings={settings}
             lang={lang}
             onReload={loadAll}
-            onShowToast={(msg) => setToast(msg)}
+            onShowToast={(msg: string, type?: ToastType) =>
+              toast.show(msg, { type: type ?? inferToastType(msg) })
+            }
           />
         )}
 
@@ -1953,7 +1954,9 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             passengers={passengers}
             lang={lang}
             onReload={loadAll}
-            onShowToast={(msg) => setToast(msg)}
+            onShowToast={(msg: string, type?: ToastType) =>
+              toast.show(msg, { type: type ?? inferToastType(msg) })
+            }
           />
         )}
 
@@ -1963,7 +1966,9 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             bookings={bookings}
             lang={lang}
             onReload={loadAll}
-            onShowToast={(msg) => setToast(msg)}
+            onShowToast={(msg: string, type?: ToastType) =>
+              toast.show(msg, { type: type ?? inferToastType(msg) })
+            }
           />
         )}
 
@@ -1973,7 +1978,9 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             zones={zones}
             lang={lang}
             onReload={loadAll}
-            onShowToast={(msg) => setToast(msg)}
+            onShowToast={(msg: string, type?: ToastType) =>
+              toast.show(msg, { type: type ?? inferToastType(msg) })
+            }
           />
         )}
 
@@ -1982,12 +1989,16 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
           <form
             onSubmit={async (e) => {
               e.preventDefault();
-              await apiRequest('/api/admin/settings', {
-                method: 'PUT',
-                role: 'admin',
-                body: settings,
-              });
-              setToast(tr(lang, 'Schedule & Go Now limits updated.', 'شیڈول اور گو ناؤ کی حدود اپڈیٹ ہو گئیں۔'));
+              try {
+                await apiRequest('/api/admin/settings', {
+                  method: 'PUT',
+                  role: 'admin',
+                  body: settings,
+                });
+                toast.success(tr(lang, 'Schedule & Go Now limits updated.', 'شیڈول اور گو ناؤ کی حدود اپڈیٹ ہو گئیں۔'));
+              } catch (err: any) {
+                toast.error(err?.message || tr(lang, 'Failed to update schedule limits.', 'سیٹنگز محفوظ نہیں ہو سکیں۔'));
+              }
             }}
             className="max-w-2xl rounded-2xl border border-zinc-200 bg-white p-6 space-y-4"
           >
@@ -2061,12 +2072,23 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                   <button
                     type="button"
                     onClick={async () => {
-                      await apiRequest(`/api/admin/packages/${p.id}`, {
-                        method: 'PATCH',
-                        role: 'admin',
-                        body: { is_active: p.is_active !== 1 },
-                      });
-                      await loadAll();
+                      try {
+                        await apiRequest(`/api/admin/packages/${p.id}`, {
+                          method: 'PATCH',
+                          role: 'admin',
+                          body: { is_active: p.is_active !== 1 },
+                        });
+                        toast.success(
+                          tr(
+                            lang,
+                            `Package "${p.name}" ${p.is_active !== 1 ? 'activated' : 'paused'}.`,
+                            `پیکیج "${p.name}" ${p.is_active !== 1 ? 'فعال' : 'روک دیا'} گیا۔`
+                          )
+                        );
+                        await loadAll();
+                      } catch (err: any) {
+                        toast.error(err?.message || tr(lang, 'Could not update package.', 'پیکیج اپڈیٹ نہیں ہو سکا۔'));
+                      }
                     }}
                     className={`px-3 py-1.5 rounded-lg text-xs font-bold ${
                       p.is_active === 1 ? 'bg-emerald-700 text-white' : 'bg-zinc-200 text-zinc-700'
@@ -2081,18 +2103,23 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             <form
               onSubmit={async (e) => {
                 e.preventDefault();
-                await apiRequest('/api/admin/packages', {
-                  method: 'POST',
-                  role: 'admin',
-                  body: {
-                    name: newPkgName,
-                    vehicle_category_id: fleet[0]?.id || 'fleet-sedan',
-                    base_monthly_pkr: Number(newPkgPrice),
-                    description: 'Admin-created monthly commuter package.',
-                  },
-                });
-                setNewPkgName('');
-                await loadAll();
+                try {
+                  await apiRequest('/api/admin/packages', {
+                    method: 'POST',
+                    role: 'admin',
+                    body: {
+                      name: newPkgName,
+                      vehicle_category_id: fleet[0]?.id || 'fleet-sedan',
+                      base_monthly_pkr: Number(newPkgPrice),
+                      description: 'Admin-created monthly commuter package.',
+                    },
+                  });
+                  toast.success(tr(lang, `Package "${newPkgName}" created.`, `نیا پیکیج "${newPkgName}" شامل ہو گیا۔`));
+                  setNewPkgName('');
+                  await loadAll();
+                } catch (err: any) {
+                  toast.error(err?.message || tr(lang, 'Failed to add package.', 'پیکیج شامل نہیں ہو سکا۔'));
+                }
               }}
               className="rounded-2xl border border-zinc-200 bg-white p-5 flex flex-wrap gap-3"
             >
@@ -2154,8 +2181,13 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                             <button
                               type="button"
                               onClick={async () => {
-                                await apiRequest(`/api/admin/settlements/${tx.id}/pay`, { method: 'POST', role: 'admin' });
-                                await loadAll();
+                                try {
+                                  await apiRequest(`/api/admin/settlements/${tx.id}/pay`, { method: 'POST', role: 'admin' });
+                                  toast.success(tr(lang, `Withdrawal ${tx.tx_ref} marked settled.`, `ادائیگی ${tx.tx_ref} مکمل نشان زد ہو گئی۔`));
+                                  await loadAll();
+                                } catch (err: any) {
+                                  toast.error(err?.message || tr(lang, 'Settlement failed.', 'ادائیگی اپڈیٹ نہیں ہو سکی۔'));
+                                }
                               }}
                               className="inline-flex items-center gap-1 px-3 py-1 rounded-lg bg-emerald-700 text-white font-bold"
                             >
@@ -2202,12 +2234,17 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                       <button
                         type="button"
                         onClick={async () => {
-                          await apiRequest(`/api/admin/tickets/${tkt.id}/reply`, {
-                            method: 'POST',
-                            role: 'admin',
-                            body: { reply: ticketReplies[tkt.id] || tr(lang, 'Resolved by Support', 'سپورٹ ٹیم کی طرف سے حل کر دیا گیا'), status: 'resolved' },
-                          });
-                          await loadAll();
+                          try {
+                            await apiRequest(`/api/admin/tickets/${tkt.id}/reply`, {
+                              method: 'POST',
+                              role: 'admin',
+                              body: { reply: ticketReplies[tkt.id] || tr(lang, 'Resolved by Support', 'سپورٹ ٹیم کی طرف سے حل کر دیا گیا'), status: 'resolved' },
+                            });
+                            toast.success(tr(lang, `Ticket ${tkt.id} resolved and reply sent.`, `ٹکٹ ${tkt.id} حل کر دیا گیا اور جواب بھیج دیا گیا۔`));
+                            await loadAll();
+                          } catch (err: any) {
+                            toast.error(err?.message || tr(lang, 'Reply failed.', 'جواب ارسال نہیں ہو سکا۔'));
+                          }
                         }}
                         className="px-4 py-2 rounded-xl bg-[#0D0D10] text-white text-xs font-bold"
                       >

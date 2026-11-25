@@ -12,6 +12,7 @@ import {
   X,
 } from 'lucide-react';
 import { tr } from '../../i18n/translations';
+import type { ToastType } from '../../contexts/ToastContext';
 import { apiRequest } from '../../utils/api';
 import type { Language, ServiceZone } from '../../types';
 
@@ -19,7 +20,7 @@ interface ZonesManagementTabProps {
   zones: ServiceZone[];
   lang?: Language;
   onReload: () => Promise<void>;
-  onShowToast: (msg: string) => void;
+  onShowToast: (msg: string, type?: ToastType) => void;
 }
 
 interface ZoneFormData {
@@ -125,7 +126,8 @@ export const ZonesManagementTab: React.FC<ZonesManagementTabProps> = ({
             lang,
             `Service zone "${formData.area_name}, ${formData.city}" created.`,
             `سروس زون "${formData.area_name}, ${formData.city}" شامل ہو گیا۔`
-          )
+          ),
+          'success'
         );
       } else if (modalMode === 'edit' && formData.id) {
         await apiRequest(`/api/admin/zones/${formData.id}`, {
@@ -133,12 +135,17 @@ export const ZonesManagementTab: React.FC<ZonesManagementTabProps> = ({
           role: 'admin',
           body: formData,
         });
-        onShowToast(tr(lang, `Service zone "${formData.area_name}" updated.`, `سروس زون "${formData.area_name}" اپڈیٹ ہو گیا۔`));
+        onShowToast(
+          tr(lang, `Service zone "${formData.area_name}" updated.`, `سروس زون "${formData.area_name}" اپڈیٹ ہو گیا۔`),
+          'success'
+        );
       }
       setModalOpen(false);
       await onReload();
     } catch (err: any) {
-      setErrorMsg(err.message || tr(lang, 'Failed to save zone.', 'زون محفوظ کرنے میں ناکامی۔'));
+      const msg = err.message || tr(lang, 'Failed to save zone.', 'زون محفوظ کرنے میں ناکامی۔');
+      setErrorMsg(msg);
+      onShowToast(msg, 'error');
     } finally {
       setSaving(false);
     }
@@ -151,10 +158,10 @@ export const ZonesManagementTab: React.FC<ZonesManagementTabProps> = ({
         method: 'DELETE',
         role: 'admin',
       });
-      onShowToast(tr(lang, `Zone "${name}" removed.`, `زون "${name}" حذف کر دیا گیا۔`));
+      onShowToast(tr(lang, `Zone "${name}" removed.`, `زون "${name}" حذف کر دیا گیا۔`), 'success');
       await onReload();
     } catch (err: any) {
-      onShowToast(tr(lang, `Failed to delete zone: ${err.message}`, `زون حذف کرنے میں خرابی: ${err.message}`));
+      onShowToast(tr(lang, `Failed to delete zone: ${err.message}`, `زون حذف کرنے میں خرابی: ${err.message}`), 'error');
     }
   };
 
@@ -170,11 +177,12 @@ export const ZonesManagementTab: React.FC<ZonesManagementTabProps> = ({
           lang,
           `Demand level for "${z.area_name}" set to ${nextLevel.toUpperCase()}.`,
           `"${z.area_name}" کی ڈیمانڈ سطح ${nextLevel === 'high' ? 'زیادہ' : nextLevel === 'medium' ? 'درمیانی' : 'کم'} کر دی گئی۔`
-        )
+        ),
+        'success'
       );
       await onReload();
     } catch (err: any) {
-      onShowToast(tr(lang, `Error updating demand: ${err.message}`, `ڈیمانڈ اپڈیٹ کرنے میں خرابی: ${err.message}`));
+      onShowToast(tr(lang, `Error updating demand: ${err.message}`, `ڈیمانڈ اپڈیٹ کرنے میں خرابی: ${err.message}`), 'error');
     }
   };
 
@@ -191,11 +199,12 @@ export const ZonesManagementTab: React.FC<ZonesManagementTabProps> = ({
           lang,
           `Rickshaw booking for "${z.area_name}" is now ${nextEnabled ? 'ENABLED' : 'DISABLED'}.`,
           `"${z.area_name}" کے لیے رکشہ بکنگ اب ${nextEnabled ? 'فعال' : 'بند'} ہے۔`
-        )
+        ),
+        nextEnabled ? 'success' : 'info'
       );
       await onReload();
     } catch (err: any) {
-      onShowToast(tr(lang, `Error updating rickshaw status: ${err.message}`, `رکشہ اسٹیٹس اپڈیٹ کرنے میں خرابی: ${err.message}`));
+      onShowToast(tr(lang, `Error updating rickshaw status: ${err.message}`, `رکشہ اسٹیٹس اپڈیٹ کرنے میں خرابی: ${err.message}`), 'error');
     }
   };
 

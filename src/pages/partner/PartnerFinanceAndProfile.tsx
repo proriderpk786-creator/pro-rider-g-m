@@ -22,6 +22,7 @@ import {
   Wallet as WalletIcon,
   X,
 } from 'lucide-react';
+import { useToast } from '../../contexts/ToastContext';
 import { tr } from '../../i18n/translations';
 import { apiRequest, isBackendOfflineError } from '../../utils/api';
 import { compressAndReadUploadFile } from '../../utils/imageUpload';
@@ -55,13 +56,13 @@ export const PartnerFinanceView: React.FC<{
   };
   onRefresh: () => Promise<void>;
 }> = ({ mode, partnerName, lang = 'en', earnings, onRefresh }) => {
+  const toast = useToast();
   const [topupAmount, setTopupAmount] = useState('1000');
   const [topupMethod, setTopupMethod] = useState<'jazzcash' | 'easypaisa' | 'bank_transfer'>('jazzcash');
   const [withdrawAmount, setWithdrawAmount] = useState('1000');
   const [withdrawMethod, setWithdrawMethod] = useState<'bank_transfer' | 'jazzcash' | 'easypaisa'>('bank_transfer');
   const [accountDetails, setAccountDetails] = useState('');
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
 
   const minReq = earnings.minRequiredWalletPkr ?? 500;
   const commPct = earnings.instantCommissionPct ?? 15;
@@ -70,7 +71,6 @@ export const PartnerFinanceView: React.FC<{
   const handleTopup = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
-    setMsg(null);
     try {
       const res = await apiRequest<{ txRef: string; amountPkr: number; availableBalancePkr: number }>('/api/partner/wallet/topup', {
         method: 'POST',
@@ -80,7 +80,7 @@ export const PartnerFinanceView: React.FC<{
           method: topupMethod,
         },
       });
-      setMsg(
+      toast.success(
         tr(
           lang,
           `Wallet credited with Rs. ${res.amountPkr.toLocaleString()} (${res.txRef}). New balance: Rs. ${res.availableBalancePkr.toLocaleString()}.`,
@@ -89,7 +89,7 @@ export const PartnerFinanceView: React.FC<{
       );
       await onRefresh();
     } catch (err: any) {
-      setMsg(err.message);
+      toast.error(err?.message || tr(lang, 'Wallet top-up failed.', 'والیٹ ریچارج ناکام ہو گیا۔'));
     } finally {
       setBusy(false);
     }
@@ -98,7 +98,6 @@ export const PartnerFinanceView: React.FC<{
   const handleWithdraw = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
-    setMsg(null);
     try {
       const res = await apiRequest<{ txRef: string }>('/api/partner/wallet/withdraw', {
         method: 'POST',
@@ -109,7 +108,7 @@ export const PartnerFinanceView: React.FC<{
           accountDetails,
         },
       });
-      setMsg(
+      toast.success(
         tr(
           lang,
           `Withdrawal request submitted (${res.txRef}) for Admin settlement.`,
@@ -119,7 +118,7 @@ export const PartnerFinanceView: React.FC<{
       setAccountDetails('');
       await onRefresh();
     } catch (err: any) {
-      setMsg(err.message);
+      toast.error(err?.message || tr(lang, 'Withdrawal request failed.', 'رقم نکلوانے کی درخواست ناکام ہو گئی۔'));
     } finally {
       setBusy(false);
     }
@@ -135,14 +134,15 @@ export const PartnerFinanceView: React.FC<{
         </h2>
         <button
           type="button"
-          onClick={() =>
+          onClick={() => {
             downloadWalletStatementPdf(
               partnerName,
               'Pro Partner',
               earnings.availableBalancePkr,
               earnings.transactions
-            )
-          }
+            );
+            toast.info(tr(lang, 'Statement PDF downloaded.', 'اسٹیٹمنٹ پی ڈی ایف ڈاؤن لوڈ ہو گئی۔'));
+          }}
           className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#0D0D10] text-white text-xs font-semibold"
         >
           <Download className="w-3.5 h-3.5 text-[#D4A017]" />
@@ -190,8 +190,6 @@ export const PartnerFinanceView: React.FC<{
           </div>
         </div>
       </div>
-
-      {msg && <div className="rounded-xl bg-[#0D0D10] text-[#F4C430] px-4 py-2.5 text-xs font-semibold">{msg}</div>}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-5 space-y-5">
@@ -497,10 +495,10 @@ export const PartnerProfileView: React.FC<{
   );
 
   const [editingOpen, setEditingOpen] = useState(false);
+  const toast = useToast();
   const [previewOpen, setPreviewOpen] = useState(false);
   const [busySlot, setBusySlot] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
 
   const coverInputRef = useRef<HTMLInputElement | null>(null);
   const selfieInputRef = useRef<HTMLInputElement | null>(null);
@@ -581,7 +579,7 @@ export const PartnerProfileView: React.FC<{
       if (res.partnerProfile) onProfileUpdated(res.partnerProfile);
     } catch (err: any) {
       if (!isBackendOfflineError(err)) {
-        setMsg(err?.message || tr(lang, 'Could not sync showcase to server.', 'سرور سے پروفائل سنک نہیں ہو سکی۔'));
+        toast.error(err?.message || tr(lang, 'Could not sync showcase to server.', 'سرور سے پروفائل سنک نہیں ہو سکی۔'));
       }
     }
   };
@@ -591,14 +589,13 @@ export const PartnerProfileView: React.FC<{
     file: File
   ) => {
     setBusySlot(slot);
-    setMsg(null);
     try {
       const { dataUrl, fileName } = await compressAndReadUploadFile(file, 1280, 0.82);
 
       if (slot === 'cover') {
         setCoverPhotoUrl(dataUrl);
         await persistShowcase({ coverPhotoUrl: dataUrl });
-        setMsg(tr(lang, 'Cover photo updated.', 'کور فوٹو اپڈیٹ ہو گیا۔'));
+        toast.success(tr(lang, 'Cover photo updated.', 'کور فوٹو اپڈیٹ ہو گیا۔'));
         return;
       }
 
@@ -633,7 +630,7 @@ export const PartnerProfileView: React.FC<{
           if (!isBackendOfflineError(apiErr)) throw apiErr;
         }
         await persistShowcase({ avatarUrl: dataUrl });
-        setMsg(tr(lang, 'Profile selfie updated.', 'پروفائل فوٹو اپڈیٹ ہو گیا۔'));
+        toast.success(tr(lang, 'Profile selfie updated.', 'پروفائل فوٹو اپڈیٹ ہو گیا۔'));
         return;
       }
 
@@ -675,13 +672,13 @@ export const PartnerProfileView: React.FC<{
 
       await persistShowcase({ showcaseGallery: updatedGallery });
       await onRefresh();
-      setMsg(
+      toast.success(
         slot === 'vehicle'
           ? tr(lang, 'Vehicle showcase photo added.', 'گاڑی کی تصویر پروفائل میں شامل ہو گئی۔')
           : tr(lang, 'Display photo added to your showcase.', 'نئی ڈسپلے تصویر شامل ہو گئی۔')
       );
     } catch (err: any) {
-      setMsg(err?.message || tr(lang, 'Photo upload failed.', 'تصویر اپ لوڈ ناکام ہو گئی۔'));
+      toast.error(err?.message || tr(lang, 'Photo upload failed.', 'تصویر اپ لوڈ ناکام ہو گئی۔'));
     } finally {
       setBusySlot(null);
     }
@@ -690,7 +687,6 @@ export const PartnerProfileView: React.FC<{
   const handleSaveProfileDetails = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
-    setMsg(null);
     try {
       try {
         const res = await apiRequest<{ user: User }>('/api/auth/profile', {
@@ -705,9 +701,9 @@ export const PartnerProfileView: React.FC<{
       }
       await persistShowcase({ fullName, handle, bio });
       setEditingOpen(false);
-      setMsg(tr(lang, 'Profile & showcase settings saved.', 'پروفائل اور ڈسپلے کی معلومات محفوظ ہو گئیں۔'));
+      toast.success(tr(lang, 'Profile & showcase settings saved.', 'پروفائل اور ڈسپلے کی معلومات محفوظ ہو گئیں۔'));
     } catch (err: any) {
-      setMsg(err?.message || tr(lang, 'Could not save profile.', 'پروفائل محفوظ نہیں ہو سکی۔'));
+      toast.error(err?.message || tr(lang, 'Could not save profile.', 'پروفائل محفوظ نہیں ہو سکی۔'));
     } finally {
       setSaving(false);
     }
@@ -725,13 +721,14 @@ export const PartnerProfileView: React.FC<{
     const nextGallery = gallery.filter((item) => item.id !== itemId);
     setGallery(nextGallery);
     await persistShowcase({ showcaseGallery: nextGallery });
+    toast.info(tr(lang, 'Gallery photo removed.', 'تصویر ہٹا دی گئی۔'));
   };
 
   const handleTogglePublish = async () => {
     const next = !profilePublished;
     setProfilePublished(next);
     await persistShowcase({ profilePublished: next });
-    setMsg(
+    toast[next ? 'success' : 'info'](
       next
         ? tr(
             lang,
@@ -844,15 +841,6 @@ export const PartnerProfileView: React.FC<{
           </button>
         </div>
       </div>
-
-      {msg && (
-        <div className="rounded-xl bg-[#0D0D10] text-[#F4C430] px-4 py-2.5 text-xs font-semibold flex items-center justify-between gap-2">
-          <span>{msg}</span>
-          <button type="button" onClick={() => setMsg(null)} className="text-zinc-400 hover:text-white">
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
 
       {/* Main Social-Style Showcase Card (Matching User Reference Screenshot) */}
       <div className={`rounded-3xl border ${activeTemplate.borderClass} ${activeTemplate.cardBg} shadow-sm`}>

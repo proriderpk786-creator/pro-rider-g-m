@@ -12,6 +12,7 @@ import {
   X,
 } from 'lucide-react';
 import { VehicleImage } from '../../components/BrandMark';
+import type { ToastType } from '../../contexts/ToastContext';
 import { tr, trService } from '../../i18n/translations';
 import { apiRequest } from '../../utils/api';
 import { processVehiclePhotoUpload } from '../../utils/imageUpload';
@@ -21,7 +22,7 @@ interface FleetManagementTabProps {
   fleet: FleetCategory[];
   lang?: Language;
   onReload: () => Promise<void>;
-  onShowToast: (msg: string) => void;
+  onShowToast: (msg: string, type?: ToastType) => void;
 }
 
 interface FleetModalData {
@@ -113,9 +114,11 @@ export const FleetManagementTab: React.FC<FleetManagementTabProps> = ({
       setErrorMsg(null);
       const dataUrl = await processVehiclePhotoUpload(file, 960, 0.88);
       setFormData((prev) => ({ ...prev, image_url: dataUrl }));
-      onShowToast(tr(lang, 'Vehicle photograph uploaded successfully.', 'گاڑی کی تصویر کامیابی سے اپلوڈ ہو گئی۔'));
+      onShowToast(tr(lang, 'Vehicle photograph uploaded successfully.', 'گاڑی کی تصویر کامیابی سے اپلوڈ ہو گئی۔'), 'success');
     } catch (err: any) {
-      setErrorMsg(err.message || tr(lang, 'Failed to process vehicle photograph.', 'گاڑی کی تصویر پراسیس کرنے میں ناکامی۔'));
+      const msg = err.message || tr(lang, 'Failed to process vehicle photograph.', 'گاڑی کی تصویر پراسیس کرنے میں ناکامی۔');
+      setErrorMsg(msg);
+      onShowToast(msg, 'error');
     } finally {
       setImageUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -166,7 +169,8 @@ export const FleetManagementTab: React.FC<FleetManagementTabProps> = ({
             lang,
             `New vehicle category "${formData.name}" created successfully.`,
             `نئی گاڑی کی قسم "${formData.name}" کامیابی سے شامل کر دی گئی۔`
-          )
+          ),
+          'success'
         );
       } else if (modalMode === 'edit' && formData.id) {
         await apiRequest(`/api/admin/fleet/${formData.id}`, {
@@ -193,13 +197,16 @@ export const FleetManagementTab: React.FC<FleetManagementTabProps> = ({
             lang,
             `Vehicle category "${formData.name}" updated successfully.`,
             `گاڑی کی قسم "${formData.name}" کامیابی سے اپڈیٹ ہو گئی۔`
-          )
+          ),
+          'success'
         );
       }
       setModalOpen(false);
       await onReload();
     } catch (err: any) {
-      setErrorMsg(err.message || tr(lang, 'Failed to save vehicle category.', 'گاڑی کی قسم محفوظ کرنے میں ناکامی۔'));
+      const msg = err.message || tr(lang, 'Failed to save vehicle category.', 'گاڑی کی قسم محفوظ کرنے میں ناکامی۔');
+      setErrorMsg(msg);
+      onShowToast(msg, 'error');
     } finally {
       setSaving(false);
     }
@@ -218,11 +225,12 @@ export const FleetManagementTab: React.FC<FleetManagementTabProps> = ({
           lang,
           `Category "${item.name}" is now ${nextActive ? 'ACTIVE' : 'DISABLED'}.`,
           `"${item.name}" اب ${nextActive ? 'فعال' : 'بند'} ہے۔`
-        )
+        ),
+        nextActive ? 'success' : 'info'
       );
       await onReload();
     } catch (err: any) {
-      onShowToast(tr(lang, `Error toggling status: ${err.message}`, `اسٹیٹس تبدیل کرنے میں خرابی: ${err.message}`));
+      onShowToast(tr(lang, `Error toggling status: ${err.message}`, `اسٹیٹس تبدیل کرنے میں خرابی: ${err.message}`), 'error');
     }
   };
 
@@ -233,11 +241,11 @@ export const FleetManagementTab: React.FC<FleetManagementTabProps> = ({
         method: 'DELETE',
         role: 'admin',
       });
-      onShowToast(tr(lang, 'Vehicle category removed from system.', 'گاڑی کی قسم سسٹم سے ہٹا دی گئی۔'));
+      onShowToast(tr(lang, 'Vehicle category removed from system.', 'گاڑی کی قسم سسٹم سے ہٹا دی گئی۔'), 'success');
       setDeleteConfirmId(null);
       await onReload();
     } catch (err: any) {
-      onShowToast(tr(lang, `Cannot delete: ${err.message}`, `حذف نہیں کیا جا سکا: ${err.message}`));
+      onShowToast(tr(lang, `Cannot delete: ${err.message}`, `حذف نہیں کیا جا سکا: ${err.message}`), 'error');
     } finally {
       setDeleteBusy(false);
     }

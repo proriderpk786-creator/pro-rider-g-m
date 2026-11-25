@@ -12,6 +12,7 @@ import {
   Wallet,
   X,
 } from 'lucide-react';
+import type { ToastType } from '../../contexts/ToastContext';
 import { tr } from '../../i18n/translations';
 import { apiRequest } from '../../utils/api';
 import type { FleetCategory, Language } from '../../types';
@@ -21,7 +22,7 @@ interface FareManagementTabProps {
   settings: Record<string, string>;
   lang?: Language;
   onReload: () => Promise<void>;
-  onShowToast: (msg: string) => void;
+  onShowToast: (msg: string, type?: ToastType) => void;
 }
 
 export const FareManagementTab: React.FC<FareManagementTabProps> = ({
@@ -122,12 +123,13 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
           lang,
           `Fare tariff updated for ${editingFleet.name}.`,
           `${editingFleet.name} کا کرایہ ریٹ اپڈیٹ کر دیا گیا۔`
-        )
+        ),
+        'success'
       );
       setEditingFleet(null);
       await onReload();
     } catch (err: any) {
-      onShowToast(tr(lang, `Error saving tariff: ${err.message}`, `کرایہ محفوظ کرنے میں خرابی: ${err.message}`));
+      onShowToast(tr(lang, `Error saving tariff: ${err.message}`, `کرایہ محفوظ کرنے میں خرابی: ${err.message}`), 'error');
     } finally {
       setSavingTariff(false);
     }
@@ -147,11 +149,15 @@ export const FareManagementTab: React.FC<FareManagementTabProps> = ({
           lang,
           'Global fare rules and negotiation bounds saved successfully.',
           'عالمی کرایہ قوانین اور بات چیت کی حدود کامیابی سے محفوظ ہو گئیں۔'
-        )
+        ),
+        'success'
       );
       await onReload();
     } catch (err: any) {
-      onShowToast(tr(lang, `Error saving fare rules: ${err.message}`, `کرایہ قوانین محفوظ کرنے میں خرابی: ${err.message}`));
+      onShowToast(
+        tr(lang, `Error saving fare rules: ${err.message}`, `کرایہ قوانین محفوظ کرنے میں خرابی: ${err.message}`),
+        'error'
+      );
     } finally {
       setSavingSettings(false);
     }

@@ -6,6 +6,7 @@ import { OfflineIndicator } from './components/BrandMark';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { DEFAULT_PUBLIC_CONFIG } from './config/defaultConfig';
 import { ThemeProvider } from './contexts/ThemeContext';
+import { notifyToast, ToastProvider } from './contexts/ToastContext';
 import { tr } from './i18n/translations';
 import { AdminPortal } from './pages/admin/AdminPortal';
 import { AboutPage } from './pages/AboutPage';
@@ -63,10 +64,20 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const onQuota = () => setQuotaExceeded(true);
+    const onQuota = () => {
+      setQuotaExceeded(true);
+      notifyToast(
+        tr(
+          lang,
+          'Google Maps demo quota reached. Interactive OpenStreetMap fallback is active.',
+          'گوگل میپس ڈیمو کوٹہ مکمل ہو گیا۔ اس وقت انٹرایکٹو اوپن اسٹریٹ میپ فعال ہے۔'
+        ),
+        { type: 'warning' }
+      );
+    };
     window.addEventListener('gmp-quota-exceeded', onQuota);
     return () => window.removeEventListener('gmp-quota-exceeded', onQuota);
-  }, []);
+  }, [lang]);
 
   const fetchConfig = useCallback(() => {
     apiRequest<PublicConfig>('/api/public/config')
@@ -101,17 +112,19 @@ export default function App() {
 
   const content = (
     <ThemeProvider config={config}>
-      <FirebaseProviderOrChildren
-        quotaExceeded={quotaExceeded}
-        hasMapsKey={hasMapsKey}
-        onDismissQuota={() => setQuotaExceeded(false)}
-        lang={lang}
-        path={path}
-        config={config}
-        onChangeLang={handleLanguageChange}
-        onNavigate={navigate}
-        onRefreshConfig={fetchConfig}
-      />
+      <ToastProvider lang={lang}>
+        <FirebaseProviderOrChildren
+          quotaExceeded={quotaExceeded}
+          hasMapsKey={hasMapsKey}
+          onDismissQuota={() => setQuotaExceeded(false)}
+          lang={lang}
+          path={path}
+          config={config}
+          onChangeLang={handleLanguageChange}
+          onNavigate={navigate}
+          onRefreshConfig={fetchConfig}
+        />
+      </ToastProvider>
     </ThemeProvider>
   );
 
