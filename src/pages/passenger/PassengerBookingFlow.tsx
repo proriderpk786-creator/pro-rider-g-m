@@ -109,7 +109,7 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
   onBookingCreated,
   onGoToBookings,
 }) => {
-  const { firebaseUser, syncBookingSummary } = useFirebase();
+  const { firebaseUser, syncBookingSummary, publishAvailableRide } = useFirebase();
 
   // Initialize booking mode & service type (supports direct launch from home poster buttons)
   const [bookingMode, setBookingMode] = useState<'go_now' | 'schedule'>(() => {
@@ -619,6 +619,7 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
         setShowReviewModal(false);
         setCurrentStep(7);
         onBookingCreated?.(createdBooking);
+        void publishAvailableRide(createdBooking);
         if (firebaseUser?.emailVerified) {
           void syncBookingSummary({
             bookingCode: createdBooking.id,
@@ -700,6 +701,7 @@ export const PassengerBookingFlow: React.FC<PassengerBookingFlowProps> = ({
           // ignore storage quota errors
         }
         onBookingCreated?.(localBooking);
+        void publishAvailableRide(localBooking);
         if (firebaseUser?.emailVerified) {
           void syncBookingSummary({
             bookingCode: localBooking.id,

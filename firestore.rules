@@ -390,5 +390,17 @@ service cloud.firestore {
         allow delete: if isValidId(userId) && isAdmin();
       }
     }
+
+    // Global Shared Available Rides for Real-Time Pro Partner Dispatch
+    match /available_rides/{rideId} {
+      allow get, list: if isSignedIn();
+      allow create: if isVerifiedUser() && incoming().passengerId == request.auth.uid;
+      allow update: if isSignedIn() && (
+        resource.data.passengerId == request.auth.uid ||
+        exists(/databases/$(database)/documents/partnerApplications/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/partnerApplications/$(request.auth.uid)).data.verificationStatus == 'approved'
+      );
+      allow delete: if isVerifiedUser() && (resource.data.passengerId == request.auth.uid || isAdmin());
+    }
   }
 }

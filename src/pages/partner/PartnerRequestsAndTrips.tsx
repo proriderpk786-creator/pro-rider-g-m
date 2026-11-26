@@ -14,6 +14,7 @@ import {
   Lock,
   LogOut,
   MapPin,
+  Menu,
   Navigation,
   Radio,
   ShieldCheck,
@@ -120,6 +121,7 @@ export const PartnerRequestsView: React.FC<{
   const [detailsRequest, setDetailsRequest] = useState<Booking | null>(null);
   const [heatmapModalOpen, setHeatmapModalOpen] = useState(false);
   const [bellMenuOpen, setBellMenuOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [previewRoute, setPreviewRoute] = useState<RouteResult | null>(null);
   const [focusTarget, setFocusTarget] = useState<MapFocusTarget | null>(null);
   const toast = useToast();
@@ -403,55 +405,56 @@ export const PartnerRequestsView: React.FC<{
             </button>
           </div>
         </div>
-      </div>
 
-      {/* 2. Compact Action Pills Row (Mobile Only; desktop already shows Sidebar & Header) */}
-      <div className="grid grid-cols-4 gap-1.5 w-full md:hidden">
-        <button
-          type="button"
-          onClick={onGoToDocs}
-          className="h-7 px-1.5 rounded-full border border-[#D4A017]/80 bg-white hover:bg-amber-50/50 flex items-center justify-center gap-1 shadow-2xs transition-all min-w-0"
-        >
-          {approved ? (
-            <>
-              <ShieldCheck className="w-3 h-3 text-emerald-600 shrink-0" />
-              <span className="text-[10px] font-extrabold text-[#0D0D10] truncate">
-                {lang === 'ur' ? 'تصدیق' : 'Verified'}
-              </span>
-            </>
-          ) : (
-            <>
-              <Lock className="w-3 h-3 text-amber-700 shrink-0" />
-              <span className="text-[10px] font-extrabold text-[#0D0D10] truncate">
-                {lang === 'ur' ? 'دستاویز' : 'Docs'}
-              </span>
-            </>
+        {/* 3-Dot Dropdown Menu Button */}
+        <div className="relative shrink-0">
+          <button
+            type="button"
+            onClick={() => setMenuOpen(!menuOpen)}
+            aria-label="Menu"
+            className="w-8 h-8 rounded-full border border-[#D4A017] bg-white hover:bg-amber-50 flex items-center justify-center text-[#0D0D10] shadow-2xs"
+          >
+            <Menu className="w-4 h-4 text-[#9E730B]" />
+          </button>
+          {menuOpen && (
+            <div className="absolute right-0 mt-2 w-48 rounded-2xl bg-white border border-zinc-200 shadow-xl z-50 p-2 space-y-1">
+              <button
+                type="button"
+                onClick={() => { setMenuOpen(false); onGoToDocs(); }}
+                className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-zinc-800 hover:bg-amber-50 flex items-center gap-2"
+              >
+                {approved ? <ShieldCheck className="w-4 h-4 text-emerald-600" /> : <Lock className="w-4 h-4 text-amber-700" />}
+                <span>{approved ? (lang === 'ur' ? 'تصدیق شدہ' : 'Verified') : (lang === 'ur' ? 'دستاویزات' : 'Docs')}</span>
+              </button>
+              <div className="px-3 py-2 flex items-center justify-between text-xs font-bold text-zinc-800 hover:bg-amber-50 rounded-xl">
+                <span className="flex items-center gap-2">
+                  <Globe className="w-4 h-4 text-zinc-600" />
+                  <span>{lang === 'ur' ? 'زبان' : 'Language'}</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onChangeLang?.(lang === 'ur' ? 'en' : 'ur')}
+                  className="px-2 py-0.5 rounded-lg bg-[#0D0D10] text-[#F4C430] text-[10px]"
+                >
+                  {lang === 'ur' ? 'EN' : 'اردو'}
+                </button>
+              </div>
+              <div className="px-3 py-1">
+                <ProfileThemeRowButton lang={lang} headerCompact />
+              </div>
+              <div className="border-t border-zinc-100 my-1 pt-1">
+                <button
+                  type="button"
+                  onClick={() => { setMenuOpen(false); onLogout?.(); }}
+                  className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-red-600 hover:bg-red-50 flex items-center gap-2"
+                >
+                  <LogOut className="w-4 h-4 text-red-600" />
+                  <span>{lang === 'ur' ? 'لاگ آؤٹ' : 'Logout'}</span>
+                </button>
+              </div>
+            </div>
           )}
-        </button>
-
-        <ProfileThemeRowButton lang={lang} headerCompact pillStyle />
-
-        <button
-          type="button"
-          onClick={() => onChangeLang?.(lang === 'ur' ? 'en' : 'ur')}
-          className="h-7 px-1.5 rounded-full border border-[#D4A017]/80 bg-white hover:bg-amber-50/50 flex items-center justify-center gap-1 shadow-2xs transition-all min-w-0"
-        >
-          <Globe className="w-3 h-3 text-zinc-700 shrink-0" />
-          <span className="text-[10px] font-extrabold text-[#0D0D10] truncate">
-            EN <span className="font-normal font-sans">اردو</span>
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={onLogout}
-          className="h-7 px-1.5 rounded-full border border-[#D4A017]/80 bg-white hover:bg-red-50 flex items-center justify-center gap-1 shadow-2xs transition-all min-w-0"
-        >
-          <LogOut className="w-3 h-3 text-red-600 shrink-0" />
-          <span className="text-[10px] font-extrabold text-[#0D0D10] truncate">
-            {lang === 'ur' ? 'لاگ آؤٹ' : 'Logout'}
-          </span>
-        </button>
+        </div>
       </div>
 
       {/* 3. Compact Dispatch Ribbon Ticker */}

@@ -271,6 +271,8 @@ interface FirebaseContextValue {
     verificationStatus: PartnerApplicationCloud['verificationStatus'],
     adminNotes?: string
   ) => Promise<boolean>;
+  publishAvailableRide: (booking: any) => Promise<void>;
+  subscribeAvailableRides: (callback: (rides: any[]) => void) => () => void;
 }
 
 const FirebaseContext = createContext<FirebaseContextValue | null>(null);
@@ -1095,6 +1097,56 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     [firebaseUser]
   );
 
+  const publishAvailableRide = useCallback(
+    async (booking: any) => {
+      if (!firebaseUser || !firebaseUser.emailVerified) return;
+      const cleanId = sanitizeId(booking.id);
+      const path = `available_rides/${cleanId}`;
+      try {
+        await setDoc(doc(db, 'available_rides', cleanId), {
+          id: booking.id,
+          passengerId: firebaseUser.uid,
+          passengerName: booking.passenger_name || firebaseUser.displayName || 'Passenger',
+          bookingMode: booking.booking_mode || 'go_now',
+          serviceType: booking.service_type || 'pick_and_drop',
+          pickupAddress: booking.pickup_address,
+          pickupLat: booking.pickup_lat,
+          pickupLng: booking.pickup_lng,
+          dropoffAddress: booking.dropoff_address,
+          dropoffLat: booking.dropoff_lat,
+          dropoffLng: booking.dropoff_lng,
+          distanceKm: booking.distance_km || 10,
+          durationMin: booking.duration_min || 15,
+          vehicleCategoryId: booking.vehicle_category_id,
+          vehicleCategoryName: booking.vehicle_category_name,
+          seatsRequested: booking.seats_requested || 1,
+          proposedFarePkr: booking.proposed_fare_pkr || booking.total_bill_pkr || 500,
+          status: booking.status || 'searching',
+          createdAt: new Date().toISOString(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, path);
+      }
+    },
+    [firebaseUser]
+  );
+
+  const subscribeAvailableRides = useCallback((callback: (rides: any[]) => void) => {
+    try {
+      const q = query(collection(db, 'available_rides'), orderBy('createdAt', 'desc'), limit(50));
+      return onSnapshot(
+        q,
+        (snap) => {
+          const rides = snap.docs.map((d) => d.data());
+          callback(rides);
+        },
+        () => {}
+      );
+    } catch {
+      return () => {};
+    }
+  }, []);
+
   return (
     <FirebaseContext.Provider
       value={{
@@ -1127,6 +1179,8 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         fetchMyPartnerApplication,
         fetchAllPartnerApplicationsForAdmin,
         reviewPartnerApplicationInFirestore,
+        publishAvailableRide,
+        subscribeAvailableRides,
       }}
     >
       {children}

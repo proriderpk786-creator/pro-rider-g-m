@@ -412,6 +412,33 @@
         }
       },
       "required": ["uid", "docType", "fileName", "fileDataUrl", "status", "uploadedAt", "updatedAt"]
+    },
+    "AvailableRide": {
+      "title": "AvailableRide",
+      "description": "Global shared open ride request for real-time dispatch to online Pro Partners.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64 },
+        "passengerId": { "type": "string", "maxLength": 128 },
+        "passengerName": { "type": "string", "maxLength": 120 },
+        "bookingMode": { "type": "string", "enum": ["go_now", "schedule"] },
+        "serviceType": { "type": "string", "enum": ["pick_and_drop", "ride_sharing", "fuel_sharing"] },
+        "pickupAddress": { "type": "string", "maxLength": 300 },
+        "pickupLat": { "type": "number" },
+        "pickupLng": { "type": "number" },
+        "dropoffAddress": { "type": "string", "maxLength": 300 },
+        "dropoffLat": { "type": "number" },
+        "dropoffLng": { "type": "number" },
+        "distanceKm": { "type": "number" },
+        "durationMin": { "type": "number" },
+        "vehicleCategoryId": { "type": "string", "maxLength": 64 },
+        "vehicleCategoryName": { "type": "string", "maxLength": 100 },
+        "seatsRequested": { "type": "number" },
+        "proposedFarePkr": { "type": "number" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "passengerId", "pickupAddress", "dropoffAddress", "proposedFarePkr", "status"]
     }
   },
   "firestore": {
@@ -450,6 +477,10 @@
     "/partnerApplications/{partnerId}/documents/{docType}": {
       "schema": { "$ref": "#/entities/PartnerApplicationDoc" },
       "description": "Pro Partner uploaded verification documents."
+    },
+    "/available_rides/{rideId}": {
+      "schema": { "$ref": "#/entities/AvailableRide" },
+      "description": "Global shared open ride requests for real-time dispatch across all online Pro Partner devices."
     }
   }
 }

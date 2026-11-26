@@ -117,6 +117,25 @@ function saveLocalPassengerBooking(booking: Booking, userId?: string, extraId?: 
   }
 }
 
+function purgePassengerNonMatchingState(activeUid?: string | null) {
+  if (!activeUid) return;
+  try {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key) continue;
+      if (key.startsWith('pr_local_bookings_passenger_') || key.startsWith('pr_user_passenger_')) {
+        if (!key.endsWith(`_${activeUid}`)) {
+          keysToRemove.push(key);
+        }
+      }
+    }
+    for (const k of keysToRemove) {
+      localStorage.removeItem(k);
+    }
+  } catch {}
+}
+
 interface PassengerAppProps {
   config: PublicConfig | null;
   lang: Language;
@@ -155,6 +174,13 @@ export const PassengerApp: React.FC<PassengerAppProps> = ({
   const bellSoundRef = useRef(bellSound);
   bellSoundRef.current = bellSound;
   const bellMenuWrapRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const activeUid = firebaseUser?.uid || user?.id;
+    if (activeUid) {
+      purgePassengerNonMatchingState(activeUid);
+    }
+  }, [firebaseUser?.uid, user?.id]);
 
   const handleChangeBellSound = useCallback((next: RideBellSoundId) => {
     setBellSound(next);

@@ -20,6 +20,8 @@ import { ProRiderAiCopilot } from '../../components/ProRiderAiCopilot';
 import { ProfileThemeRowButton } from '../../components/ThemeSwitcher';
 import { useFirebase } from '../../contexts/FirebaseContext';
 import { useTheme } from '../../contexts/ThemeContext';
+import { collection, getDocs, limit, orderBy, query } from 'firebase/firestore';
+import { db } from '../../firebase';
 import { t, tr, trVerificationStatus } from '../../i18n/translations';
 import type {
   AppNotification,
@@ -55,6 +57,32 @@ import { PartnerAuth, PartnerVerificationAndVehicleView } from './PartnerAuthAnd
 import { PartnerFinanceView, PartnerProfileView } from './PartnerFinanceAndProfile';
 import { PartnerRequestsView, PartnerTripsView } from './PartnerRequestsAndTrips';
 
+function purgePartnerNonMatchingState(activeUid?: string | null) {
+  if (!activeUid) return;
+  try {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key) continue;
+      if (
+        key.startsWith('pr_profile_partner_') ||
+        key.startsWith('pr_partner_docs_') ||
+        key.startsWith('pr_user_partner_') ||
+        key === 'pr_profile_partner'
+      ) {
+        if (key !== 'pr_profile_partner' && !key.endsWith(`_${activeUid}`)) {
+          keysToRemove.push(key);
+        } else if (key === 'pr_profile_partner') {
+          keysToRemove.push(key);
+        }
+      }
+    }
+    for (const k of keysToRemove) {
+      localStorage.removeItem(k);
+    }
+  } catch {}
+}
+
 const PARTNER_PROFILE_STORAGE_KEY = 'pr_profile_partner';
 
 function getPartnerDocsStorageKey(userId?: string | null) {
@@ -86,9 +114,7 @@ function writeStoredPartnerDocs(userId: string | undefined | null, docs: Partner
 
 function readStoredPartnerProfile(userId?: string | null): PartnerProfile | null {
   try {
-    const raw =
-      (userId ? localStorage.getItem(getPartnerProfileStorageKey(userId)) : null) ||
-      localStorage.getItem(PARTNER_PROFILE_STORAGE_KEY);
+    const raw = userId ? localStorage.getItem(getPartnerProfileStorageKey(userId)) : null;
     if (!raw) return null;
     return JSON.parse(raw) as PartnerProfile;
   } catch {
@@ -98,10 +124,9 @@ function readStoredPartnerProfile(userId?: string | null): PartnerProfile | null
 
 function writeStoredPartnerProfile(userId: string | undefined | null, p: PartnerProfile) {
   try {
-    const serialized = JSON.stringify(p);
-    localStorage.setItem(PARTNER_PROFILE_STORAGE_KEY, serialized);
     const id = userId || p.user_id;
     if (id) {
+      const serialized = JSON.stringify(p);
       localStorage.setItem(getPartnerProfileStorageKey(id), serialized);
     }
   } catch {
@@ -134,7 +159,7 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
   onNavigate,
 }) => {
   const { isDark } = useTheme();
-  const { firebaseUser, signOutFirebase, fetchMyPartnerApplication } = useFirebase();
+  const { firebaseUser, signOutFirebase, fetchMyPartnerApplication, subscribeAvailableRides } = useFirebase();
   const [token, setToken] = useState<string | null>(() => getRoleToken('partner'));
   const [user, setUser] = useState<User | null>(() => getStoredRoleUser<User>('partner'));
   const [profile, setProfile] = useState<PartnerProfile | null>(() =>
@@ -196,6 +221,82 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
     window.addEventListener('pr:bell-updated', onBellUpdated);
     return () => window.removeEventListener('pr:bell-updated', onBellUpdated);
   }, []);
+
+  useEffect(() => {
+    const activeUid = firebaseUser?.uid || user?.id;
+    if (activeUid) {
+      purgePartnerNonMatchingState(activeUid);
+    }
+  }, [firebaseUser?.uid, user?.id]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeAvailableRides((cloudRides: any[]) => {
+      if (Array.isArray(cloudRides) && cloudRides.length > 0) {
+        setRequests((prev) => {
+          const map = new Map<string, Booking>();
+          for (const r of prev) {
+            if (r?.id) map.set(r.id, r);
+          }
+          for (const cr of cloudRides) {
+            if (cr?.id && cr.status === 'searching') {
+              const mappedBooking: Booking = {
+                id: cr.id,
+                invoice_number: `INV-PR-${cr.id.slice(-6)}`,
+                passenger_id: cr.passengerId || 'cloud-passenger',
+                partner_id: null,
+                booking_mode: cr.bookingMode || 'go_now',
+                service_type: cr.serviceType || 'pick_and_drop',
+                status: 'searching',
+                pickup_address: cr.pickupAddress || 'Pickup Point',
+                pickup_lat: cr.pickupLat || 33.6649,
+                pickup_lng: cr.pickupLng || 73.087,
+                dropoff_address: cr.dropoffAddress || 'Dropoff Point',
+                dropoff_lat: cr.dropoffLat || 33.7025,
+                dropoff_lng: cr.dropoffLng || 72.9785,
+                distance_km: cr.distanceKm || 10,
+                duration_min: cr.durationMin || 15,
+                vehicle_category_id: cr.vehicleCategoryId || 'fleet-economy',
+                vehicle_category_name: cr.vehicleCategoryName || 'Economy',
+                seats_requested: cr.seatsRequested || 1,
+                pickup_date: cr.createdAt ? cr.createdAt.slice(0, 10) : new Date().toISOString().slice(0, 10),
+                pickup_time: 'Immediate',
+                expected_dropoff_date: new Date().toISOString().slice(0, 10),
+                expected_dropoff_time: '',
+                actual_dropoff_time: null,
+                return_journey: 0,
+                package_id: null,
+                schedule_days: [],
+                notes: '',
+                proposed_fare_pkr: cr.proposedFarePkr || 500,
+                agreed_fare_pkr: cr.proposedFarePkr || 500,
+                total_bill_pkr: cr.proposedFarePkr || 500,
+                amount_paid_pkr: 0,
+                commission_pkr: Math.round((cr.proposedFarePkr || 500) * 0.15),
+                commission_pct: 15,
+                driver_payout_pkr: Math.round((cr.proposedFarePkr || 500) * 0.85),
+                base_fare_pkr: 0,
+                rate_per_km_pkr: 55,
+                payment_status: 'UNPAID',
+                created_at: cr.createdAt || new Date().toISOString(),
+              };
+              if (!map.has(cr.id) && profileRef.current?.is_online) {
+                try {
+                  playRideBell(bellSoundRef.current);
+                  sendRideBrowserNotification('New Ride Request (جدید رائیڈ)', cr.pickupAddress || 'New Passenger Request');
+                  setIncomingRideNotice(mappedBooking);
+                } catch {}
+              }
+              map.set(cr.id, mappedBooking);
+            }
+          }
+          return Array.from(map.values()).filter((b) => b.status === 'searching' && !b.partner_id);
+        });
+      }
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, [subscribeAvailableRides]);
 
   const loadDemand = useCallback(async () => {
     try {
@@ -269,7 +370,65 @@ export const PartnerApp: React.FC<PartnerAppProps> = ({
       setDocuments(serverDocs);
       writeStoredPartnerDocs(profRes?.user?.id || userRef.current?.id, serverDocs);
       setApproved(Boolean(reqRes?.approved));
-      setRequests(Array.isArray(reqRes?.requests) ? reqRes.requests : []);
+      const apiRequestsList = Array.isArray(reqRes?.requests) ? reqRes.requests : [];
+      try {
+        const cloudSnap = await getDocs(query(collection(db, 'available_rides'), orderBy('createdAt', 'desc'), limit(50)));
+        const cloudBookings: Booking[] = cloudSnap.docs.map((d) => {
+          const cr = d.data();
+          return {
+            id: cr.id,
+            invoice_number: `INV-PR-${cr.id.slice(-6)}`,
+            passenger_id: cr.passengerId || 'cloud-passenger',
+            partner_id: null,
+            booking_mode: cr.bookingMode || 'go_now',
+            service_type: cr.serviceType || 'pick_and_drop',
+            status: cr.status || 'searching',
+            pickup_address: cr.pickupAddress || 'Pickup Point',
+            pickup_lat: cr.pickupLat || 33.6649,
+            pickup_lng: cr.pickupLng || 73.087,
+            dropoff_address: cr.dropoffAddress || 'Dropoff Point',
+            dropoff_lat: cr.dropoffLat || 33.7025,
+            dropoff_lng: cr.dropoffLng || 72.9785,
+            distance_km: cr.distanceKm || 10,
+            duration_min: cr.durationMin || 15,
+            vehicle_category_id: cr.vehicleCategoryId || 'fleet-economy',
+            vehicle_category_name: cr.vehicleCategoryName || 'Economy',
+            seats_requested: cr.seatsRequested || 1,
+            pickup_date: cr.createdAt ? cr.createdAt.slice(0, 10) : new Date().toISOString().slice(0, 10),
+            pickup_time: 'Immediate',
+            expected_dropoff_date: new Date().toISOString().slice(0, 10),
+            expected_dropoff_time: '',
+            actual_dropoff_time: null,
+            return_journey: 0,
+            package_id: null,
+            schedule_days: [],
+            notes: '',
+            proposed_fare_pkr: cr.proposedFarePkr || 500,
+            agreed_fare_pkr: cr.proposedFarePkr || 500,
+            total_bill_pkr: cr.proposedFarePkr || 500,
+            amount_paid_pkr: 0,
+            commission_pkr: Math.round((cr.proposedFarePkr || 500) * 0.15),
+            commission_pct: 15,
+            driver_payout_pkr: Math.round((cr.proposedFarePkr || 500) * 0.85),
+            base_fare_pkr: 0,
+            rate_per_km_pkr: 55,
+            payment_status: 'UNPAID',
+            created_at: cr.createdAt || new Date().toISOString(),
+          };
+        });
+        const mergedMap = new Map<string, Booking>();
+        for (const b of apiRequestsList) {
+          if (b?.id) mergedMap.set(b.id, b);
+        }
+        for (const cb of cloudBookings) {
+          if (cb?.id && cb.status === 'searching') {
+            mergedMap.set(cb.id, cb);
+          }
+        }
+        setRequests(Array.from(mergedMap.values()).filter((b) => b.status === 'searching' && !b.partner_id));
+      } catch {
+        setRequests(apiRequestsList);
+      }
       setTrips(Array.isArray(tripRes?.trips) ? tripRes.trips : []);
       if (earnRes && typeof earnRes.netEarnings === 'number') {
         setEarnings({
